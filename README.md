@@ -25,7 +25,7 @@ You need no web browser, no per-view licence and no special hardware.
 ## Getting started
 
 ```bash
-git clone https://github.com/USER/ekbpro-knx-terminal-python.git
+git clone https://github.com/espenbo/ekbpro-knx-terminal-python.git
 cd ekbpro-knx-terminal-python
 ./setup.sh                                                   # installs everything
 ./scada init ~/MyHouse.knxproj --gateway 192.168.1.50        # your ETS project and IP interface

@@ -21,7 +21,7 @@ sudo apt install python3 python3-venv git
 ## Install
 
 ```bash
-git clone https://github.com/USER/ekbpro-knx-terminal-python.git
+git clone https://github.com/espenbo/ekbpro-knx-terminal-python.git
 cd ekbpro-knx-terminal-python
 ./setup.sh
 ```
