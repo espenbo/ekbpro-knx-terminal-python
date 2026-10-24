@@ -1,0 +1,87 @@
+# EKBPRO KNX Terminal Python – configuration template
+#
+# Create your own config.yaml from this file with:
+#   ./scada init MyProject.knxproj --gateway 192.168.1.50 [--language nb]
+# or copy it and edit it by hand (replace the __PLACEHOLDERS__).
+# Relative paths are resolved from the directory config.yaml is in.
+# Full reference: docs/04-configuration.md
+
+knx:
+  # tunneling | tunneling_tcp | routing | automatic
+  # tunneling_secure | routing_secure  (KNX IP Secure – needs the keyring below)
+  connection: __CONNECTION__
+  gateway_ip: __GATEWAY__
+  gateway_port: 3671
+  # local_ip: 192.168.1.10          # set when the machine has several network interfaces
+  # individual_address: 1.1.250     # routing only
+  # KNX Secure: export the keyring from ETS (Project → Security → Export keyring)
+  # keyring_file: MyProject.knxkeys
+  # keyring_password: "secret"
+  # user_id: 2                      # tunnel user for secure tunneling (optional)
+
+project:
+  file: __PROJECT__
+  # password: ""                    # if the .knxproj is password protected
+  cache: var/project_cache.json     # rebuilt automatically when the .knxproj changes
+
+server:
+  socket: var/knxscada.sock
+  database: var/knxscada.db
+  retention_days: 90                # how long telegrams and events are kept
+  # Read values from the bus when the server starts: false (default, sends no telegrams),
+  # status (feedback/sensor/alarm addresses only) or all (also control addresses – not recommended,
+  # a stale answer from another device can switch actuators). See docs/04-configuration.md.
+  read_on_start: false
+  read_interval_ms: 80              # pause between reads (keeps the bus load low)
+
+# Alarms: rules select group addresses by address (glob) and/or name (regex).
+# The first matching rule applies. condition: "true" | "false" | "> 30" | "< 5" | ">= x" | "<= x" | "== x" | "!= x"
+# severity: critical | warning (other text is allowed and shown as-is)
+# The rules below are generic and rely on words in the group address names
+# (English and Norwegian) – adapt them to your project.
+alarms:
+  - match_name: "(?i)(røyk|smoke|brann|fire).*(alarm)|(alarm).*(røyk|smoke|brann)"
+    exclude_name: "(?i)acknowledg|kvitter|reset|test"
+    dpt_main: 1
+    condition: "true"
+    severity: critical
+    text: "Fire/smoke: {name}"
+  - match_name: "(?i)(vann|water|lekk|leak).*(alarm|sensor|føler)"
+    dpt_main: 1
+    condition: "true"
+    severity: critical
+    text: "Water leak: {name}"
+  - match_name: "(?i)\\b(alarm|feil|fault|failure|malfunction|error|kortslutning|short|overlast|overload|batteri|battery)\\b"
+    exclude_name: "(?i)acknowledg|kvitter|reset|test|grense|limit"
+    dpt_main: 1
+    condition: "true"
+    severity: warning
+    text: "{name}"
+  - match_name: "(?i)temp"
+    exclude_name: "(?i)ute|outdoor|setpoint|setpunkt|skal|ønsket"
+    dpt_main: 9
+    condition: "> 30"
+    severity: warning
+    text: "High temperature: {name} = {value}"
+
+ui:
+  title: __TITLE__
+  # User interface language: en (English) | nb (Norwegian bokmål).
+  # Each user can choose their own with Ctrl+L (saved in ~/.config/knxscada/ui.json),
+  # and ./scada tui --language nb overrides it for one session.
+  language: __LANGUAGE__
+  # Colour theme: retro | retro-classic | amber | modern | solarized
+  # (each user can choose their own with Ctrl+T – saved in ~/.config/knxscada/ui.json)
+  theme: retro
+  splash: true                      # start-up splash screen
+  big_digits: false                 # big block digits in status tiles/screensaver
+  ascii: false                      # ASCII-only charts (old terminals without Unicode)
+  screensaver_minutes: 5            # 0 = off
+  screensaver_rotate_s: 20
+  # plan: plan.yaml                 # floor plan (see docs/06-floor-plan.md)
+  # outdoor_ga: 0/1/0               # status tiles – found automatically by name if not set
+  # power_ga: 0/0/23
+  # energy_ga: 0/1/20
+  setpoint_step: 0.5                # °C per press on − / +
+  dim_step: 10                      # % per press on − / +
+  confirm_raw_write: true           # confirm writes from the group address view

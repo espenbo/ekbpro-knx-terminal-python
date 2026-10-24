@@ -1,0 +1,27 @@
+# --- Local installation: your own KNX project and data (never published) ---
+config.yaml
+config.yaml.bak
+plan.yaml
+*.knxproj
+*.knxkeys
+exported_project_data.json
+*.pdf
+*.dxf
+var/
+
+# --- Python and tools ---
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# --- Editors and OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store

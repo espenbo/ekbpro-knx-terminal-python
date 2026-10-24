@@ -1,0 +1,5 @@
+xknx>=3.10
+xknxproject>=3.10
+textual>=8.0
+textual-plotext>=1.0
+PyYAML>=6.0

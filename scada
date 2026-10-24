@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Start EKBPRO KNX Terminal Python. Without arguments the terminal user interface is started.
+#   ./scada              -> TUI
+#   ./scada tui --language nb
+#   ./scada server       -> server (KNX connection, logging, alarms)
+#   ./scada server --demo
+#   ./scada import       -> re-read the .knxproj
+#   ./scada --help       -> all commands
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export KNXSCADA_CONFIG="${KNXSCADA_CONFIG:-$DIR/config.yaml}"
+export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+if [ $# -eq 0 ]; then set -- tui; fi
+exec "$DIR/venv/bin/python" -m knxscada "$@"

@@ -1,0 +1,510 @@
+/*
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 EKB PRO
+ *
+ * Stylesheet of the EKBPRO KNX Terminal Python TUI.
+ *
+ * Colours always come from theme variables ($primary, $surface, $error …),
+ * never fixed values, so all five themes (and Textual's built-in ones) work.
+ * Status meaning used throughout:
+ *   $success  normal / on          $warning  warning / heating / below setpoint
+ *   $error    critical alarm       $accent   lights on, highlights
+ *   $foreground 40–60 %  inactive / no data / decoration
+ *
+ * Widgets that are updated every second (status tiles, room cards, top bar)
+ * have a FIXED height: their content changes then never forces a layout
+ * pass of the whole screen (see LiveStatic in widgets.py).
+ */
+
+Screen {
+    background: $background;
+}
+
+#keybar {
+    height: 1;
+    background: $panel;
+    color: $foreground;
+}
+
+#topbar {
+    height: 1;
+    background: $panel;
+    color: $foreground;
+}
+
+#body {
+    height: 1fr;
+}
+
+#menu {
+    width: 30;
+    border: round $secondary;
+    border-title-color: $primary;
+    background: $surface;
+    padding: 0 1;
+}
+
+#menu:focus {
+    border: round $primary;
+}
+
+#views {
+    width: 1fr;
+    height: 1fr;
+}
+
+View {
+    height: 1fr;
+    padding: 0 1;
+}
+
+DataTable {
+    height: 1fr;
+    border: round $secondary;
+    border-title-color: $foreground 70%;
+    border-title-color: $primary;
+    background: $surface;
+}
+
+DataTable:focus {
+    border: round $primary;
+}
+
+Input {
+    border: round $secondary;
+    background: $surface;
+}
+
+Input:focus {
+    border: round $primary;
+}
+
+.muted {
+    color: $foreground 60%;
+}
+
+/* ---------- overview (F1) ---------- */
+#tiles {
+    height: auto;
+    grid-gutter: 0 1;
+    /* ItemGrid sizes rows from the text and forgets the border – fix the row height. */
+    grid-rows: 4;
+}
+
+#tiles.big {
+    grid-rows: 5;
+}
+
+.tile {
+    height: 4;
+    border: round $secondary;
+    border-title-color: $foreground 60%;
+    border-title-style: bold;
+    border-subtitle-color: $foreground 55%;
+    content-align: center middle;
+    text-align: center;
+    color: $primary;
+    background: $surface;
+}
+
+.tile.ok { color: $primary; }
+.tile.idle { color: $foreground 40%; }
+.tile.warn { color: $warning; border: round $warning; }
+.tile.bad { color: $error; border: heavy $error; }
+
+#ov-mid {
+    height: 1fr;
+    min-height: 10;
+}
+
+#ov-left {
+    width: 1fr;
+}
+
+#ov-climate {
+    height: 13;
+}
+
+.chart {
+    height: 1fr;
+    border: round $secondary;
+    border-title-color: $foreground 70%;
+    background: $surface;
+}
+
+#ov-traffic-plot {
+    width: 1fr;
+    height: 1fr;
+}
+
+#ov-rooms {
+    width: 1fr;
+    border: round $secondary;
+    border-title-color: $foreground 70%;
+    background: $surface;
+}
+
+#ov-room-grid {
+    height: auto;
+    grid-gutter: 0 1;
+    grid-rows: 5;
+}
+
+.room {
+    height: 5;
+    padding: 0 1;
+    border: round $secondary;
+    color: $foreground;
+}
+
+.room:hover { background: $panel; }
+.room.lit { border: round $accent 70%; }
+.room.warn { border: round $warning; }
+.room.bad { border: heavy $error; }
+.room.idle { color: $foreground 45%; }
+
+#ov-bottom {
+    height: 13;
+}
+
+#ov-activity {
+    width: 3fr;
+}
+
+#ov-lights {
+    width: 2fr;
+}
+
+/* ---------- room cards (F2) ---------- */
+#room-title {
+    width: 1fr;
+    padding: 0 1;
+    text-style: bold;
+    color: $accent;
+    background: $panel;
+}
+
+#room-scroll {
+    height: 1fr;
+}
+
+#room-grid {
+    grid-gutter: 0 1;
+    height: auto;
+}
+
+.card {
+    height: auto;
+    border: round $secondary;
+    border-title-color: $accent;
+    border-title-style: bold;
+    border-subtitle-color: $foreground 50%;
+    background: $surface;
+    padding: 0 1;
+}
+
+.card:focus-within {
+    border: round $primary;
+}
+
+.dp-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 0 0;
+}
+
+.dp-label {
+    width: 1fr;
+    height: 1;
+    color: $foreground 85%;
+}
+
+.dp-value {
+    width: 10;
+    height: 1;
+    text-align: right;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.dp-value.wide {
+    width: auto;
+    min-width: 10;
+}
+
+.dp-value.on {
+    color: $success;
+    background: $success 15%;
+}
+
+.dp-value.alarm {
+    color: $text;
+    background: $error;
+}
+
+.dp-bar {
+    width: 13;
+    height: 1;
+    color: $primary;
+}
+
+.dp-btn {
+    min-width: 3;
+    height: 1;
+    margin: 0 0 0 1;
+}
+
+.dp-row Switch {
+    height: 1;
+    border: none;
+    padding: 0;
+    margin: 0 0 0 1;
+}
+
+.dp-select {
+    width: 18;
+}
+
+.dp-input {
+    width: 8;
+}
+
+/* ---------- group addresses (F3) ---------- */
+#ga-tree {
+    width: 36;
+    border: round $secondary;
+    border-title-color: $primary;
+    background: $surface;
+}
+
+#ga-tree:focus {
+    border: round $primary;
+}
+
+/* ---------- logs (bus monitor, activity) ---------- */
+.logbox {
+    height: 1fr;
+    border: round $secondary;
+    border-title-color: $foreground 70%;
+    border-subtitle-color: $foreground 50%;
+    background: $surface;
+}
+
+.logbox:focus-within {
+    border: round $primary;
+}
+
+.loghead {
+    height: 1;
+    background: $panel;
+    color: $foreground;
+}
+
+LineLog {
+    height: 1fr;
+    background: $surface;
+}
+
+/* ---------- monitor toolbar / trends (F4, F7) ---------- */
+.toolbar {
+    height: 3;
+}
+
+.toolbar Input {
+    width: 1fr;
+}
+
+#mon-state {
+    width: auto;
+    padding: 1 1;
+    color: $accent;
+}
+
+.period {
+    margin: 1 0 0 1;
+}
+
+.kind {
+    margin: 1 0 0 1;
+}
+
+.spacer {
+    width: 3;
+}
+
+.period.-active, .kind.-active {
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
+
+#tr-side {
+    width: 58;
+}
+
+#tr-periods {
+    height: 2;
+}
+
+#tr-series {
+    height: auto;
+    padding: 0 1;
+}
+
+#tr-plot {
+    height: 1fr;
+    border: round $secondary;
+}
+
+/* ---------- alarms (F5) ---------- */
+#al-active {
+    height: 2fr;
+}
+
+#al-history {
+    height: 3fr;
+}
+
+/* ---------- dialogs ---------- */
+ModalScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+.dialog {
+    width: 64;
+    height: auto;
+    border: heavy $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+.dialog.wide {
+    width: 90;
+}
+
+.dialog-title {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+.dialog-buttons {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+.dialog-buttons Button {
+    margin-left: 1;
+}
+
+.kv {
+    grid-size: 2;
+    grid-columns: 16 1fr;
+    height: auto;
+}
+
+.kv-key {
+    color: $foreground 60%;
+}
+
+.kv-val {
+    text-style: bold;
+}
+
+/* ---------- screensaver (F9) ---------- */
+ScreenSaver {
+    align: center middle;
+    background: $background;
+}
+
+ScreenSaver.alarm {
+    background: $error 20%;
+}
+
+ScreenSaver.alarm.blink {
+    background: $error 35%;
+}
+
+#ss-body {
+    width: auto;
+    height: auto;
+    padding: 1 4;
+    color: $foreground;
+}
+
+#ss-foot {
+    dock: bottom;
+    width: 100%;
+    text-align: center;
+    color: $foreground 40%;
+}
+
+/* ---------- floor plan (F8) ---------- */
+#plan-tabs {
+    height: 1;
+    margin-bottom: 1;
+}
+
+.floor-tab {
+    margin-right: 1;
+}
+
+.floor-tab.-active {
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
+
+#plan-canvas {
+    height: 1fr;
+    background: $surface;
+}
+
+#plan-legend {
+    height: 1;
+}
+
+/* ---------- splash screen / about (F12) ---------- */
+SplashScreen {
+    align: center middle;
+    background: $background;
+}
+
+#splash-box {
+    width: auto;
+    height: auto;
+    align-horizontal: center;
+}
+
+#splash-logo {
+    width: auto;
+    height: auto;
+}
+
+#splash-sub, #splash-status {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    text-align: center;
+}
+
+.dialog.about {
+    width: auto;
+    max-width: 100%;
+    min-width: 70;
+}
+
+#about-logo {
+    width: auto;
+    margin-bottom: 1;
+}
+
+#about-close {
+    margin-top: 1;
+}
+
+#tiles.big .tile {
+    height: 5;
+}

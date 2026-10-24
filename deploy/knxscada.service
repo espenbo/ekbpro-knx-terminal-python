@@ -1,0 +1,26 @@
+# systemd service for the EKBPRO KNX Terminal Python server.
+#
+# Replace YOUR_USER and INSTALL_DIR (the folder with ./scada), e.g.:
+#   sed -e "s#YOUR_USER#$USER#g" -e "s#INSTALL_DIR#$PWD#g" deploy/knxscada.service \
+#       | sudo tee /etc/systemd/system/knxscada.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now knxscada
+#   journalctl -u knxscada -f
+[Unit]
+Description=EKBPRO KNX Terminal Python server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=INSTALL_DIR
+ExecStart=INSTALL_DIR/scada server
+Restart=always
+RestartSec=5
+# The socket becomes rw for the group (660)
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target
