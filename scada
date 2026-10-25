@@ -9,5 +9,7 @@
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 export KNXSCADA_CONFIG="${KNXSCADA_CONFIG:-$DIR/config.yaml}"
 export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+# Never import modules from the directory ./scada is started from (Python 3.11+).
+export PYTHONSAFEPATH=1
 if [ $# -eq 0 ]; then set -- tui; fi
 exec "$DIR/venv/bin/python" -m knxscada "$@"

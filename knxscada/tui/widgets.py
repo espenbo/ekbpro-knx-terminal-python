@@ -88,12 +88,22 @@ class FastTable(DataTable):
       on a small machine). Here only the cache entries of the changed row are
       dropped and only that row is repainted.
 
+    * **Plain text:** DataTable parses string cells as markup, so a name with
+      brackets – from ETS, an alarm text or a user name sent by a client –
+      could break the rendering (``[/x]`` raises an error and ends the TUI).
+      Strings are shown as they are.
+
     Note: this relies on private DataTable internals (cache layout, the
     ``_update_count`` key) and must be checked when upgrading Textual. If
     they change, :meth:`update_cell` falls back to the standard method.
     """
 
+    def add_row(self, *cells, **kw):
+        return super().add_row(*(Text(c) if isinstance(c, str) else c for c in cells), **kw)
+
     def update_cell(self, row_key, column_key, value, *, update_width: bool = False) -> None:
+        if isinstance(value, str):
+            value = Text(value)
         if update_width:
             super().update_cell(row_key, column_key, value, update_width=True)
             return

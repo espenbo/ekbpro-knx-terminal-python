@@ -616,12 +616,22 @@ class ScadaApp(App):
             t.append(" ")
             t.append(" DEMO ", style="bold black on yellow")
         t.append("  ")
-        if st.get("connected"):
+        ifaces = st.get("interfaces") or []
+        if len(ifaces) > 1:  # several KNX IP interfaces: one dot each
+            t.append("KNX", style="bold green" if all(i["connected"] for i in ifaces) else "bold red")
+            for i in ifaces:
+                t.append(f" ●{i['name']}", style="green" if i["connected"] else "bold red")
+        elif st.get("connected"):
             t.append("● KNX  ", style="bold green")
             t.append(_(str(st.get("connection", ""))), style="dim")
         else:
             t.append("● KNX  ", style="bold red")
             t.append(_(str(st.get("connection", "disconnected"))), style="bold red")
+        if "plc" in st:  # OPC UA bridge to a PLC is configured
+            plc_ok = st["plc"] == "connected"
+            t.append("   ● PLC", style="bold green" if plc_ok else "bold red")
+            if not plc_ok:
+                t.append(" " + _(str(st["plc"])), style="bold red")
         t.append(f"   {self.stats.get('per_min', 0) / 60:.1f} " + _("tlg/s"), style="dim")
         unacked = sum(1 for a in self.alarms if a["acked_ts"] is None)
         if unacked:
@@ -658,4 +668,7 @@ def run(cfg: Config) -> None:
         sys.stdout.flush()
     if app.restart_requested:
         os.environ[RESTART_ENV] = "1"
+        # PYTHONSAFEPATH: do not put the current directory on sys.path (Python 3.11+), so a module
+        # planted in the directory the TUI was started from can never be imported.
+        os.environ["PYTHONSAFEPATH"] = "1"
         os.execv(sys.executable, [sys.executable, "-m", "knxscada", "-c", str(cfg.path), "tui"])

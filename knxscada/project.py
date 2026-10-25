@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 EKB PRO
-"""Read the ETS project (``.knxproj``) and build the model the UI is made from.
+"""Read the ETS project(s) (``.knxproj`` / ``.knxprojarchive``) and build the model the UI is made from.
 
-Parsing a ``.knxproj`` with xknxproject takes several seconds, so the result
-is cached as JSON (``var/project_cache.json``) and only rebuilt when the
-project file is newer than the cache or the cache format changes.
+Parsing a project with xknxproject takes several seconds, so the result is
+cached as JSON (``var/project_cache.json``) and only rebuilt when a project
+file is newer than the cache, the project list or the ``rooms`` setting
+changed, or the cache format changes.
 
 The model
 ---------
@@ -27,8 +28,24 @@ Where floors/rooms/functions come from
    group → floor, middle group → room, and addresses whose names only differ
    by words like *switching/status/value* are merged into one card.
 
+3. **Room names in the group address names** (:func:`build_from_names`) – used
+   *instead of* 2 when ``project.rooms`` is set and the project has no ETS functions: for
+   projects structured by function ("Er Verdi Kontor 1", "Dim Kontor 1 tak"),
+   a regular expression finds the room in each name, and all addresses of a
+   room end up in that room – one card per trade (main group) and fixture.
+
 Addresses without an ETS role are classified by heuristics (name patterns,
 DPT and the write flag); see :func:`build_datapoints`.
+
+Several projects
+----------------
+A site can consist of several ETS projects (``project.files``), e.g. a main
+building and an annex with their own KNX installations. Each is parsed on its
+own and :func:`merge_models` joins them. The projects may use the same group
+addresses for different things, so every address of the second and later
+projects gets a prefix: ``S:1/2/3`` (see :func:`ga_key`). That key is used
+everywhere – state, database, alarms, PLC mapping; only the server strips it
+again when it talks to the bus (each KNX interface belongs to one project).
 """
 
 from __future__ import annotations
@@ -45,7 +62,18 @@ from .i18n import N_, _
 log = logging.getLogger(__name__)
 
 #: Bump when the structure of the cached model changes, so old caches are rebuilt.
-CACHE_VERSION = 4
+CACHE_VERSION = 7
+
+
+def ga_key(prefix: str, address: str) -> str:
+    """The key of a group address in the model: ``1/2/3``, or ``S:1/2/3`` in a project with a prefix."""
+    return f"{prefix}:{address}" if prefix else address
+
+
+def split_key(key: str) -> tuple[str, str]:
+    """``"S:1/2/3"`` → ``("S", "1/2/3")``; ``"1/2/3"`` → ``("", "1/2/3")``."""
+    prefix, sep, address = key.rpartition(":")
+    return (prefix, address) if sep else ("", key)
 
 # --- Name heuristics -----------------------------------------------------------------
 # The patterns include common English and Norwegian words used in ETS projects.
@@ -91,27 +119,84 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
 
     *force* ignores the cache (used by ``./scada import`` and ``init``).
     """
-    src = cfg.project_file
+    projects = cfg.projects
     cache = cfg.cache_path
+    sources = [[p["name"], str(p["file"]), p["prefix"], p["label"], p.get("rooms")] for p in projects]
+    sources = json.loads(json.dumps(sources))  # as stored in the cache (e.g. YAML int keys become strings)
     if not force and cache.exists():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
             # Without the .knxproj (e.g. copied installation) the cache is still usable.
-            fresh = not src.exists() or cache.stat().st_mtime >= src.stat().st_mtime
-            if data.get("cache_version") == CACHE_VERSION and fresh:
+            fresh = all(not p["file"].exists() or cache.stat().st_mtime >= p["file"].stat().st_mtime for p in projects)
+            if data.get("cache_version") == CACHE_VERSION and fresh and data.get("sources", sources) == sources:
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # unreadable cache: rebuild below
-    if not src.exists():
-        raise FileNotFoundError(_("Cannot find the project file {path}").format(path=src))
-    log.info(_("Parsing {name} (this takes a while)…").format(name=src.name))
     from xknxproject import XKNXProj  # imported lazily: only needed when (re)building
 
-    raw = XKNXProj(str(src), password=cfg.project.get("password") or None).parse()
-    model = build_model(raw)
+    models = []
+    for p in projects:
+        src = p["file"]
+        if not src.exists():
+            raise FileNotFoundError(_("Cannot find the project file {path}").format(path=src))
+        log.info(_("Parsing {name} (this takes a while)…").format(name=src.name))
+        models.append(build_model(XKNXProj(str(src), password=p.get("password") or None).parse(), rooms=p.get("rooms")))
+    model = models[0] if len(models) == 1 else merge_models(projects, models)
+    model["sources"] = sources
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
     return model
+
+
+def merge_models(projects: list[dict[str, Any]], models: list[dict[str, Any]]) -> dict[str, Any]:
+    """Join the models of several projects into one (see "Several projects" above).
+
+    Group addresses, function ids and room ids of every project with a prefix
+    get that prefix; floors are named "<label>: <floor>" and the group range
+    tree gets one top node per project.
+    """
+    gas: dict[str, dict] = {}
+    ranges: list[dict] = []
+    floors: list[dict] = []
+    functions: dict[str, dict] = {}
+    for p, m in zip(projects, models):
+        pre = p["prefix"]
+
+        def key(a: str | None, pre: str = pre) -> str | None:
+            return ga_key(pre, a) if a else a
+
+        for a, g in m["gas"].items():
+            gas[key(a)] = {**g, "address": key(a)}
+
+        def ranges_with_prefix(rs: list[dict], key=key) -> list[dict]:
+            return [{**r, "address": key(r["address"]), "gas": [key(a) for a in r["gas"]],
+                     "children": ranges_with_prefix(r["children"])} for r in rs]
+
+        # Top node per project; its "project" field is the prefix the address view filters on.
+        ranges.append({"address": "", "name": p["label"], "project": pre, "gas": [],
+                       "children": ranges_with_prefix(m["ranges"])})
+        fid_map = {}
+        for fid, f in m["functions"].items():
+            new = key(fid)
+            fid_map[fid] = new
+            functions[new] = {**f, "id": new, "datapoints": [
+                {**d, "ga": key(d.get("ga")), "status": key(d.get("status"))} for d in f["datapoints"]]}
+        for fl in m["floors"]:
+            floors.append({**fl, "name": f"{p['label']}: {_(fl['name'])}", "rooms": [
+                {**r, "id": key(r["id"]), "functions": [fid_map[f] for f in r["functions"]]} for r in fl["rooms"]]})
+    info = {**models[0]["info"], "name": " + ".join(str(m["info"].get("name") or p["label"])
+                                                     for p, m in zip(projects, models))}
+    return {
+        "cache_version": CACHE_VERSION,
+        "info": info,
+        "projects": [{"name": p["name"], "label": p["label"], "prefix": p["prefix"], "info": m["info"]}
+                     for p, m in zip(projects, models)],
+        "gas": gas,
+        "ranges": ranges,
+        "floors": floors,
+        "functions": functions,
+        "source": models[0].get("source", "ets-functions"),
+    }
 
 
 def _ga_sort_key(addr: str) -> tuple[int, ...]:
@@ -119,8 +204,11 @@ def _ga_sort_key(addr: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.split(r"[/.]", addr) if x.isdigit())
 
 
-def build_model(raw: dict[str, Any]) -> dict[str, Any]:
-    """Turn xknxproject's parse result into the model described in the module docstring."""
+def build_model(raw: dict[str, Any], rooms: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Turn xknxproject's parse result into the model described in the module docstring.
+
+    *rooms* is the ``project.rooms`` setting (see :func:`build_from_names`).
+    """
     cos = raw["communication_objects"]
 
     # --- 1. Group addresses ----------------------------------------------------------
@@ -146,6 +234,9 @@ def build_model(raw: dict[str, Any]) -> dict[str, Any]:
             "used": bool(links),
             "placeholder": bool(PLACEHOLDER_RE.match(ga["name"] or "")),
             "range": "",  # filled in below, e.g. "Lighting / Switching"
+            # Texts of the linked communication objects, e.g. a PLC's "M1_000_564_002_RT6101._01_Rom_SP"
+            # (used for PLC variable names, see knxscada.plc.tag_name).
+            "objects": sorted({co["text"] for co in links if co.get("text")}),
         }
 
     # --- 2. Group range tree -----------------------------------------------------------
@@ -221,7 +312,11 @@ def build_model(raw: dict[str, Any]) -> dict[str, Any]:
         floors.append({"name": N_("Other"), "rooms": [{"id": "rest", "name": N_("No room"), "functions": rest}]})
 
     source = "ets-functions"
-    if not functions:
+    if not functions and rooms and rooms.get("pattern"):
+        # No ETS functions, but the room is part of the group address names.
+        floors, functions = build_from_names(ranges, gas, rooms)
+        source = "room-names"
+    elif not functions:
         # The project has no ETS functions: build "rooms" from the group address structure.
         floors, functions = build_from_ranges(ranges, gas)
         source = "group-addresses"
@@ -300,6 +395,100 @@ def build_from_ranges(ranges: list[dict], gas: dict[str, dict]) -> tuple[list[di
         if floor["rooms"]:
             floors.append(floor)
     return floors, functions
+
+
+def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, Any]) -> tuple[list[dict], dict[str, dict]]:
+    """Rooms from the group address *names* (``project.rooms``).
+
+    *rule*::
+
+        pattern: "(?i)\\b(kontor\\s*\\d+|fellesrom|spiserom)\\b"   # finds the room in a name
+        floors: {0: "2. etg", 3: "2. etg", 1: "1. etg", 2: "1. etg"}  # main group → floor (optional)
+        names: {"2. etg/Kontor 6": "Office 6 · RT6206"}              # room names shown (optional)
+
+    The first group of *pattern* (or the whole match) is the room. The text
+    before it is the row label ("Er Verdi", "av/pa Status"), the text after it
+    the fixture ("tak", "nedhengt"); a name that *starts* with the room
+    ("Kontor 1 Request") has its label after it. Within a room there is one
+    card per main group and fixture, titled "<main group> <fixture>" without
+    the words of the floor name ("Lys 2 etg" on "2. etg" → "Lys", "Lys tak").
+    Without ``floors`` the floor is the name of the main group – set it when
+    the main groups are trades (lighting, heating) rather than floors.
+
+    Addresses whose name has no room are handled by :func:`build_from_ranges`.
+    """
+    pattern = re.compile(rule["pattern"])
+    floor_of = {str(k): str(v) for k, v in (rule.get("floors") or {}).items()}
+    names = {_fold(str(k)): str(v) for k, v in (rule.get("names") or {}).items()}
+    main_name = {r["address"]: r["name"] or r["address"] for r in ranges}
+
+    def usable(addr: str) -> bool:
+        g = gas[addr]
+        return bool(g["used"] and not g["placeholder"] and g["dpt"])
+
+    # (floor, room key) → {"name", fixture key → [(address, label)]}, in address order
+    found: dict[tuple[str, str], dict] = {}
+    matched: set[str] = set()
+    for addr, g in gas.items():
+        if not usable(addr):
+            continue
+        m = pattern.search(g["name"])
+        if not m:
+            continue
+        matched.add(addr)
+        room = re.sub(r"\s+", " ", m.group(1) if m.groups() else m.group(0)).strip()
+        main = addr.split("/")[0]
+        floor = floor_of.get(main, main_name.get(main, main))
+        before = g["name"][: m.start()].strip(" -:/")
+        after = re.sub(r"\s+", " ", g["name"][m.end():]).strip(" -:/")
+        if not before:  # "Kontor 1 Request": the label comes after the room
+            before, after = after, ""
+        entry = found.setdefault((floor, room.lower()), {"name": room[:1].upper() + room[1:], "cards": {}})
+        entry["cards"].setdefault((main, _norm(after)), {"fixture": _strip_suffix_words(after) if after else "",
+                                                          "members": []})["members"].append((addr, before))
+
+    floors: dict[str, dict] = {}
+    functions: dict[str, dict] = {}
+    for (floor, rkey), entry in found.items():
+        rid = f"RM-{_fold(floor)}-{_fold(rkey)}"
+        shown = names.get(_fold(f"{floor}/{entry['name']}"), entry["name"])
+        room = {"id": rid, "name": shown, "functions": []}
+        for i, ((main, _fx), card) in enumerate(entry["cards"].items()):
+            fake = {"name": "", "group_addresses": {a: {"role": ""} for a, _l in card["members"]}}
+            dps = build_datapoints(fake, gas, "")
+            if not dps:
+                continue
+            labels = {a: lab for a, lab in card["members"]}
+            for d in dps:
+                lab = labels.get(d["ga"] or d["status"] or "", "")
+                lab = LABEL_WORDS.get(lab.lower(), lab)
+                d["label"] = lab[:1].upper() + lab[1:] if lab else KIND_LABEL.get(d["kind"], N_("Value"))
+            floor_words = {_fold(w.strip(".")) for w in floor.split()}
+            trade = " ".join(w for w in main_name.get(main, main).split() if _fold(w.strip(".")) not in floor_words)
+            title = " ".join(x for x in (trade or main_name.get(main, main), card["fixture"]) if x)
+            kinds = {d["kind"] for d in dps}
+            if {"switch", "percent"} <= kinds:
+                usage = "dimmable light"
+            elif "switch" in kinds and re.search(r"(?i)lys|light|lamp|spot", title):
+                usage = "switchable light"
+            elif "setpoint" in kinds:
+                usage = "heating radiator"
+            else:
+                usage = "custom"
+            fid = f"{rid}-{i}"
+            functions[fid] = {"id": fid, "name": title, "usage": usage, "type": "", "room": shown,
+                              "datapoints": dps}
+            room["functions"].append(fid)
+        if room["functions"]:
+            floors.setdefault(floor, {"name": floor, "rooms": []})["rooms"].append(room)
+
+    for fl in floors.values():
+        fl["rooms"].sort(key=lambda r: [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", r["name"])])
+    # Everything without a room in its name: as before, from the group address structure.
+    rest = {a: g for a, g in gas.items() if a not in matched}
+    rest_floors, rest_functions = build_from_ranges(ranges, rest)
+    functions.update(rest_functions)
+    return list(floors.values()) + rest_floors, functions
 
 
 def _strip_suffix_words(name: str) -> str:

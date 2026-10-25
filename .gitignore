@@ -5,6 +5,8 @@ plan.yaml
 *.knxproj
 *.knxkeys
 exported_project_data.json
+plc_map.yaml
+GVL_*.st
 *.pdf
 *.dxf
 var/
@@ -25,3 +27,8 @@ dist/
 .idea/
 *.swp
 .DS_Store
+
+# Scratch area (customer projects, test data) – never published
+tmp/
+# Installations for other sites (configuration, databases) – never published
+sites/

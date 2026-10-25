@@ -1,0 +1,7 @@
+#!/bin/sh
+# Inside the container: run a knxscada command (default: the visualisation).
+#   docker exec -it knx knx                 -> visualisation
+#   docker exec -it knx knx tui --language nb
+#   docker exec knx knx info
+[ $# -eq 0 ] && set -- tui
+exec python -m knxscada "$@"

@@ -15,8 +15,9 @@ At start-up the logo is shown for 5 seconds. Any key skips it.
 ```
 
 **The top bar** shows whether KNX is connected (green ●) or disconnected (red ●), and the traffic in telegrams
-per second. It also shows the number of unacknowledged alarms (blinking red), the logged-in user with IP, and a
-clock. In demo mode a yellow **DEMO** label is shown.
+per second. With several KNX IP interfaces it shows one dot per interface (green connected, red not), and
+`● PLC` when the PLC bridge is configured. It also shows the number of unacknowledged alarms (blinking red),
+the logged-in user with IP, and a clock. In demo mode a yellow **DEMO** label is shown.
 
 ## Keys
 
@@ -104,7 +105,8 @@ or `75`. If the DPT is unknown, enter raw bytes in hex, for example `0C 33`.
 ## F4 Bus monitor
 
 All telegrams on the bus, live. Each line shows time, direction (← in, → out), source, destination, name,
-type (Write, Response, Read), DPT, raw data and decoded value.
+type (Write, Response, Read), DPT, raw data and decoded value. With several KNX IP interfaces a **Via** column
+shows the interface the telegram came through (the filter matches it too).
 
 - **`/`** filters, for example `1/1`, `stue`, `1.1.24` or `read`. Several words mean all must match.
 - **`p`** pauses and resumes.

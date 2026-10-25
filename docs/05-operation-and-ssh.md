@@ -46,6 +46,8 @@ language: `ssh -t user@server ~/ekbpro-knx-terminal-python/scada tui --language 
 - Linux: GNOME Terminal, Konsole, Kitty, WezTerm
 - macOS: iTerm2
 - Windows: Windows Terminal
+- iPhone/iPad: Blink Shell, Termius or Prompt 3. Very simple terminal apps (no alternate screen, no xterm
+  queries) cannot show full-screen programs: the text `$p$p` or `22;default` appears on the screen.
 
 **Terminal settings:**
 
@@ -74,8 +76,14 @@ owner's home directory has `chmod o+x` or group access.
 ## Access and security
 
 - **Anyone who can connect to the socket can operate the installation.** The socket has permissions `660` (owner
-  and group). Only give trusted users membership of the group.
-- Every operation is logged with the Linux user and the SSH client's IP in the event log (F6).
+  and group). Only give trusted users membership of the group. Better: install the program under its own
+  account (e.g. in `/opt`), so the group gives access to the socket but not write access to the program files.
+- Every operation is logged in the event log (F6) with the Linux account – taken from the kernel, not from
+  the client – and the SSH client's IP. Only addresses in the ETS project can be written.
+- `config.yaml` can hold passwords (KNX Secure keyring, PLC): `init` creates it with mode `600`; keep it so
+  (`chmod 600 config.yaml`).
+- The systemd unit in `deploy/` is hardened (read-only file system except `var/`, no new privileges, no
+  capabilities). The SSH configuration for the `scada` user disables all forwarding, also of the socket.
 - Use SSH keys, not passwords, and consider `AllowUsers` in `sshd_config`.
 - The server opens no network ports. It only listens on the local Unix socket.
 - Keep the KNX network separate from the internet. Use KNX Secure where possible.
@@ -89,6 +97,8 @@ Keep these:
 | `config.yaml`, `plan.yaml` | Your configuration |
 | `*.knxproj`, `*.knxkeys` | ETS project and keyring, if any. The keyring file is sensitive. |
 | `var/knxscada.db` | History: telegrams, events and alarms |
+| `plc_map.yaml`, the generated `GVL_*.st` | PLC mapping, if you use the PLC bridge |
+| `var/opcua/` | OPC UA client certificate and key. If lost, a new one is created and the PLC must trust it again. Sensitive. |
 
 The database can be copied while the server is running:
 

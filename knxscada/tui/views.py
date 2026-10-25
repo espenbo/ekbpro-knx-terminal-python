@@ -34,6 +34,7 @@ from textual.widgets import Button, DataTable, Input, Label, Static, Tree
 from .. import dpt as dptlib
 from ..alarms import is_critical, normalize_severity
 from ..i18n import N_, _
+from ..project import split_key
 from .charts import CHART_KINDS, CachedPlot, draw, palette
 from .graphics import big_text, resample, sparkline
 from .home import HomeModel
@@ -155,6 +156,7 @@ class OverviewView(GAWatcher, View):
         self.prev: dict[str, Any] = {}  # last value per GA, to mark changes in the activity log
         self.alarm_gas: set[str] = set()
         self._cells: dict[tuple, Any] = {}  # last value written to each climate table cell
+        self._sparks: dict[tuple, tuple] = {}  # (ga, bars) → (cache key, sparkline)
         self._light_rows: list = []
         self._status: dict[str, dict] = {}  # room id → room_status(), recomputed when dirty
         # While hidden, the activity log is not touched (appending scrolls it, which makes
@@ -330,12 +332,28 @@ class OverviewView(GAWatcher, View):
     # -- periodic refresh -------------------------------------------------------------------
     def _refresh(self) -> None:
         """Once per second: tiles always; table, room cards and lights only when something changed."""
-        if not self.display:
-            return
+        if not self.display or self.app.screen is not self.screen:
+            return  # hidden, or covered by the screensaver or a dialog
         if self._dirty:
             self._dirty = False
             self._update_rooms()
         self._tiles()
+
+    def _spark(self, ga: str | None, n: int, now: float) -> str:
+        """24-hour sparkline of *ga* with *n* bars, cached.
+
+        Resampling a day of history for every room each second cost up to
+        150 ms per second; the line only changes when a point arrives or a new
+        bar begins, so it is rebuilt only then.
+        """
+        hist = self.scada.history.get(ga or "", [])
+        key = (ga, n, int(now // (86400 / n)), len(hist), hist[-1][0] if hist else None, self.scada.ascii)
+        cached = self._sparks.get((ga, n))
+        if cached and cached[0] == key:
+            return cached[1]
+        line = sparkline(resample(hist, now - 86400, now, n), self.scada.ascii)
+        self._sparks[(ga, n)] = (key, line)
+        return line
 
     def _update_rooms(self) -> None:
         """Climate table, room cards and the list of lights that are on."""
@@ -355,7 +373,7 @@ class OverviewView(GAWatcher, View):
             if st["temp"] is not None and isinstance(sp, (int, float)) and st["temp"] < sp - 1.5:
                 temp.stylize(app.color("warning"))  # clearly below setpoint
             heat = Text(_("♨ on"), style=app.color("warning")) if st["heating"] else Text(_("off"), style=app.color("muted"))
-            spark = sparkline(resample(app.history.get(r.temp_ga, []), now - 86400, now, 24), app.ascii)
+            spark = self._spark(r.temp_ga, 24, now)
             cells = (("temp", temp), ("sp", sp_text), ("mode", st["mode"]), ("heat", heat),
                      ("spark", Text(spark, style=app.color("primary"))))
             for col, val in cells:
@@ -370,7 +388,7 @@ class OverviewView(GAWatcher, View):
             st = self._status[tile.room.id]
             spark = ""
             if tile.room.temp_ga:
-                spark = sparkline(resample(app.history.get(tile.room.temp_ga, []), now - 86400, now, 8), app.ascii)
+                spark = self._spark(tile.room.temp_ga, 8, now)
             tile.show(st, spark)
 
         lt = self.query_one("#ov-lights", DataTable)
@@ -402,7 +420,7 @@ class OverviewView(GAWatcher, View):
 
         out = HomeModel.value(state, home.outdoor_ga)
         if isinstance(out, (int, float)):
-            spark = sparkline(resample(app.history.get(home.outdoor_ga, []), now - 86400, now, 18), app.ascii)
+            spark = self._spark(home.outdoor_ga, 18, now)
             q("#t-out", Tile).show(f"{out:.1f}", "°C", "", "ok", spark)
         else:
             q("#t-out", Tile).show("-", "", no_data, "idle")
@@ -415,7 +433,7 @@ class OverviewView(GAWatcher, View):
 
         pw = HomeModel.value(state, home.power_ga)
         if isinstance(pw, (int, float)):
-            spark = sparkline(resample(app.history.get(home.power_ga, []), now - 86400, now, 18), app.ascii)
+            spark = self._spark(home.power_ga, 18, now)
             text = f"{pw / 1000:.2f}" if abs(pw) >= 10000 else f"{pw:.0f}"
             q("#t-power", Tile).show(text, "kW" if abs(pw) >= 10000 else "W", "", "ok", spark)
         else:
@@ -482,7 +500,8 @@ class GroupAddressView(View):
     def __init__(self, **kw: Any) -> None:
         super().__init__(**kw)
         self.show_unused = False
-        self.prefix: str | None = None  # selected main/middle group, e.g. "1" or "1/2"
+        # Selected main/middle group, e.g. "1" or "1/2", or ("project", prefix) for a project node.
+        self.prefix: str | tuple[str, str] | None = None
         self.rows: set[str] = set()     # addresses currently in the table
         self._pending: dict[str, dict] = {}  # last telegram per row, applied in batches by _flush
         self._filter_timer = None
@@ -504,7 +523,10 @@ class GroupAddressView(View):
 
         def add(node, ranges) -> None:
             for r in ranges:
-                child = node.add(f"{r['address']}  {r['name']}", data=r["address"], expand=False)
+                if "project" in r:  # several projects: one top node per project, filtered by prefix
+                    child = node.add(r["name"], data=("project", r["project"]), expand=False)
+                else:
+                    child = node.add(f"{r['address']}  {r['name']}", data=r["address"], expand=False)
                 if r["children"]:
                     add(child, r["children"])
                 else:
@@ -521,7 +543,10 @@ class GroupAddressView(View):
     def _matches(self, ga: dict, words: list[str]) -> bool:
         if not self.show_unused and (ga["placeholder"] or not ga["used"]):
             return False
-        if self.prefix and not ga["address"].startswith(self.prefix + "/") and ga["address"] != self.prefix:
+        if isinstance(self.prefix, tuple):
+            if split_key(ga["address"])[0] != self.prefix[1]:
+                return False
+        elif self.prefix and not ga["address"].startswith(self.prefix + "/") and ga["address"] != self.prefix:
             return False
         hay = f"{ga['address']} {ga['name']} {ga['dpt'] or ''} {ga['description']}".lower()
         return all(w in hay for w in words)  # every word must match (AND)
@@ -599,6 +624,8 @@ class MonitorView(View):
     #: (English column title, width).
     COLS = ((N_("Time"), 8), ("", 1), (N_("Source"), 8), (N_("Dest."), 8), (N_("Name"), 40), (N_("Type"), 8),
             (N_("DPT"), 7), (N_("Raw"), 12), (N_("Value"), 18))
+    #: With several KNX interfaces: an extra column with the interface the telegram came through.
+    COLS_VIA = COLS[:2] + ((N_("Via"), 8),) + COLS[2:4] + ((N_("Name"), 32),) + COLS[5:]
     BINDINGS = [
         Binding("p", "pause", _("Pause/resume")),
         Binding("c", "clear", _("Clear")),
@@ -609,6 +636,7 @@ class MonitorView(View):
         super().__init__(**kw)
         self.paused = False
         self.words: list[str] = []
+        self.cols = self.COLS
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="toolbar"):
@@ -619,15 +647,22 @@ class MonitorView(View):
             yield LineLog(self._line, sum(w + 1 for _title, w in self.COLS), max_lines=self.MAX_ROWS, id="mon-log")
 
     def on_mount(self) -> None:
-        self.query_one("#mon-head", LiveStatic).set(columns(*((_(t) if t else "", w, "bold") for t, w in self.COLS)))
+        self._set_columns(self.COLS)
         self.query_one("#mon-box").border_title = _("Bus monitor")
         self._update_state()
+
+    def _set_columns(self, cols: tuple) -> None:
+        """Switch between the normal columns and the ones with the interface (*Via*)."""
+        self.cols = cols
+        self.query_one("#mon-head", LiveStatic).set(columns(*((_(t) if t else "", w, "bold") for t, w in cols)))
+        self.query_one("#mon-log", LineLog).line_width = sum(w + 1 for _title, w in cols)
 
     def _match(self, t: dict) -> bool:
         if not self.words:
             return True
         ga = self.scada.ga(t["dst"])
-        hay = f"{t['dst']} {t['src']} {ga.get('name', '')} {t.get('text', '')} {t['type']} {_(t['type'])}".lower()
+        hay = (f"{t['dst']} {t['src']} {ga.get('name', '')} {t.get('text', '')} {t['type']} {_(t['type'])}"
+               f" {t.get('via') or ''}").lower()
         return all(w in hay for w in self.words)
 
     def _line(self, t: dict) -> Text:
@@ -641,10 +676,15 @@ class MonitorView(View):
                 ga.get("dpt") or "", t.get("raw") or "", t.get("text") or "")
         styles = (muted, f"bold {app.color('accent')}" if out else muted, muted, "", "",
                   muted if t["type"] == "read" else "", muted, muted, "bold")
-        return columns(*((v, w, s) for v, (_title, w), s in zip(vals, self.COLS, styles)))
+        if self.cols is self.COLS_VIA:
+            vals = vals[:2] + (t.get("via") or "",) + vals[2:]
+            styles = styles[:2] + (app.color("accent"),) + styles[2:]
+        return columns(*((v, w, s) for v, (_title, w), s in zip(vals, self.cols, styles)))
 
     def rebuild(self) -> None:
         """Re-apply the filter to the client's telegram buffer (newest MAX_ROWS matches)."""
+        if len(self.scada.status.get("interfaces") or []) > 1 and self.cols is not self.COLS_VIA:
+            self._set_columns(self.COLS_VIA)
         self.words = self.query_one("#mon-filter", Input).value.lower().split()
         items: list[dict] = []
         for t in reversed(self.scada.telegrams):
@@ -662,6 +702,11 @@ class MonitorView(View):
 
     def on_telegram(self, t: dict) -> None:
         # While hidden we skip appending; the view is rebuilt from the buffer when shown.
+        if t.get("via") and self.cols is not self.COLS_VIA:
+            self._set_columns(self.COLS_VIA)
+            if self.display:
+                self.rebuild()  # the lines already shown need the new column too
+                return
         if not self.paused and self.display and self._match(t):
             self.query_one("#mon-log", LineLog).append(t)
 

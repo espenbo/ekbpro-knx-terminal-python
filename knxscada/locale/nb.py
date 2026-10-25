@@ -127,6 +127,23 @@ CATALOGUE: dict[str, str] = {
     "Unknown command {cmd}": "Ukjent kommando {cmd}",
     "Unknown knx.connection {name} in config.yaml – use one of: {valid}":
         "Ukjent knx.connection {name} i config.yaml – bruk en av: {valid}",
+    "knx.interfaces must be a list": "knx.interfaces må være en liste",
+    "knx interface {name}: the name may only have letters, digits, - _ . (max 16)":
+        "KNX-grensesnitt {name}: navnet kan bare ha bokstaver, sifre, - _ . (maks 16)",
+    "knx interface {name} is listed twice": "KNX-grensesnitt {name} står to ganger",
+    "Only one KNX interface can have default: true": "Bare ett KNX-grensesnitt kan ha default: true",
+    "knx interface {name}: unknown project {project} – use one of: {valid}":
+        "KNX-grensesnitt {name}: ukjent prosjekt {project} – bruk et av: {valid}",
+    "No KNX interface for the project of {address}": "Ingen KNX-grensesnitt for prosjektet til {address}",
+    "partly connected": "delvis tilkoblet",
+    "{address} is not in the ETS project": "{address} finnes ikke i ETS-prosjektet",
+    "PLC re-synchronised with the KNX values": "PLS-en er synkronisert med KNX-verdiene igjen",
+    "the PLC reported variables without a value (download or reset?)":
+        "PLS-en meldte variabler uten verdi (nedlasting eller reset?)",
+    "{n} PLC variables changed at once (download or reset?)": "{n} PLS-variabler endret seg samtidig (nedlasting eller reset?)",
+    "PLC restart detected – nothing sent to KNX: {reason}": "PLS-omstart oppdaget – ingenting sendt til KNX: {reason}",
+    "room names in the group addresses": "romnavn i gruppeadressene",
+    "Via": "Via",
     "ALARM {severity}: {text} ({address})": "ALARM {severity}: {text} ({address})",
     "Alarm cleared: {text} ({address})": "Alarm opphørt: {text} ({address})",
     "Alarm acknowledged: {text}": "Alarm kvittert: {text}",
@@ -398,4 +415,37 @@ CATALOGUE: dict[str, str] = {
     "Set exact value": "Sett nøyaktig verdi",
     "Control:": "Styring:",
     "Status:": "Status:",
+
+    # --- PLC bridge over OPC UA (plc.py, opcua_bridge.py, plc-map) --------------------------
+    "plc": "pls",
+    "Wrote {path}: {n} group addresses, {active} exchanged with the PLC (select: {select})":
+        "Skrev {path}: {n} gruppeadresser, {active} utveksles med PLS-en (select: {select})",
+    "Wrote {path} ({n} variables) – import it into the CODESYS project as GVL {gvl}":
+        "Skrev {path} ({n} variabler) – importer den i CODESYS-prosjektet som GVL {gvl}",
+    "{n} variables": "{n} variabler",
+    "{n} addresses left out – their DPT cannot be exchanged (e.g. relative dimming, date/time)":
+        "{n} adresser er utelatt – DPT-en kan ikke utveksles (f.eks. relativ dimming, dato/tid)",
+    "No longer in the project, removed: {addresses}": "Finnes ikke lenger i prosjektet, fjernet: {addresses}",
+    "Mark addresses with use: true in {path} (or use --all) and run plc-map again.":
+        "Merk adresser med use: true i {path} (eller bruk --all) og kjør plc-map igjen.",
+    "Created the OPC UA client certificate %s – trust it in the PLC":
+        "Laget OPC UA-klientsertifikatet %s – godkjenn det i PLS-en",
+    "connection lost": "forbindelsen ble brutt",
+    "PLC (OPC UA) disconnected": "PLS (OPC UA) frakoblet",
+    "PLC (OPC UA) connected: {n} variables": "PLS (OPC UA) tilkoblet: {n} variabler",
+    "Invalid plc.security {value} – use None, or <policy>,Sign|SignAndEncrypt with policy Basic256Sha256, Aes128Sha256RsaOaep or Aes256Sha256RsaPss":
+        "Ugyldig plc.security {value} – bruk None, eller <policy>,Sign|SignAndEncrypt med policy Basic256Sha256, Aes128Sha256RsaOaep eller Aes256Sha256RsaPss",
+    "{n} variables are missing in the PLC (import the new GVL): {names}":
+        "{n} variabler mangler i PLS-en (importer den nye GVL-en): {names}",
+    "GVL {gvl} not found on the PLC – is it in the Symbol Configuration?":
+        "Fant ikke GVL {gvl} i PLS-en – er den med i Symbol Configuration?",
+    "PLC → KNX {address} failed: {error}": "PLS → KNX {address} feilet: {error}",
+    "PLC (OPC UA): {error}. Retrying in {delay} s": "PLS (OPC UA): {error}. Prøver igjen om {delay} s",
+    "PLC bridge: {n} group addresses ({path})": "PLS-bro: {n} gruppeadresser ({path})",
+    "plc.enabled is set, but {path} does not exist – create it with ./scada plc-map":
+        "plc.enabled er satt, men {path} finnes ikke – lag den med ./scada plc-map",
+    "No plc.endpoint in {path} – trying {endpoint}": "Ingen plc.endpoint i {path} – prøver {endpoint}",
+    "Could not connect to the PLC at {endpoint}: {error}": "Fikk ikke kontakt med PLS-en på {endpoint}: {error}",
+    "PLC: the password is sent unencrypted (plc.security: None)": "PLS: passordet sendes ukryptert (plc.security: None)",
+    "New variables in the PLC – reconnecting": "Nye variabler i PLS-en – kobler til på nytt",
 }

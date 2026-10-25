@@ -6,7 +6,7 @@ One server process owns the KNX connection. Every TUI session (local or over
 SSH) is just a client of this server, connected through a Unix socket. That
 design gives three important properties:
 
-* only **one KNX tunnel** is used no matter how many people are logged in
+* only **one KNX tunnel per IP interface** is used no matter how many people are logged in
   (IP interfaces typically offer only 1–5 tunnels);
 * **logging and alarms run continuously**, also when nobody is logged in;
 * clients can come and go (or crash) without affecting the bus.
@@ -18,6 +18,10 @@ Data flow::
                                           ├──▶ alarm evaluation
                                           └──▶ broadcast to all clients
     client "write" ──▶ _command ──▶ _send ──▶ xknx ──▶ bus (and back through ingest)
+
+With several KNX IP interfaces (``knx.interfaces``) there is one xknx instance
+per interface; :mod:`knxscada.knx_interfaces` chooses the interface for each
+outgoing telegram and drops copies of a telegram seen through more than one.
 
 In ``--demo`` mode a :class:`Simulator` produces telegrams instead of xknx,
 so the whole system can be tried without a KNX installation.
@@ -32,10 +36,15 @@ import contextlib
 import json
 import logging
 import os
+import pwd
 import random
+import re
 import signal
+import socket
+import struct
 import time
 from collections import deque
+from functools import partial
 from typing import Any
 
 from xknx.dpt import DPTArray, DPTBinary
@@ -46,7 +55,15 @@ from . import dpt as dptlib
 from .alarms import build_rules, normalize_severity
 from .config import Config
 from .i18n import N_, _
-from .project import SETPOINT_RE, load_project
+from .knx_interfaces import (
+    DEDUP_MS,
+    Deduplicator,
+    Router,
+    connection_type,
+    describe,
+    interface_configs,
+)
+from .project import SETPOINT_RE, ga_key, load_project, split_key
 from .store import Store
 
 log = logging.getLogger("knxscada.server")
@@ -57,6 +74,14 @@ MAX_CLIENT_BUFFER = 4 * 1024 * 1024
 
 #: xknx connection state name → status code sent to clients (translated by the TUI).
 CONNECTION_STATES = {"CONNECTED": N_("connected"), "CONNECTING": N_("connecting"), "DISCONNECTED": N_("disconnected")}
+
+#: Upper bounds for client queries, so one request cannot block the server or exhaust its memory.
+MAX_LIMIT = 5000
+MAX_MINUTES = 24 * 60
+MAX_HOURS = 24 * 400
+
+#: What may appear in a user name in the audit log (no markup, no control characters).
+USER_RE = re.compile(r"[^\w@.:\-]+")
 
 #: Telegrams older than the retention time are deleted in batches of this size, with a
 #: pause for the event loop in between, so a large purge never blocks the server.
@@ -127,22 +152,29 @@ class ScadaServer:
             self.alarms[a["id"]] = a
         self.started = time.time()
         self.tel_count = 0
-        self.tel_times: deque[float] = deque(maxlen=5000)  # timestamps of recent telegrams (rate)
+        self.tel_times: deque[float] = deque(maxlen=100_000)  # timestamps of the last minute's telegrams (rate)
+        # One entry per KNX IP interface; validated here so a typo stops the server at once.
+        self.ifaces: list[dict[str, Any]] = [] if demo else interface_configs(
+            cfg.knx, {p["name"]: p["prefix"] for p in cfg.projects})
+        self.router = Router(self.ifaces) if self.ifaces else None
+        self._prefix = {c["name"]: c["prefix"] for c in self.ifaces}
+        self.dedup = Deduplicator(int(cfg.knx.get("dedup_ms", DEDUP_MS))) if len(self.ifaces) > 1 else None
+        self.xknx: dict[str, Any] = {}  # interface name → XKNX
         self.status: dict[str, Any] = {
             "connected": False,
             "connection": N_("demo") if demo else N_("disconnected"),
-            "gateway": "simulator" if demo else f"{cfg.knx.get('gateway_ip') or 'auto'}",
+            "gateway": "simulator" if demo else ", ".join(describe(c) for c in self.ifaces),
+            "interfaces": [{"name": c["name"], "gateway": describe(c), "project": c["project"], "connected": False,
+                            "connection": N_("disconnected")} for c in self.ifaces],
             "started": self.started,
         }
-        if not demo:
-            self._connection_type()  # fail early on a typo in knx.connection
-        self.xknx = None
         self.sim: Simulator | None = None
         self._stop = asyncio.Event()
+        self.plc = self._make_plc_bridge()
 
         # Start with the last known values from the database so clients see
         # something immediately, before the bus has answered our read requests.
-        for ga, last in self.store.last_values().items():
+        for ga, last in self.store.last_values(list(self.gas)).items():
             if ga in self.gas:
                 last["text"] = dptlib.fmt(self.gas[ga]["dpt"], last["value"])
                 self.state[ga] = last
@@ -166,12 +198,15 @@ class ScadaServer:
                 loop.add_signal_handler(sig, self._on_signal)
 
         tasks = [asyncio.create_task(self._housekeeping())]
+        if self.plc is not None:
+            tasks.append(asyncio.create_task(self.plc.run()))
         if self.demo:
             self.sim = Simulator(self)
             tasks.append(asyncio.create_task(self.sim.run()))
             self._set_status(True, N_("demo"))
         else:
-            tasks.append(asyncio.create_task(self._knx_connect()))
+            tasks += [asyncio.create_task(self._knx_connect(c)) for c in self.ifaces]
+            tasks.append(asyncio.create_task(self._read_on_start()))
 
         await self._stop.wait()
         log.info(_("Stopping …"))
@@ -184,11 +219,14 @@ class ScadaServer:
         self.clients.clear()
         with contextlib.suppress(Exception):
             await asyncio.wait_for(server.wait_closed(), 2)
+        if self.plc is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.plc.stop(), 5)
         for t in tasks:
             t.cancel()
-        if self.xknx is not None:
+        for xknx in self.xknx.values():
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(self.xknx.stop(), 5)
+                await asyncio.wait_for(xknx.stop(), 5)
         self.event("info", "system", _("Server stopped"))
         self.store.close()
         with contextlib.suppress(FileNotFoundError):
@@ -226,81 +264,82 @@ class ScadaServer:
         return {"count": self.tel_count, "per_min": len(self.tel_times), "clients": len(self.clients)}
 
     # -- KNX ------------------------------------------------------------------------------
-    def _connection_type(self):
-        """The xknx ``ConnectionType`` for ``knx.connection`` (ValueError if unknown)."""
-        from xknx.io import ConnectionType
+    async def _knx_connect(self, c: dict[str, Any]) -> None:
+        """Connect to one KNX IP interface, retrying with back-off until it succeeds.
 
-        types = {
-            "tunneling": ConnectionType.TUNNELING,
-            "tunneling_tcp": ConnectionType.TUNNELING_TCP,
-            "tunneling_secure": ConnectionType.TUNNELING_TCP_SECURE,
-            "routing": ConnectionType.ROUTING,
-            "routing_secure": ConnectionType.ROUTING_SECURE,
-            "automatic": ConnectionType.AUTOMATIC,
-        }
-        name = str(self.cfg.knx.get("connection") or "automatic").lower()
-        if name not in types:
-            raise ValueError(_("Unknown knx.connection {name} in config.yaml – use one of: {valid}").format(
-                name=repr(name), valid=", ".join(types)))
-        return types[name]
-
-    async def _knx_connect(self) -> None:
-        """Connect to KNX (retrying with back-off), then read the current state of the plant."""
+        After the first successful connect xknx reconnects by itself.
+        """
         from xknx import XKNX
         from xknx.io import ConnectionConfig
 
-        k = self.cfg.knx
-        ctype = self._connection_type()
+        name = c["name"]
         secure = None
-        if k.get("keyring_file"):
+        if c.get("keyring_file"):
             # KNX Secure: keys come from the keyring exported from ETS.
             from xknx.io import SecureConfig
 
             secure = SecureConfig(
-                knxkeys_file_path=str(self.cfg.resolve(k["keyring_file"])),
-                knxkeys_password=k.get("keyring_password"),
-                user_id=k.get("user_id"),
+                knxkeys_file_path=str(self.cfg.resolve(c["keyring_file"])),
+                knxkeys_password=c.get("keyring_password"),
+                user_id=c.get("user_id"),
             )
         conn = ConnectionConfig(
-            connection_type=ctype,
-            gateway_ip=k.get("gateway_ip"),
-            gateway_port=int(k.get("gateway_port", 3671)),
-            local_ip=k.get("local_ip"),
-            individual_address=k.get("individual_address"),
-            auto_reconnect=True,  # xknx reconnects by itself after the first successful connect
+            connection_type=connection_type(c["connection"]),
+            gateway_ip=c.get("gateway_ip"),
+            gateway_port=int(c.get("gateway_port", 3671)),
+            local_ip=c.get("local_ip"),
+            route_back=bool(c.get("route_back", False)),  # behind NAT / VPN (Tailscale, WireGuard)
+            individual_address=c.get("individual_address"),
+            auto_reconnect=True,
             secure_config=secure,
         )
         delay = 5
         while True:
-            self.xknx = XKNX(connection_config=conn, connection_state_changed_cb=self._on_conn_state)
+            xknx = XKNX(connection_config=conn, connection_state_changed_cb=partial(self._on_conn_state, name))
+            self.xknx[name] = xknx
             # match_for_outgoing: our own telegrams also pass through _on_telegram,
             # so they are logged and update the state exactly like incoming ones.
-            self.xknx.telegram_queue.register_telegram_received_cb(self._on_telegram, match_for_outgoing=True)
+            xknx.telegram_queue.register_telegram_received_cb(partial(self._on_telegram, name), match_for_outgoing=True)
             try:
-                await self.xknx.start()
-                break
+                await xknx.start()
+                return
             except Exception as exc:  # noqa: BLE001 - any failure: report and retry
                 self.event("error", "knx", _("Could not connect to KNX ({error}). Retrying in {delay} s").format(
-                    error=exc, delay=delay))
+                    error=exc, delay=delay) + self._iface_suffix(name))
                 with contextlib.suppress(Exception):
-                    await self.xknx.stop()
+                    await xknx.stop()
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60)
-        if read_mode(self.cfg.server.get("read_on_start")) != "off":
-            await self._read_all()
 
-    def _on_conn_state(self, state) -> None:
-        """xknx callback when the connection state changes."""
+    def _iface_suffix(self, name: str) -> str:
+        """`` [name]`` after KNX messages when there is more than one interface."""
+        return f" [{name}]" if len(self.ifaces) > 1 else ""
+
+    def _on_conn_state(self, name: str, state) -> None:
+        """xknx callback when the connection state of interface *name* changes."""
         connected = state.name == "CONNECTED"
-        self._set_status(connected, CONNECTION_STATES.get(state.name, state.name.lower()))
-        self.event("info" if connected else "error", "knx", _("KNX connection: {state}").format(state=state.name))
+        code = CONNECTION_STATES.get(state.name, state.name.lower())
+        for i in self.status["interfaces"]:
+            if i["name"] == name:
+                i.update(connected=connected, connection=code)
+        self.event("info" if connected else "error", "knx",
+                   _("KNX connection: {state}").format(state=state.name) + self._iface_suffix(name))
+        # Overall: connected while at least one interface is; the TUI shows the others per interface.
+        ifs = self.status["interfaces"]
+        n = sum(i["connected"] for i in ifs)
+        if n == len(ifs):
+            self._set_status(True, N_("connected"))
+        elif n:
+            self._set_status(True, N_("partly connected"))
+        else:
+            self._set_status(False, code if len(ifs) == 1 else N_("disconnected"))
 
     def _set_status(self, connected: bool, code: str) -> None:
         self.status.update(connected=connected, connection=code)
         self._broadcast({"type": "status", "status": self.status})
 
-    def _on_telegram(self, telegram) -> None:
-        """xknx callback for every telegram (incoming and outgoing)."""
+    def _on_telegram(self, name: str, telegram) -> None:
+        """xknx callback for every telegram (incoming and outgoing) of interface *name*."""
         if not isinstance(telegram.destination_address, GroupAddress):
             return  # device management traffic – not interesting for a SCADA
         payload = telegram.payload
@@ -312,12 +351,24 @@ class ScadaServer:
             kind = "read"
         else:
             return
+        # With several projects the address gets the prefix of this interface's project.
+        dst = ga_key(self._prefix[name], str(telegram.destination_address))
+        value = getattr(payload, "value", None)
+        incoming = telegram.direction != TelegramDirection.OUTGOING
+        if self.dedup is not None:
+            raw = dptlib.raw_hex(value) if value is not None else None
+            if self.dedup.duplicate(name, dst, kind, raw):
+                return  # the same telegram, seen through another (coupled) interface
+            if incoming:
+                assert self.router is not None
+                self.router.learn(dst, name)
         self.ingest(
             src=str(telegram.source_address),
-            dst=str(telegram.destination_address),
+            dst=dst,
             kind=kind,
-            value=getattr(payload, "value", None),
-            direction="out" if telegram.direction == TelegramDirection.OUTGOING else "in",
+            value=value,
+            direction="in" if incoming else "out",
+            via=name if len(self.ifaces) > 1 else "",
         )
 
     async def _send(self, ga: str, kind: str, payload: DPTArray | DPTBinary | None) -> None:
@@ -327,10 +378,30 @@ class ScadaServer:
             self.ingest(src="0.0.0", dst=ga, kind=kind, value=payload, direction="out")
             self.sim.on_outgoing(ga, kind, payload)
             return
-        if self.xknx is None or not self.status["connected"]:
-            raise RuntimeError(_("Not connected to KNX"))
+        assert self.router is not None
+        name = self.router.route(ga)
+        if name is None:
+            raise RuntimeError(_("No KNX interface for the project of {address}").format(address=ga))
+        xknx = self.xknx.get(name)
+        if xknx is None or not self._iface_connected(name):
+            raise RuntimeError(_("Not connected to KNX") + self._iface_suffix(name))
         apci = GroupValueRead() if kind == "read" else GroupValueWrite(payload)
-        await self.xknx.telegrams.put(Telegram(destination_address=GroupAddress(ga), payload=apci))
+        await xknx.telegrams.put(Telegram(destination_address=GroupAddress(split_key(ga)[1]), payload=apci))
+
+    def _iface_connected(self, name: str) -> bool:
+        return any(i["connected"] for i in self.status["interfaces"] if i["name"] == name)
+
+    async def _read_on_start(self) -> None:
+        """``server.read_on_start``: once every interface is connected (at most 30 s), read the plant."""
+        if read_mode(self.cfg.server.get("read_on_start")) == "off":
+            return
+        for _i in range(300):
+            if all(i["connected"] for i in self.status["interfaces"]):
+                break
+            await asyncio.sleep(0.1)
+        while not self.status["connected"]:
+            await asyncio.sleep(1)
+        await self._read_all()
 
     async def _read_all(self) -> None:
         """Ask the bus for the current value of the addresses chosen by :func:`read_targets`.
@@ -347,8 +418,11 @@ class ScadaServer:
             await asyncio.sleep(interval)
 
     # -- telegram processing ------------------------------------------------------------------
-    def ingest(self, src: str, dst: str, kind: str, value: Any, direction: str) -> None:
-        """Handle one group telegram: store, update state, evaluate alarms, broadcast."""
+    def ingest(self, src: str, dst: str, kind: str, value: Any, direction: str, via: str = "") -> None:
+        """Handle one group telegram: store, update state, evaluate alarms, broadcast.
+
+        *via* is the name of the KNX interface (only set when there are several).
+        """
         ga = self.gas.get(dst)
         dpt = ga["dpt"] if ga else None
         decoded = None
@@ -362,6 +436,7 @@ class ScadaServer:
             "dir": direction,
             "src": src,
             "dst": dst,
+            "via": via,
             "type": kind,
             "raw": raw,
             "value": decoded,
@@ -379,6 +454,25 @@ class ScadaServer:
         self._broadcast(msg)
         if kind != "read" and dst in self.rules:
             self._check_alarm(dst, decoded)
+        if kind != "read" and self.plc is not None:
+            self.plc.on_knx(dst, decoded)
+
+    def _make_plc_bridge(self):
+        """The OPC UA bridge to a PLC when ``plc.enabled`` is set (see :mod:`knxscada.opcua_bridge`)."""
+        if not self.cfg.plc.get("enabled"):
+            return None
+        from .opcua_bridge import PlcBridge, parse_security
+        from .plc import load_map
+
+        path = self.cfg.resolve(self.cfg.plc.get("map", "plc_map.yaml"))
+        if not path.exists():
+            raise FileNotFoundError(_("plc.enabled is set, but {path} does not exist – create it with ./scada plc-map").format(
+                path=path))
+        parse_security(self.cfg.plc.get("security"))  # fail early on a typo
+        pmap = load_map(path, self.gas)
+        self.status["plc"] = N_("disconnected")
+        log.info(_("PLC bridge: {n} group addresses ({path})").format(n=len(pmap.active()), path=path.name))
+        return PlcBridge(self, self.cfg, pmap)
 
     def _check_alarm(self, addr: str, value: Any) -> None:
         """Raise or clear the alarm bound to *addr* according to its rule.
@@ -453,14 +547,17 @@ class ScadaServer:
         }
         writer.write((json.dumps(hello, ensure_ascii=False, default=str) + "\n").encode())
         self.clients.add(writer)
-        user = "?"
+        peer = _peer_user(writer)
+        user = peer or "?"
         try:
             while line := await reader.readline():
                 try:
                     req = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                user = req.get("user", user)
+                if not isinstance(req, dict):
+                    continue
+                user = _audit_user(peer, req.get("user"))
                 rid = req.get("id")
                 try:
                     data = await self._command(req, user)
@@ -487,7 +584,10 @@ class ScadaServer:
             return None
         if cmd == "write":
             ga = req["ga"]
-            dpt = req.get("dpt") or self.gas.get(ga, {}).get("dpt")
+            if ga not in self.gas:
+                raise ValueError(_("{address} is not in the ETS project").format(address=ga))
+            # The project's DPT wins; the client's is only used when ETS has none.
+            dpt = self.gas[ga].get("dpt") or req.get("dpt")
             payload = dptlib.encode(dpt, req["value"])
             await self._send(ga, "write", payload)
             # Audit log: who wrote what (decoded back so the log shows the real value).
@@ -496,6 +596,8 @@ class ScadaServer:
             self.event("info", "operation", f"{ga} {name} ← {shown}", user)
             return None
         if cmd == "read":
+            if req["ga"] not in self.gas:
+                raise ValueError(_("{address} is not in the ETS project").format(address=req["ga"]))
             await self._send(req["ga"], "read", None)
             return None
         if cmd == "ack":
@@ -514,16 +616,53 @@ class ScadaServer:
             self._broadcast_alarms()
             return acked
         if cmd == "telegrams":
-            return self.store.telegrams(int(req.get("limit", 500)), req.get("ga"), req.get("before_id"))
+            return self.store.telegrams(_bounded(req.get("limit", 500), MAX_LIMIT), req.get("ga"), req.get("before_id"))
         if cmd == "events":
-            return self.store.events(int(req.get("limit", 500)))
+            return self.store.events(_bounded(req.get("limit", 500), MAX_LIMIT))
         if cmd == "alarm_history":
-            return self.store.alarm_history(int(req.get("limit", 200)))
+            return self.store.alarm_history(_bounded(req.get("limit", 200), MAX_LIMIT))
         if cmd == "traffic":
-            return self.store.traffic(int(req.get("minutes", 60)))
+            return self.store.traffic(_bounded(req.get("minutes", 60), MAX_MINUTES))
         if cmd == "history":
-            return self.store.history(req["ga"], time.time() - float(req.get("hours", 24)) * 3600)
+            # In a worker thread: a 30-day trend of a busy address must not stop the telegram handling.
+            return await asyncio.to_thread(
+                self.store.read_history, req["ga"], time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
+                _bounded(req.get("max_points", 4000), 20000))
         raise ValueError(_("Unknown command {cmd}").format(cmd=repr(cmd)))
+
+
+def _bounded(value: Any, upper: int) -> int:
+    """A client-supplied count, limited to 1 … *upper*."""
+    return max(1, min(int(float(value)), upper))
+
+
+def _peer_user(writer: asyncio.StreamWriter) -> str | None:
+    """The account of the process at the other end of the Unix socket (from the kernel, not the client)."""
+    sock = writer.get_extra_info("socket")
+    try:
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", creds)
+    except (AttributeError, OSError):  # not Linux, or not a Unix socket
+        return None
+    if uid == os.getuid():
+        return None  # the server's own account (e.g. inside Docker): the client's name is all we have
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return f"uid{uid}"
+
+
+def _audit_user(peer: str | None, claimed: Any) -> str:
+    """The name for the audit log: the kernel's account name, plus the SSH address the client reports.
+
+    The client's own name is only used when the kernel cannot tell us more (same account as the
+    server). Anything that is not a plain name/address is removed, so it cannot inject markup.
+    """
+    text = USER_RE.sub("", claimed if isinstance(claimed, str) else "")[:64]
+    if peer is None:
+        return text or "?"
+    host = text.partition("@")[2]
+    return f"{peer}@{host}" if host else peer
 
 
 class Simulator:

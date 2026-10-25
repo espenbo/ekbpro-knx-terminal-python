@@ -21,6 +21,20 @@ Restart=always
 RestartSec=5
 # The socket becomes rw for the group (660)
 UMask=0007
+# Hardening: the server only needs the network, its install directory (read) and var/ (write).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=INSTALL_DIR/var
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

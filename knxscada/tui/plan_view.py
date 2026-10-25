@@ -342,8 +342,8 @@ class PlanView(View):
 
     def _tick(self) -> None:
         """Once per second: repaint only if the status of a room on this floor changed."""
-        if not self.display or self.floor is None:
-            return
+        if not self.display or self.floor is None or self.app.screen is not self.screen:
+            return  # hidden, or covered by the screensaver or a dialog
         sig = tuple(
             tuple(sorted((st or {}).items())) for st in (self.status_of(r) for r in self.floor.rooms)
         )

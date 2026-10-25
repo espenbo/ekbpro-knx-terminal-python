@@ -51,6 +51,7 @@ class ScreenSaver(Screen):
         super().__init__()
         self.page = 0
         self.last_switch = time.time()
+        self._shown: dict[str | None, str] = {}  # widget id → markup last shown
 
     @property
     def scada(self) -> ScadaApp:
@@ -100,17 +101,22 @@ class ScreenSaver(Screen):
         if unacked:
             self.add_class("alarm")
             self.set_class(int(time.time()) % 2 == 0, "blink")
-            body.update(self.page_alarm(unacked))
+            self._set(body, self.page_alarm(unacked))
         else:
             self.remove_class("alarm", "blink")
-            body.update(pages[current][1]())
+            self._set(body, pages[current][1]())
         dots = "  ".join(("●" if i == current else "○") for i in range(len(pages)))
         extra = ""
         if acked_active:
             extra = "   ·   [$warning]⚠ " + _("{n} active alarms (acknowledged)").format(n=len(acked_active)) + "[/]"
-        self.query_one("#ss-foot", Static).update(
-            f"{dots}    {_(pages[current][0])}  ·  {_('press any key to return')}{extra}"
-        )
+        self._set(self.query_one("#ss-foot", Static),
+                  f"{dots}    {_(pages[current][0])}  ·  {_('press any key to return')}{extra}")
+
+    def _set(self, widget: Static, markup: str) -> None:
+        """Update *widget* only when its text changed (the page is rebuilt every second; the clock shows minutes)."""
+        if self._shown.get(widget.id) != markup:
+            self._shown[widget.id] = markup
+            widget.update(markup)
 
     def _big(self, text: str, color: str = "$primary") -> str:
         """A large value: big block digits if enabled, otherwise bold text."""

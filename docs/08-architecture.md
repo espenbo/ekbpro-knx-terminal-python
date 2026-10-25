@@ -4,19 +4,24 @@
 
 ```
 knxscada/
-  __main__.py     command line: server, tui, init, import, info, plan-dxf
+  __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse
   config.py       loading of config.yaml, path resolution
   prefs.py        per-user preferences (~/.config/knxscada/ui.json: colour theme, language)
   i18n.py         translation support: _(), N_(), set_language(), LANGUAGES
   locale/
     nb.py         Norwegian bokmål catalogue (CATALOGUE: English → Norwegian)
-  project.py      .knxproj → model (group addresses, rooms, functions, datapoints) + cache
+  project.py      ETS project(s) → model (group addresses, rooms, functions, datapoints) + cache;
+                  several projects (address prefix S:1/2/3), rooms from group address names
   dpt.py          decoding and encoding of DPT values, display text, DPT 1 texts
   alarms.py       alarm rules (glob, regex, condition, severity)
   store.py        SQLite: telegrams, events, alarms
-  server.py       ScadaServer (xknx, logging, alarms, socket API) + Simulator (--demo)
+  server.py       ScadaServer (xknx per interface, logging, alarms, socket API) + Simulator (--demo)
+  knx_interfaces.py  several KNX IP interfaces: configuration, Router (outgoing), Deduplicator (incoming)
   client.py       asynchronous client for the socket
   plan.py         plan.yaml and DXF export
+  plc.py          PLC mapping (plc_map.yaml), IEC types, value conversion, CODESYS GVL, tag names
+  opcua_bridge.py OPC UA client to the PLC: sync, subscriptions, echo suppression, restart protection,
+                  security
   tui/
     app.py        the Textual app: menu, top bar, key bar, navigation, message handling
     views.py      Overview, Rooms, Group addresses, Bus monitor, Alarms, Events, Trends
@@ -29,6 +34,8 @@ knxscada/
     home.py       summary per room (temperature, lights, heating, alarm)
     themes.py     colour themes
     app.tcss      style sheet
+Dockerfile        container image (code in /app, your installation in the /data volume)
+docker/           knx (command inside the container), knx-host.sh (opens the TUI from the host)
 tests/            pytest tests
 tools/
   check_translations.py   lists untranslated and unused strings
@@ -40,17 +47,24 @@ The old single-file prototype is kept in `legacy/80_KNX_Scada.py` and is not par
 
 ```json
 {
-  "cache_version": 4,
+  "cache_version": 7,
   "info":      {"name", "tool_version", …},
   "gas":       {"1/1/0": {"address", "name", "description", "dpt": "1.001", "writable", "readable",
-                          "used", "placeholder", "range"}},
-  "ranges":    [{"address": "1", "name": "Lys", "gas": […], "children": […]}],
-  "floors":    [{"name": "1 etg", "rooms": [{"id", "name", "functions": ["F-1", …]}]}],
+                          "used", "placeholder", "range", "objects": ["texts of the linked objects"]}},
+  "ranges":    [{"address": "1", "name": "Lighting", "gas": […], "children": […]}],
+  "floors":    [{"name": "Ground floor", "rooms": [{"id", "name", "functions": ["F-1", …]}]}],
   "functions": {"F-1": {"name", "usage", "room", "datapoints": [
                   {"label": "On/Off", "kind": "switch", "ga": "1/1/0", "status": "1/4/0", "dpt": "1.001", "role": "SwitchOnOff"}]}},
-  "source":    "ets-functions" | "group-addresses"
+  "source":    "ets-functions" | "group-addresses" | "room-names",
+  "sources":   [["name", "file", "prefix", "label", rooms], …]
 }
 ```
+
+With several projects (`project.files`) the addresses, room ids and function ids of every project but the
+first carry its prefix (`S:1/1/0`), floors are named "<label>: <floor>", `ranges` has one top node per project
+(with a `project` field holding the prefix) and the model has a `projects` list (`name`, `label`, `prefix`,
+`info`). The cache is rebuilt when a project file is newer, or when `sources` (the project list or the
+`rooms` setting) changed.
 
 `kind` is one of `switch`, `percent`, `setpoint`, `mode`, `scene`, `value` and `bool`. `ga` is the address that is
 written to, and `status` is the address that is displayed. Names from ETS are stored as-is; generated labels
@@ -66,8 +80,8 @@ The protocol uses JSON lines over a Unix socket. On connect, the server sends `h
 | `type` | Contents |
 |---|---|
 | `hello` | `state` (last value per GA), `status`, `stats`, `alarms`, `demo` |
-| `telegram` | `t`: `{id, ts, dir, src, dst, type, raw, value, text}`, plus `state` for writes and responses |
-| `status` | KNX connection: `{connected, connection, gateway, started}` |
+| `telegram` | `t`: `{id, ts, dir, src, dst, via, type, raw, value, text}` (`via`: the KNX interface, with several), plus `state` for writes and responses |
+| `status` | `{connected, connection, gateway, started, interfaces: [{name, gateway, project, connected, connection}], plc?}`. `connected` is true while at least one interface is; `connection` can be `partly connected`. |
 | `stats` | `{count, per_min, clients}` every second |
 | `alarms` | All open alarms (active or unacknowledged) |
 | `event` | New event |
@@ -75,17 +89,21 @@ The protocol uses JSON lines over a Unix socket. On connect, the server sends `h
 
 **From the client:** `{"id": n, "cmd": …, "user": "user@ip", …}`
 
+The name in the audit log is taken from the kernel (`SO_PEERCRED`: the account of the connecting process);
+only the SSH address after `@` comes from the client. When the client runs under the server's own account
+(e.g. inside Docker) the client's name is used, limited to letters, digits and `@ . : -`.
+
 | `cmd` | Parameters | Reply |
 |---|---|---|
 | `hello` / `bye` | – | logs connect and disconnect |
-| `write` | `ga`, `value`, `dpt?` | `value` is interpreted according to the DPT. `{"raw": "0C 33"}` gives raw bytes. |
-| `read` | `ga` | sends GroupValueRead |
+| `write` | `ga`, `value`, `dpt?` | `value` is interpreted according to the project's DPT (`dpt` only when ETS has none). `{"raw": "0C 33"}` gives raw bytes. Only addresses in the ETS project. |
+| `read` | `ga` | sends GroupValueRead (only addresses in the ETS project) |
 | `ack` | `alarm_id` or `all: true` | number acknowledged |
-| `telegrams` | `limit`, `ga?`, `before_id?` | list |
-| `events` | `limit` | list |
-| `alarm_history` | `limit` | list |
-| `history` | `ga`, `hours` | `[[ts, number], …]` |
-| `traffic` | `minutes` | telegrams per minute |
+| `telegrams` | `limit` (≤ 5000), `ga?`, `before_id?` | list |
+| `events` | `limit` (≤ 5000) | list |
+| `alarm_history` | `limit` (≤ 5000) | list |
+| `history` | `ga`, `hours`, `max_points?` (4000) | `[[ts, number], …]`. Beyond `max_points` the lowest and highest value per time bucket. Runs in a worker thread. |
+| `traffic` | `minutes` (≤ 1440) | telegrams per minute |
 
 Example from the shell:
 
@@ -97,14 +115,16 @@ Clients that do not keep up (write buffer too large) are disconnected by the ser
 
 ## Database (SQLite, WAL)
 
-- `telegrams(id, ts, dir, src, dst, type, raw, value JSON, num REAL)`
+- `telegrams(id, ts, dir, src, dst, type, raw, value JSON, num REAL, via)`
+  - `via`: the KNX interface the telegram came through (only with several interfaces). Older databases get the
+    column automatically.
   - `dir`: `in` | `out`; `type`: `write` | `response` | `read`
   - `num` is used for trends (booleans as 0/1).
   - Indexes on `(dst, ts)` (trends), `(ts)` (traffic, purge) and a partial index on `(dst, id)` for non-read
     telegrams, used to fetch the last value per address at start-up.
 - `events(id, ts, level, kind, user, text)`
   - `level`: `info` | `error` | `alarm`
-  - `kind`: `system` | `knx` | `user` | `operation` | `alarm`
+  - `kind`: `system` | `knx` | `user` | `operation` | `alarm` | `plc`
   - `text` is stored in the server's language at the time of the event.
 - `alarms(id, ga, text, severity, raised_ts, cleared_ts, acked_ts, acked_by, value)`
   - `severity`: `critical` | `warning` | free text. Old rows with `kritisk` / `advarsel` are mapped when loaded.
@@ -170,7 +190,10 @@ It lists strings used in the code that have no translation, and catalogue entrie
 
 ## Tests
 
-The tests are in `tests/` and cover DPT conversion, alarm rules and the interpretation of ETS projects.
+The tests are in `tests/` and cover DPT conversion, alarm rules, the interpretation of ETS projects (also
+several projects and rooms from names), several KNX interfaces (routing, de-duplication), the store, the
+start-up rules (no telegrams), the TUI widgets, the PLC mapping, the OPC UA bridge against a real asyncua
+server (including PLC restart protection) and the Docker files.
 pytest is listed in `requirements-dev.txt`:
 
 ```bash

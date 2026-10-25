@@ -103,3 +103,14 @@ def test_tui_start_sends_no_write_or_read(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
     asyncio.run(run())
     assert "write" not in sent and "read" not in sent, sent
+
+
+def test_audit_user_cannot_inject_markup_or_pretend():
+    from knxscada.server import _audit_user
+
+    assert _audit_user(None, "[/x]bob@10.0.0.5") == "xbob@10.0.0.5"          # no markup characters
+    assert _audit_user(None, "a" * 500) == "a" * 64                          # bounded
+    assert _audit_user(None, {"not": "a string"}) == "?"
+    # The kernel's account name wins; only the SSH address is taken from the client.
+    assert _audit_user("scada", "admin@192.168.1.20") == "scada@192.168.1.20"
+    assert _audit_user("scada", "admin") == "scada"

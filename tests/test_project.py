@@ -198,3 +198,49 @@ def test_local_project_cache_is_consistent():
         for d in f["datapoints"]:
             for addr in (d["ga"], d["status"]):
                 assert addr is None or addr in model["gas"]
+
+
+# --------------------------------------------------------------------------- rooms from group address names
+def _ga(addr, name, dpt, writable=True):
+    return {"address": addr, "name": name, "description": "", "dpt": dpt, "writable": writable, "readable": True,
+            "used": True, "placeholder": False, "range": ""}
+
+
+def test_rooms_from_names():
+    gas = {a: _ga(a, n, d, w) for a, n, d, w in [
+        ("0/0/0", "av/pa Kontor 1 tak", "1.001", True),
+        ("0/1/0", "av/pa Status kontor 1 tak", "1.001", False),
+        ("0/3/0", "Bright Value Kontor 1 tak", "5.001", True),
+        ("0/0/1", "av/pa Kontor 1 Nedhengt", "1.001", True),
+        ("3/0/0", "Er Verdi Kontor 1", "9.001", False),
+        ("3/2/0", "Set temp Kontor 1", "9.001", True),
+        ("3/6/0", "Kontor 1 Request", "1.001", False),
+        ("3/0/9", "Er Verdi Spiserom", "9.001", False),
+        ("5/0/0", "Time", "10.001", False),                      # no room in the name
+    ]}
+    ranges = [{"address": "0", "name": "Lys 2 etg", "gas": [], "children": [
+                  {"address": "0/0", "name": "av/pa", "gas": ["0/0/0", "0/0/1"], "children": []}]},
+              {"address": "3", "name": "Varme 2 etg", "gas": [], "children": []},
+              {"address": "5", "name": "Styringer", "gas": [], "children": [
+                  {"address": "5/0", "name": "Z 41", "gas": ["5/0/0"], "children": []}]}]
+    rule = {"pattern": r"(?i)\b(kontor\s*\d+|spiserom)\b", "floors": {0: "2. etg", 3: "2. etg"},
+            "names": {"2. etg/Kontor 1": "Kontor 1 · RT6201"}}
+    floors, functions = project.build_from_names(ranges, gas, rule)
+    assert [f["name"] for f in floors] == ["2. etg", "Styringer"]
+    rooms = {r["name"]: r for r in floors[0]["rooms"]}
+    assert list(rooms) == ["Kontor 1 · RT6201", "Spiserom"]
+    cards = {functions[f]["name"]: functions[f] for f in rooms["Kontor 1 · RT6201"]["functions"]}
+    assert set(cards) == {"Lys tak", "Lys Nedhengt", "Varme"}          # floor words removed from the title
+    tak = cards["Lys tak"]["datapoints"]
+    assert tak[0]["kind"] == "switch" and tak[0]["ga"] == "0/0/0" and tak[0]["status"] == "0/1/0"
+    assert {d["label"] for d in tak} == {"Av/pa", "Bright Value"}
+    varme = {d["label"] for d in cards["Varme"]["datapoints"]}
+    assert {"Er Verdi", "Request"} <= varme                             # "Kontor 1 Request": label after the room
+    # Addresses without a room keep the group address structure.
+    assert floors[1]["rooms"][0]["name"] == "Z 41"
+
+
+def test_rooms_rule_is_used_only_without_ets_functions():
+    raw = raw_project()
+    with_functions = project.build_model(raw, rooms={"pattern": "(?i)kitchen"})
+    assert with_functions["source"] == "ets-functions"

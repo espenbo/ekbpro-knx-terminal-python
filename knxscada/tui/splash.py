@@ -156,7 +156,9 @@ class AboutDialog(ModalScreen[None]):
             (_("Content"), _("{gas} group addresses ({used} in use), {cards} cards, {rooms} rooms").format(
                 gas=len(gas), used=sum(1 for g in gas.values() if g["used"]),
                 cards=len(model["functions"]), rooms=sum(len(f["rooms"]) for f in model["floors"]))),
-            ("KNX", f"{st.get('gateway', '–')}  ·  {_(str(st.get('connection', '–')))}"),
+            *([("KNX", f"{st.get('gateway', '–')}  ·  {_(str(st.get('connection', '–')))}")]
+              if len(st.get("interfaces") or []) < 2 else
+              [(f"KNX {i['name']}", f"{i['gateway']}  ·  {_(str(i['connection']))}") for i in st["interfaces"]]),
             (_("Traffic"), _("{n} telegrams/min").format(n=app.stats.get("per_min", 0)) + "  ·  "
              + (_("1 client connected") if clients == 1 else _("{n} clients connected").format(n=clients))),
             (_("Alarms"), _("{active} active, {unacked} unacknowledged").format(

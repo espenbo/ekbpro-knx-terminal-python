@@ -5,7 +5,8 @@ has the `.knxproj` file of their installation can use it.
 
 ## 1. Export the project from ETS
 
-In ETS 5 or 6: **Project overview → select the project → Export**. This gives you a `.knxproj` file.
+In ETS 5 or 6: **Project overview → select the project → Export**. This gives you a `.knxproj` file
+(an ETS 6 `.knxprojarchive` works as well).
 If the project is password protected, you need the password (`--password`).
 
 If the installation uses **KNX Secure** (IP Secure or Data Secure), you also need the keyring file:
@@ -93,6 +94,12 @@ become the card *Stue taklys* with a switch and a dimmer.
 
 Functions that are not in any room are collected under the floor *Other*, room *No room*.
 
+### C. Room names in the group address names
+
+If the project is structured by *function* ("Actual temp Office 1", "Switching Office 1 ceiling") and has no ETS
+functions, set `project.rooms` with a pattern that finds the room in the names. All addresses of a room then end
+up in that room. See [Configuration](04-configuration.md#rooms-from-the-group-address-names).
+
 ### Tips for the best result in ETS
 
 - **Set the DPT on the group addresses.** Without a DPT the value cannot be interpreted and is shown as raw bytes.
@@ -125,6 +132,9 @@ sudo systemctl restart knxscada   # or stop and start the server
 ```
 
 ## Several installations on the same machine
+
+(One site that consists of several ETS projects – e.g. a main building and an annex – is configured in *one*
+installation with `project.files`: see [Configuration](04-configuration.md#several-ets-projects-in-one-site).)
 
 Create one directory or one configuration file per installation, with separate paths for socket and database:
 

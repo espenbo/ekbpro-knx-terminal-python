@@ -13,15 +13,36 @@ knx:
   gateway_ip: __GATEWAY__
   gateway_port: 3671
   # local_ip: 192.168.1.10          # set when the machine has several network interfaces
+  # route_back: true                # interface reached through NAT/VPN (Tailscale, WireGuard)
   # individual_address: 1.1.250     # routing only
   # KNX Secure: export the keyring from ETS (Project → Security → Export keyring)
   # keyring_file: MyProject.knxkeys
   # keyring_password: "secret"
   # user_id: 2                      # tunnel user for secure tunneling (optional)
+  # Several KNX IP interfaces (one per line/building part): list them under interfaces instead.
+  # Keys above are then defaults for every interface. See docs/04-configuration.md.
+  # interfaces:
+  #   - name: house
+  #     gateway_ip: 192.168.1.50
+  #     default: true
+  #   - name: garage
+  #     gateway_ip: 192.168.1.51
+  #     addresses: ["4/*"]          # group addresses sent through this interface
+  #     # project: annex            # with several ETS projects: the project of this interface's bus
+  # dedup_ms: 1000                  # copies of a telegram from another interface within this time are dropped
 
 project:
   file: __PROJECT__
   # password: ""                    # if the .knxproj is password protected
+  # (.knxprojarchive from ETS 6 works too)
+  # Several ETS projects in one site instead of file: (see docs/04-configuration.md):
+  # files:
+  #   - {name: main, label: Main building, file: Main.knxproj}
+  #   - {name: annex, label: Annex, prefix: S, file: Annex.knxprojarchive}   # addresses become S:1/2/3
+  # Rooms from the group address names, for projects structured by function:
+  # rooms:
+  #   pattern: "(?i)\\b(office\\s*\\d+|kitchen|meeting room)\\b"
+  #   floors: {0: "1st floor", 1: "2nd floor"}   # main group → floor
   cache: var/project_cache.json     # rebuilt automatically when the .knxproj changes
 
 server:
@@ -85,3 +106,30 @@ ui:
   setpoint_step: 0.5                # °C per press on − / +
   dim_step: 10                      # % per press on − / +
   confirm_raw_write: true           # confirm writes from the group address view
+
+# PLC bridge over OPC UA (optional) – exchange KNX values with a PLC, e.g. CODESYS on a WAGO PFC.
+# 1. ./scada plc-map           → plc_map.yaml (mark addresses with use: true) and GVL_KNX.st
+# 2. Import GVL_KNX.st into the PLC project, add it to the Symbol Configuration, download.
+# 3. Set enabled: true and restart the server.            Guide: docs/10-plc-opcua.md
+plc:
+  enabled: false
+  endpoint: opc.tcp://127.0.0.1:4840   # the PLC's OPC UA server (127.0.0.1 when running on the PLC itself)
+  # username: knx                      # empty = anonymous
+  # password: "secret"
+  # security: Aes128Sha256RsaOaep,SignAndEncrypt   # None | <policy>,Sign | <policy>,SignAndEncrypt
+  #                                    # policy: Basic256Sha256 | Aes128Sha256RsaOaep | Aes256Sha256RsaPss
+  # certificate: var/opcua/client_cert.der   # client certificate, created automatically – trust it in the PLC
+  # private_key: var/opcua/client_key.pem
+  # server_certificate: var/opcua/plc_cert.der   # pin the PLC's certificate (recommended with security)
+  map: plc_map.yaml                    # which group addresses, direction and PLC variable names
+  # gvl: GVL_KNX                       # name of the GVL (when plc_map.yaml is first created)
+  # tag_prefix: BY1234                 # name variables after system tags of PLC objects in ETS
+  # gvl_file: GVL_KNX.st               # where plc-map writes the CODESYS GVL
+  # node_prefix: "|var|WAGO 750-8302 PFC300 2ETH RS.Application.GVL_KNX."   # found automatically if not set
+  # namespace: 4                       # with node_prefix: namespace index of the PLC variables
+  publish_interval_ms: 200             # how fast PLC changes are reported
+  min_interval_ms: 200                 # at most one KNX write per address in this time (latest value wins)
+  # PLC restart (download/reset) protection – see docs/10-plc-opcua.md:
+  # settle_ms: 500                     # PLC changes are held this long before they go to KNX
+  # burst_limit: 8                     # more changes than this at once = PLC restart: nothing is sent
+  # restart_quiet_s: 15                # after a restart: only remember values, then re-sync the PLC from KNX

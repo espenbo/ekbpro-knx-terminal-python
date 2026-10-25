@@ -72,3 +72,37 @@ def test_alarm_life_cycle(store):
     store.clear_alarm(aid)
     assert store.open_alarms() == []          # cleared and acknowledged: closed
     assert store.alarm_history()[0]["id"] == aid
+
+
+def test_last_values_per_address_gives_the_same(store):
+    now = time.time()
+    for i, v in enumerate((1.0, 2.0, 3.0)):
+        store.add_telegram(tel(now + i, "3/0/1", v))
+    store.add_telegram(tel(now + 5, "3/0/1", None, kind="read"))
+    store.add_telegram(tel(now, "1/1/1", True))
+    assert store.last_values(["3/0/1", "1/1/1", "9/9/9"]) == store.last_values()
+    assert store.last_values(["3/0/1"])["3/0/1"]["value"] == 3.0
+
+
+def test_long_history_is_thinned_but_keeps_the_peaks(store):
+    now = time.time()
+    for i in range(3000):                       # a value every 10 s for ~8 hours
+        store.add_telegram(tel(now - 30000 + i * 10, "3/0/1", 20.0))
+    store.add_telegram(tel(now - 15000 + 3, "3/0/1", 99.0))   # one short peak …
+    store.add_telegram(tel(now - 5000 + 3, "3/0/1", -5.0))    # … and one dip
+    store.commit()
+    pts = store.history("3/0/1", now - 86400, max_points=200)
+    assert len(pts) <= 200
+    assert max(v for _t, v in pts) == 99.0 and min(v for _t, v in pts) == -5.0
+    assert pts == sorted(pts)
+    assert len(store.history("3/0/1", now - 86400, max_points=10_000)) == 3002   # small enough: everything
+    assert store.read_history("3/0/1", now - 86400, max_points=200) == pts        # separate connection
+
+
+def test_telegrams_for_one_address_newest_last(store):
+    now = time.time()
+    for i in range(5):
+        store.add_telegram(tel(now + i, "1/1/1", bool(i % 2)))
+    store.add_telegram(tel(now + 10, "1/1/2", True))
+    rows = store.telegrams(3, "1/1/1")
+    assert [r["ts"] for r in rows] == [now + 2, now + 3, now + 4]

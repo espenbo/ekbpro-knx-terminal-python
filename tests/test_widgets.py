@@ -46,6 +46,25 @@ def test_update_cell_shows_new_value_and_keeps_others():
             t.update_cell("1/1/150", "value", "SCROLLED")
             await pilot.pause()
             assert "SCROLLED" in visible_text(t)
-            assert t.get_cell("1/1/150", "value") == "SCROLLED"
+            assert str(t.get_cell("1/1/150", "value")) == "SCROLLED"
+
+    asyncio.run(run())
+
+
+def test_table_cells_are_plain_text_not_markup():
+    """A user name or ETS name with brackets must not be parsed as markup (it could end the TUI)."""
+    class T(App):
+        def compose(self):
+            yield FastTable(id="t")
+
+    async def run():
+        app = T()
+        async with app.run_test(size=(60, 10)) as pilot:
+            t = app.query_one(FastTable)
+            t.add_column("a", key="a", width=20)
+            t.add_row("[/x] [link=evil]", key="r")
+            t.update_cell("r", "a", "[b]not bold[/b]")
+            await pilot.pause()
+            assert str(t.get_cell("r", "a")) == "[b]not bold[/b]"
 
     asyncio.run(run())
