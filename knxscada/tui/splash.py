@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 EKB PRO
-"""Start-up splash screen and the About dialog, both showing the EKBPRO logo.
+"""Start-up splash screen and the About dialog, both showing a logo.
 
-The logo is stored as plain text in ``logo.txt`` (block characters ``█``
-with ``▒`` shading) and coloured with the current theme: solid blocks in
-the primary colour, shading in a dimmed version of it.
+Logos are plain text files in ``logos/``: ``ekbpro.txt``, and the logo of a
+colour theme that has its own (``storm`` → ``storm-automasjon.txt``). Without
+such a theme, ``ui.logo_file`` can point to a logo file of your own. They are
+drawn with block characters (``█ ▀ ▄``) and ``▒`` shading, and coloured with
+the current theme: solid blocks in the primary colour, shading dimmed.
 """
 
 from __future__ import annotations
@@ -31,7 +33,12 @@ from ..i18n import LANGUAGES, _, get_language
 if TYPE_CHECKING:
     from .app import ScadaApp
 
-LOGO_FILE = Path(__file__).with_name("logo.txt")
+#: The logos that come with the program (text files).
+LOGOS = Path(__file__).with_name("logos")
+LOGO_FILE = LOGOS / "ekbpro.txt"
+
+#: Colour themes with a logo of their own – shown only while that theme is active.
+THEME_LOGOS = {"storm": LOGOS / "storm-automasjon.txt"}
 
 #: Characters drawn in the solid logo colour (full and half blocks); ▒ is the shade.
 SOLID = set("█▀▄▌▐▖▗▘▝▙▚▛▜▞▟")
@@ -47,9 +54,12 @@ def logo_lines(path: Path = LOGO_FILE) -> list[str]:
 
 
 def logo_path(app) -> Path:
-    """``ui.logo_file`` (e.g. a company logo, see docs/04-configuration.md) or the program's own logo."""
-    custom = app.cfg.ui.get("logo_file") if getattr(app, "cfg", None) else None
-    return app.cfg.resolve(str(custom)) if custom else LOGO_FILE
+    """The logo to show: the active theme's own logo, else ``ui.logo_file``, else the program's logo."""
+    themed = THEME_LOGOS.get(getattr(app, "theme", None) or "")
+    if themed is not None:
+        return themed
+    custom = str(app.cfg.ui.get("logo_file") or "") if getattr(app, "cfg", None) else ""
+    return app.cfg.resolve(custom) if custom else LOGO_FILE
 
 
 def logo(app, width: int, rows: int | None = None, height: int | None = None) -> Text:

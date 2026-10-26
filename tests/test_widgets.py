@@ -94,3 +94,20 @@ def test_export_dialog_returns_format_and_period():
 
     asyncio.run(run())
     assert result == [{"fmt": "csv", "hours": 24}]
+
+
+def test_logo_by_name_or_file(tmp_path):
+    from types import SimpleNamespace
+
+    from knxscada.config import Config
+    from knxscada.tui.splash import LOGO_FILE, LOGOS, logo_lines, logo_path
+
+    def app(theme="retro", **ui):
+        return SimpleNamespace(theme=theme, cfg=Config(path=tmp_path / "config.yaml", ui=ui))
+
+    assert logo_path(app()) == LOGO_FILE
+    assert logo_path(app("storm")) == LOGOS / "storm-automasjon.txt"           # the Storm logo comes with its theme …
+    assert logo_path(app("amber", logo_file="storm-automasjon")) != LOGOS / "storm-automasjon.txt"  # … and only then
+    assert logo_path(app(logo_file="own.txt")) == tmp_path / "own.txt"       # relative to config.yaml
+    for f in LOGOS.glob("*.txt"):                                             # every built-in logo is usable
+        assert logo_lines(f) and "█" in "".join(logo_lines(f))

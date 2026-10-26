@@ -19,7 +19,7 @@ You need no web browser, no per-view licence and no special hardware.
 - **Trends:** curves from the log (1 hour to 30 days) as line, step, filled or bar charts.
 - **Screensaver** that rotates between information pages. Unacknowledged alarms take over the screen.
 - **Six colour themes:** muted green, green phosphor, amber, modern dark, solarized and Storm Automasjon –
-  chosen per installation, so several sites can be told apart. A company logo can replace the start-up logo.
+  chosen per installation, so several sites can be told apart. The Storm Automasjon theme comes with its logo; a logo of your own is possible too.
 - **Two languages:** English (default) and Norwegian bokmål – per installation, per user or per session.
 - **One server, many clients:** one KNX tunnel per IP interface regardless of the number of SSH sessions, and logging around the clock.
 - **Connectivity:** KNX IP tunneling (UDP and TCP), routing and KNX IP Secure with a keyring from ETS.

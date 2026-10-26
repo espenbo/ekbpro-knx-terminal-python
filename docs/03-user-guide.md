@@ -193,7 +193,7 @@ screen** with a slow red blink. Any key or click returns to the normal view.
 | Amber | Retro amber IBM or Wyse terminal |
 | Modern dark | Neutral dark with blue, purple and clear signal colours |
 | Solarized | Modern with low contrast, easy on the eyes |
-| Storm Automasjon | The colours of Storm Elektro: deep blue panels, grey text, white focus, green for OK and red/orange for alarms |
+| Storm Automasjon | The colours of Storm Elektro: deep blue panels, grey text, white focus, green for OK and red/orange for alarms. Shows the Storm Automasjon logo at start-up and in About (F12). |
 
 `↑` / `↓` previews, Enter selects and Esc cancels. The choice is saved per user **and per installation** in
 `~/.config/knxscada/ui.json`, so two sites on the same machine can have different colours.

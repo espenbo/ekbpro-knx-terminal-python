@@ -274,7 +274,7 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `title` | project name | Title in the top bar |
 | `language` | `en` | Language: `en` (English) or `nb` (Norwegian bokmål; `no` is accepted as an alias). Also the language of the event log and alarm texts the server generates. Each user's own choice (Ctrl+L) and `./scada tui --language` take precedence in the visualisation. |
 | `theme` | `retro` | Default theme: `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm`. The user's own choice for this installation (Ctrl+T) takes precedence. The old names `retro-klassisk` and `moderne` are still accepted. |
-| `logo_file` | – | A text file with another logo for the start-up screen and About (e.g. a company logo). Drawn with `█ ▀ ▄` (solid, in the theme's main colour) and `▒` (shade); blocks separated by an empty line – when the logo is too big for the window, only the first block is shown. Keep company logos out of git (e.g. in `branding/`). |
+| `logo_file` | – | A logo of your own for the start-up screen and About (a text file). The theme `storm` always shows the Storm Automasjon logo instead. Drawn with `█ ▀ ▄` (solid, in the theme's main colour) and `▒` (shade); blocks separated by an empty line – when the logo is too big for the window, only the first block is shown. |
 | `splash` | `true` | Start-up logo |
 | `big_digits` | `false` | Large block digits in status tiles and screensaver. Normal text is the easiest to read. |
 | `ascii` | `false` | Only ASCII characters in charts, for older terminals |

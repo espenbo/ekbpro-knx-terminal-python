@@ -94,7 +94,7 @@ ui:
   # Colour theme: retro | retro-classic | amber | modern | solarized | storm
   # (each user can choose their own per installation with Ctrl+T – saved in ~/.config/knxscada/ui.json)
   theme: retro
-  # logo_file: branding/logo.txt     # another start-up logo (█ ▀ ▄ ▒ characters), e.g. a company logo
+  # logo_file: my-logo.txt           # a start-up logo of your own (█ ▀ ▄ ▒ characters); theme storm has its own
   splash: true                      # start-up splash screen
   big_digits: false                 # big block digits in status tiles/screensaver
   ascii: false                      # ASCII-only charts (old terminals without Unicode)
