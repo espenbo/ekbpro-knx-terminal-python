@@ -244,3 +244,28 @@ def test_rooms_rule_is_used_only_without_ets_functions():
     raw = raw_project()
     with_functions = project.build_model(raw, rooms={"pattern": "(?i)kitchen"})
     assert with_functions["source"] == "ets-functions"
+
+
+def test_extra_rooms():
+    model = project.build_model(raw_project())
+    gas = list(model["gas"])
+    switch = next(a for a, g in model["gas"].items() if g["dpt"] == "1.001" and g["writable"])
+    temp = next(a for a, g in model["gas"].items() if g["dpt"] == "9.001")
+    project.add_extra_rooms(model, [{"floor": "Attic", "name": "Loft", "cards": [
+        {"name": "Temperature", "addresses": [temp]},
+        {"name": "Light", "addresses": [switch], "status": {switch: temp}, "usage": "light"},
+    ]}])
+    floor = next(f for f in model["floors"] if f["name"] == "Attic")
+    (room,) = floor["rooms"]
+    assert room["name"] == "Loft"
+    t, light = (model["functions"][f] for f in room["functions"])
+    assert t["usage"] == "heating radiator" and t["datapoints"][0]["status"] == temp
+    assert light["usage"] == "switchable light"
+    assert light["datapoints"][0]["ga"] == switch and light["datapoints"][0]["status"] == temp
+    assert len(gas) == len(model["gas"])                  # nothing added to the addresses
+
+
+def test_extra_rooms_reject_unknown_addresses():
+    model = project.build_model(raw_project())
+    with pytest.raises(ValueError, match="31/7/255"):
+        project.add_extra_rooms(model, [{"name": "X", "cards": [{"addresses": ["31/7/255"]}]}])

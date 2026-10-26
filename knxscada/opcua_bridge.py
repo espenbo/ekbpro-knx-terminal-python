@@ -90,12 +90,12 @@ def parse_security(text: str | None) -> tuple[str | None, str]:
     return policy, mode
 
 
-async def make_client(cfg: Config):
-    """An asyncua client configured from ``plc:`` (endpoint, user, security, certificate)."""
+async def make_client(cfg: Config, p: dict[str, Any] | None = None):
+    """An asyncua client for one PLC (*p*, default ``plc:``): endpoint, user, security, certificate."""
     from asyncua import Client, ua
     from asyncua.crypto import security_policies
 
-    p = cfg.plc
+    p = cfg.plc if p is None else p
     client = Client(url=str(p.get("endpoint") or "opc.tcp://127.0.0.1:4840"), timeout=float(p.get("timeout_s", 10)))
     client.application_uri = APP_URI
     client.name = "EKBPRO KNX Terminal Python"
@@ -183,10 +183,13 @@ class _Handler:
 class PlcBridge:
     """Keeps the PLC variables and the KNX group addresses in step (see module docstring)."""
 
-    def __init__(self, server: ScadaServer, cfg: Config, pmap: PlcMap) -> None:
+    def __init__(self, server: ScadaServer, cfg: Config, pmap: PlcMap, p: dict[str, Any] | None = None,
+                 several: bool = False) -> None:
         self.server = server
         self.cfg = cfg
-        self.p = cfg.plc
+        self.p = cfg.plc if p is None else p   # this PLC's settings (one entry of plc_configs)
+        self.name = str(self.p.get("name") or "plc")
+        self._tag = f" [{self.name}]" if several else ""   # added to event texts when there are several PLCs
         self.entries = pmap.active()
         self.gvl = pmap.gvl
         self.by_ga: dict[str, list[PlcEntry]] = {}
@@ -225,7 +228,7 @@ class PlcBridge:
             except Exception as exc:  # noqa: BLE001 - report every problem and retry
                 if self.connected or delay == 5:
                     self.server.event("error", "plc", _("PLC (OPC UA): {error}. Retrying in {delay} s").format(
-                        error=exc or type(exc).__name__, delay=delay))
+                        error=exc or type(exc).__name__, delay=delay) + self._tag)
             finally:
                 await self._disconnect()
             if not self._stop:
@@ -239,7 +242,7 @@ class PlcBridge:
     async def _session(self) -> None:
         from asyncua import ua
 
-        self.client = await make_client(self.cfg)
+        self.client = await make_client(self.cfg, self.p)
         await self.client.connect()
         prefix, ns = self.p.get("node_prefix"), self.p.get("namespace")
         if not prefix:
@@ -261,7 +264,8 @@ class PlcBridge:
             self.by_nodeid[node.nodeid] = e
         if missing:
             self.server.event("error", "plc", _("{n} variables are missing in the PLC (import the new GVL): {names}").format(
-                n=len(missing), names=", ".join(e.var for e, _n in missing[:5]) + (" …" if len(missing) > 5 else "")))
+                n=len(missing), names=", ".join(e.var for e, _n in missing[:5]) + (" …" if len(missing) > 5 else ""))
+                + self._tag)
         await self._sync_to_plc()
         self.seen.clear()
         self._lost.clear()
@@ -271,7 +275,7 @@ class PlcBridge:
         if watch:
             await sub.subscribe_data_change(watch)
         self._set_connected(True)
-        self.server.event("info", "plc", _("PLC (OPC UA) connected: {n} variables").format(n=len(self.nodes)))
+        self.server.event("info", "plc", _("PLC (OPC UA) connected: {n} variables").format(n=len(self.nodes)) + self._tag)
         recheck = float(self.p.get("missing_recheck_s", 60))
         next_check = time.monotonic() + recheck
         while not self._stop and not self._lost.is_set():
@@ -283,7 +287,7 @@ class PlcBridge:
                 # (the same start-up rules apply – nothing is sent to KNX).
                 next_check = time.monotonic() + recheck
                 if await self._any_exists(missing):
-                    self.server.event("info", "plc", _("New variables in the PLC – reconnecting"))
+                    self.server.event("info", "plc", _("New variables in the PLC – reconnecting") + self._tag)
                     self._planned = True
                     raise _GvlChanged()
         if self._lost.is_set() and not self._stop:
@@ -316,13 +320,17 @@ class PlcBridge:
                 await asyncio.wait_for(self.client.disconnect(), 3)
             self.client = None
         if was:
-            self.server.event("error", "plc", _("PLC (OPC UA) disconnected"))
+            self.server.event("error", "plc", _("PLC (OPC UA) disconnected") + self._tag)
 
     def _set_connected(self, connected: bool) -> None:
         if connected != self.connected or self.server.status.get("plc") is None:
             self.connected = connected
-            self.server.status["plc"] = "connected" if connected else "disconnected"
-            self.server._broadcast({"type": "status", "status": self.server.status})
+            report = getattr(self.server, "plc_state", None)
+            if report is not None:
+                report(self.name, connected)   # the server combines the state of all PLCs
+            else:
+                self.server.status["plc"] = "connected" if connected else "disconnected"
+                self.server._broadcast({"type": "status", "status": self.server.status})
 
     # -- KNX → PLC -------------------------------------------------------------------------
     async def _sync_to_plc(self) -> None:
@@ -423,7 +431,7 @@ class PlcBridge:
         self._resync = loop.call_later(quiet, lambda: loop.create_task(self._resync_plc()))
         if first:
             self.server.event("error", "plc", _("PLC restart detected – nothing sent to KNX: {reason}").format(
-                reason=reason))
+                reason=reason) + self._tag)
 
     async def _resync_plc(self) -> None:
         """After a PLC restart: give the PLC the KNX values again (no bus traffic)."""
@@ -435,7 +443,7 @@ class PlcBridge:
         except Exception as exc:  # noqa: BLE001 - the PLC may still be starting; the next reconnect syncs too
             log.warning("PLC re-sync failed: %s", exc)
             return
-        self.server.event("info", "plc", _("PLC re-synchronised with the KNX values"))
+        self.server.event("info", "plc", _("PLC re-synchronised with the KNX values") + self._tag)
 
     def _schedule_knx(self, e: PlcEntry, value: Any) -> None:
         """Send now, or – within the rate limit – once the interval is over (latest value wins)."""
@@ -458,17 +466,19 @@ class PlcBridge:
             payload = dptlib.encode(e.dpt, knx_value)
             await self.server._send(e.ga, "write", payload)
         except Exception as exc:  # noqa: BLE001 - e.g. KNX not connected, value out of range
-            self.server.event("error", "plc", _("PLC → KNX {address} failed: {error}").format(address=e.ga, error=exc))
+            self.server.event("error", "plc", _("PLC → KNX {address} failed: {error}").format(address=e.ga, error=exc) + self._tag)
             return
         shown = dptlib.fmt(e.dpt, dptlib.decode(e.dpt, payload))
-        self.server.event("info", "operation", f"{e.ga} {e.name} ← {shown}", "plc")
+        # The audit log names the PLC: "plc", or "plc:<name>" with several.
+        self.server.event("info", "operation", f"{e.ga} {e.name} ← {shown}", f"plc:{self.name}" if self._tag else "plc")
 
 
-async def browse(cfg: Config, text_filter: str = "", limit: int = 400) -> list[tuple[str, str]]:
+async def browse(cfg: Config, text_filter: str = "", limit: int = 400,
+                 p: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     """List variables on the PLC (``./scada plc-browse``): ``[(node id, data type)]``."""
     from asyncua import ua
 
-    client = await make_client(cfg)
+    client = await make_client(cfg, p)
     out: list[tuple[str, str]] = []
     async with client:
         queue = [(client.nodes.objects, 0)]
@@ -495,11 +505,12 @@ async def browse(cfg: Config, text_filter: str = "", limit: int = 400) -> list[t
     return out
 
 
-async def endpoints(cfg: Config) -> list[str]:
+async def endpoints(cfg: Config, p: dict[str, Any] | None = None) -> list[str]:
     """What the PLC offers, without logging in (``./scada plc-browse --endpoints``): security and login types."""
     from asyncua import Client
 
-    client = Client(url=str(cfg.plc.get("endpoint") or "opc.tcp://127.0.0.1:4840"), timeout=float(cfg.plc.get("timeout_s", 10)))
+    p = cfg.plc if p is None else p
+    client = Client(url=str(p.get("endpoint") or "opc.tcp://127.0.0.1:4840"), timeout=float(p.get("timeout_s", 10)))
     out = []
     for e in await client.connect_and_get_server_endpoints():
         tokens = ", ".join(t.TokenType.name for t in e.UserIdentityTokens)

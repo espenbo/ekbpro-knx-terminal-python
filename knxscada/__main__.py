@@ -62,9 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--marked", action="store_true", help="exchange only addresses marked with use: true (select: marked)")
     p.add_argument("--rename", action="store_true",
                    help="give every variable a fresh name (e.g. after setting plc.tag_prefix) instead of keeping var")
+    p.add_argument("--plc", help="only this PLC (name from plc.controllers); default: all")
     p = sub.add_parser("plc-browse", help="list the variables of the PLC's OPC UA server (uses the plc: settings)")
     p.add_argument("filter", nargs="?", default="", help="only show node ids containing this text, e.g. GVL_KNX")
     p.add_argument("--endpoints", action="store_true", help="only show the security modes and login types the PLC offers")
+    p.add_argument("--plc", help="which PLC (name from plc.controllers); default: the first")
 
     args = ap.parse_args(argv)
     cmd = args.cmd or "tui"
@@ -118,15 +120,16 @@ def main(argv: list[str] | None = None) -> int:
         from .opcua_bridge import browse, endpoints
 
         logging.basicConfig(level=logging.ERROR)  # asyncua warns a lot; errors are reported below
-        endpoint = cfg.plc.get("endpoint") or "opc.tcp://127.0.0.1:4840"
-        if not cfg.plc.get("endpoint"):
+        plc = _select_plcs(cfg, args.plc)[0]
+        endpoint = plc.get("endpoint") or "opc.tcp://127.0.0.1:4840"
+        if not plc.get("endpoint"):
             print(_("No plc.endpoint in {path} – trying {endpoint}").format(path=cfg.path, endpoint=endpoint))
         try:
             if args.endpoints:
-                for line in asyncio.run(endpoints(cfg)):
+                for line in asyncio.run(endpoints(cfg, plc)):
                     print(line)
                 return 0
-            found = asyncio.run(browse(cfg, args.filter))
+            found = asyncio.run(browse(cfg, args.filter, p=plc))
         except Exception as exc:  # noqa: BLE001 - connection, login or certificate problem
             print(_("Could not connect to the PLC at {endpoint}: {error}").format(
                 endpoint=endpoint, error=f"{type(exc).__name__}: {exc}"))
@@ -167,36 +170,49 @@ def print_summary(model: dict) -> None:
         print(f"  {floor['name']}: " + ", ".join(r["name"] for r in floor["rooms"]))
 
 
+def _select_plcs(cfg, name: str | None) -> list[dict]:
+    """The PLCs of ``plc:`` – all, or the one called *name* (SystemExit if there is none)."""
+    from .plc import plc_configs
+
+    plcs = plc_configs(cfg.plc)
+    if name:
+        plcs = [p for p in plcs if p["name"] == name]
+        if not plcs:
+            raise SystemExit(_("No PLC called {name} in plc.controllers").format(name=repr(name)))
+    return plcs
+
+
 def plc_map(cfg, args) -> int:
-    """``plc-map``: write plc_map.yaml (keeping existing choices) and the CODESYS GVL."""
+    """``plc-map``: write the mapping (keeping existing choices) and the CODESYS GVL for each PLC."""
     _quiet_project_logging()
     from .plc import build_map, gvl_text, load_map, write_map
     from .project import load_project
 
     model = load_project(cfg)
-    path = cfg.resolve(cfg.plc.get("map", "plc_map.yaml"))
-    old = load_map(path) if path.exists() else None
-    pmap, unsupported, removed = build_map(model, old, gvl=str(cfg.plc.get("gvl", "GVL_KNX")),
-                                           tag_prefix=cfg.plc.get("tag_prefix"), rename=args.rename)
-    if args.all:
-        pmap.select = "all"
-    elif args.marked:
-        pmap.select = "marked"
-    write_map(pmap, path)
-    gvl_path = cfg.resolve(cfg.plc.get("gvl_file", f"{pmap.gvl}.st"))
-    gvl_path.write_text(gvl_text(pmap), encoding="utf-8")
-    active = len(pmap.active())
-    print(_("Wrote {path}: {n} group addresses, {active} exchanged with the PLC (select: {select})").format(
-        path=path, n=len(pmap.entries), active=active, select=pmap.select))
-    if unsupported:
-        print(_("{n} addresses left out – their DPT cannot be exchanged (e.g. relative dimming, date/time)").format(
-            n=len(unsupported)))
-    if removed:
-        print(_("No longer in the project, removed: {addresses}").format(addresses=", ".join(removed)))
-    print(_("Wrote {path} ({n} variables) – import it into the CODESYS project as GVL {gvl}").format(
-        path=gvl_path, n=active, gvl=pmap.gvl))
-    if not active:
-        print(_("Mark addresses with use: true in {path} (or use --all) and run plc-map again.").format(path=path.name))
+    for plc in _select_plcs(cfg, args.plc):
+        path = cfg.resolve(plc["map"])
+        old = load_map(path) if path.exists() else None
+        pmap, unsupported, removed = build_map(model, old, gvl=str(plc["gvl"]),
+                                               tag_prefix=plc.get("tag_prefix"), rename=args.rename)
+        if args.all:
+            pmap.select = "all"
+        elif args.marked:
+            pmap.select = "marked"
+        write_map(pmap, path)
+        gvl_path = cfg.resolve(plc.get("gvl_file", f"{pmap.gvl}.st"))
+        gvl_path.write_text(gvl_text(pmap), encoding="utf-8")
+        active = len(pmap.active())
+        print(_("Wrote {path}: {n} group addresses, {active} exchanged with the PLC (select: {select})").format(
+            path=path, n=len(pmap.entries), active=active, select=pmap.select))
+        if unsupported:
+            print(_("{n} addresses left out – their DPT cannot be exchanged (e.g. relative dimming, date/time)").format(
+                n=len(unsupported)))
+        if removed:
+            print(_("No longer in the project, removed: {addresses}").format(addresses=", ".join(removed)))
+        print(_("Wrote {path} ({n} variables) – import it into the CODESYS project as GVL {gvl}").format(
+            path=gvl_path, n=active, gvl=pmap.gvl))
+        if not active:
+            print(_("Mark addresses with use: true in {path} (or use --all) and run plc-map again.").format(path=path.name))
     return 0
 
 

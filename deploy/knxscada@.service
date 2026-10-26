@@ -1,0 +1,41 @@
+# systemd template for further installations on the same machine, one per directory under sites/:
+#   INSTALL_DIR/sites/<name>/config.yaml   (its own socket and database in sites/<name>/var/)
+#
+# Replace YOUR_USER and INSTALL_DIR (the folder with ./scada), then start one instance per site:
+#   sed -e "s#YOUR_USER#$USER#g" -e "s#INSTALL_DIR#$PWD#g" deploy/knxscada@.service \
+#       | sudo tee /etc/systemd/system/knxscada@.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now knxscada@cabin      # uses sites/cabin/config.yaml
+#   journalctl -u knxscada@cabin -f
+[Unit]
+Description=EKBPRO KNX Terminal Python server – %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=INSTALL_DIR
+ExecStart=INSTALL_DIR/scada -c INSTALL_DIR/sites/%i/config.yaml server
+Restart=always
+RestartSec=5
+# The socket becomes rw for the group (660)
+UMask=0007
+# Hardening: the server only needs the network, its install directory (read) and var/ (write).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=INSTALL_DIR/sites/%i/var
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

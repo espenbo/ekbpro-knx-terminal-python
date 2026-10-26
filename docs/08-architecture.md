@@ -19,7 +19,9 @@ knxscada/
   knx_interfaces.py  several KNX IP interfaces: configuration, Router (outgoing), Deduplicator (incoming)
   client.py       asynchronous client for the socket
   plan.py         plan.yaml and DXF export
-  plc.py          PLC mapping (plc_map.yaml), IEC types, value conversion, CODESYS GVL, tag names
+  export.py       bus monitor export: ETS group monitor XML (cEMI frames), CSV, JSON lines
+  plc.py          PLC mapping (plc_map.yaml), IEC types, value conversion, CODESYS GVL, tag names,
+                  several PLCs (plc_configs)
   opcua_bridge.py OPC UA client to the PLC: sync, subscriptions, echo suppression, restart protection,
                   security
   tui/

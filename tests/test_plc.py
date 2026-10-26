@@ -169,3 +169,32 @@ def test_tagged_address_gets_the_tag_and_is_only_read():
     # --rename gives existing lines the new names.
     renamed, _u, _r = build_map(model, plain, tag_prefix="BY1234", rename=True)
     assert {e.ga: e.var for e in renamed.entries}["2/2/5"] == "BY1234_564_002_RT6101_Rom_SP"
+
+
+# --------------------------------------------------------------------------- several PLCs
+def test_plc_configs_single_form():
+    from knxscada.plc import plc_configs
+
+    (c,) = plc_configs({"enabled": True, "endpoint": "opc.tcp://a:4840"})
+    assert (c["name"], c["map"], c["gvl"]) == ("plc", "plc_map.yaml", "GVL_KNX")
+
+
+def test_plc_configs_several_with_defaults():
+    from knxscada.plc import plc_configs
+
+    a, b = plc_configs({"enabled": True, "username": "knx", "endpoint": "ignored",
+                        "controllers": [{"name": "pfc300", "endpoint": "opc.tcp://a:4840"},
+                                        {"name": "board2", "endpoint": "opc.tcp://b:4840", "gvl": "GVL_B",
+                                         "enabled": False}]})
+    assert a["username"] == b["username"] == "knx"            # defaults from the plc: level
+    assert a["endpoint"] == "opc.tcp://a:4840"                  # per-PLC keys are not inherited
+    assert (a["map"], b["map"]) == ("plc_map_pfc300.yaml", "plc_map_board2.yaml")
+    assert b["gvl"] == "GVL_B" and a["enabled"] and not b["enabled"]
+
+
+@pytest.mark.parametrize("controllers", [[{"name": "a"}, {"name": "A"}], [{"endpoint": "x"}], [{"name": "with space"}]])
+def test_plc_configs_invalid(controllers):
+    from knxscada.plc import plc_configs
+
+    with pytest.raises(ValueError):
+        plc_configs({"controllers": controllers})

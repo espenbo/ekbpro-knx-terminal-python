@@ -32,3 +32,5 @@ dist/
 tmp/
 # Installations for other sites (configuration, databases) – never published
 sites/
+# Company logos and other branding for local installations (trademarks) – never published
+branding/

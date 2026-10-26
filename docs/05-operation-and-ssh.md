@@ -30,6 +30,39 @@ Stop and start the server with `sudo systemctl stop|start|restart knxscada`. The
 clients are connected. The clients show "server lost" and reconnect by themselves when the server is back.
 If you run the server in a terminal, `Ctrl+C` stops it. A second `Ctrl+C` forces it to exit.
 
+The unit is hardened: the file system is read-only for the server except `var/`, it gets no new privileges and
+no capabilities, and its memory is limited to 1 GB.
+
+### Several installations as services
+
+Several sites can run on one machine, each with its own server, socket and database. Put each in its own
+directory under `sites/` (ignored by git), e.g. `sites/cabin/config.yaml` with the project file next to it, and
+use the template [`deploy/knxscada@.service`](../deploy/knxscada@.service) – the part after `@` is the
+directory name:
+
+```bash
+mkdir -p sites/cabin
+./scada -c sites/cabin/config.yaml init ~/Cabin.knxproj --gateway 10.0.0.20
+
+sed -e "s#YOUR_USER#$USER#g" -e "s#INSTALL_DIR#$PWD#g" deploy/knxscada@.service \
+    | sudo tee /etc/systemd/system/knxscada@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now knxscada@cabin        # server for sites/cabin
+journalctl -u knxscada@cabin -f                   # its log
+./scada -c sites/cabin/config.yaml                # its visualisation
+```
+
+The main installation (`config.yaml` in the program directory, service `knxscada`) and any number of
+`knxscada@<site>` services run side by side:
+
+```bash
+systemctl status knxscada knxscada@cabin knxscada@office
+sudo systemctl restart knxscada@office            # after changing sites/office/config.yaml
+```
+
+If a site's KNX interfaces are reached through a VPN (Tailscale, WireGuard), let the service start after it:
+`sudo systemctl edit knxscada@office` and add `[Unit]` / `After=tailscaled.service`.
+
 ## Use over SSH
 
 ```bash

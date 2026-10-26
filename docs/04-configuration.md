@@ -129,6 +129,35 @@ project:
 
 Run `./scada import` after changing it (`./scada info` shows the rooms).
 
+<a id="extra-rooms"></a>
+
+### Extra rooms
+
+Addresses that no ETS room holds – e.g. a sensor and lights in an attic that is missing in the ETS building
+structure – can be put into rooms of your own. They appear in F2 and in the overview, and `plan.yaml` links to
+them by name like to any other room.
+
+```yaml
+project:
+  extra_rooms:
+    - floor: Attic                    # an existing floor, or a new one
+      name: Attic                     # the name plan.yaml links to (room: "Attic")
+      cards:
+        - name: Temperature
+          addresses: ["3/0/35"]
+        - name: Attic light
+          addresses: ["1/1/70", "1/4/70", "1/3/70", "1/5/70"]
+        - name: Store room light
+          addresses: ["1/0/5", "1/0/7"]
+          status: {"1/0/5": "1/4/81"} # control → feedback, when the names do not pair them
+          usage: light                # light | dimmer | heating | other (default: guessed)
+```
+
+Each card is built like the cards from ETS: control and status addresses are paired by name (or by
+`status`), the DPT decides switch, dimmer, setpoint or value. A card with a temperature counts as the room
+temperature. Addresses that are not in the project stop the start with an error. The rooms are read from
+`config.yaml` at every start – no `./scada import` needed.
+
 ### Several ETS projects in one site
 
 A site can consist of several ETS projects with their own KNX installations – for example a main building and
@@ -244,13 +273,15 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 |---|---|---|
 | `title` | project name | Title in the top bar |
 | `language` | `en` | Language: `en` (English) or `nb` (Norwegian bokmål; `no` is accepted as an alias). Also the language of the event log and alarm texts the server generates. Each user's own choice (Ctrl+L) and `./scada tui --language` take precedence in the visualisation. |
-| `theme` | `retro` | Default theme: `retro`, `retro-classic`, `amber`, `modern`, `solarized`. The user's own choice (Ctrl+T) takes precedence. The old names `retro-klassisk` and `moderne` are still accepted. |
+| `theme` | `retro` | Default theme: `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm`. The user's own choice for this installation (Ctrl+T) takes precedence. The old names `retro-klassisk` and `moderne` are still accepted. |
+| `logo_file` | – | A text file with another logo for the start-up screen and About (e.g. a company logo). Drawn with `█ ▀ ▄` (solid, in the theme's main colour) and `▒` (shade); blocks separated by an empty line – when the logo is too big for the window, only the first block is shown. Keep company logos out of git (e.g. in `branding/`). |
 | `splash` | `true` | Start-up logo |
 | `big_digits` | `false` | Large block digits in status tiles and screensaver. Normal text is the easiest to read. |
 | `ascii` | `false` | Only ASCII characters in charts, for older terminals |
 | `screensaver_minutes` | `5` | Minutes without input before the screensaver starts. `0` turns it off. |
 | `screensaver_rotate_s` | `20` | Seconds per screensaver page |
 | `plan` | `plan.yaml` | The floor plan file |
+| `export_dir` | `~` | Where the bus monitor export (`e`: ETS XML, CSV or JSON) is saved. In Docker: e.g. `/data/export`. |
 | `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". |
 | `power_ga` | auto | Power (DPT 14.056) for the status tile. Auto finds a name ending in "power" or "W", or containing "effekt". |
 | `energy_ga` | auto | Energy meter (DPT 13.x). Auto finds a name containing "kwh" or "energy". |
@@ -291,4 +322,30 @@ Optional. Exchanges KNX values with a PLC (e.g. CODESYS on a WAGO PFC). Guide: [
 | `burst_limit` | `8` | More variables than this changing within `settle_ms` = a PLC restart (download, reset): nothing is sent. `0` = off |
 | `restart_quiet_s` | `15` | After a PLC restart, changes are only remembered for this long; then the PLC gets the KNX values again |
 | `tag_prefix` | – | Name variables after the system tag of tagged PLC objects in ETS (see [PLC bridge](10-plc-opcua.md)) |
+
+### Several PLCs
+
+List them under `controllers`. Keys directly under `plc:` are then defaults for every PLC (user, security,
+timing …); `name`, `endpoint`, `map`, `gvl`, `gvl_file`, `node_prefix`, `namespace`, `server_certificate` and
+`enabled` belong to each PLC.
+
+```yaml
+plc:
+  enabled: true
+  username: knx                         # default for all PLCs
+  password: "secret"
+  controllers:
+    - name: pfc300                      # letters, digits, _ – shown in the top bar and the event log
+      endpoint: opc.tcp://192.168.1.100:4840
+    - name: board2
+      endpoint: opc.tcp://192.168.1.101:4840
+      gvl: GVL_KNX_Board2
+      # enabled: false                  # keep it configured, but do not connect
+```
+
+Each PLC has its own mapping, by default `plc_map_<name>.yaml`, and its own GVL; `./scada plc-map` creates or
+updates all of them (`--plc board2` for one), `./scada plc-browse --plc board2` checks one. Every PLC reads and
+writes KNX independently, with all the rules of the bridge. Two PLCs can write the same group address – the
+latest write wins, so give such an address `dir: both` in one PLC only. The top bar shows one dot per PLC, and
+PLC writes appear in the event log with the user `plc:<name>`.
 

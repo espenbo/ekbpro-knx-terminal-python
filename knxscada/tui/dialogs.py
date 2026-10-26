@@ -19,7 +19,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from .. import dpt as dptlib
-from ..i18n import LANGUAGES, _, get_language
+from ..i18n import LANGUAGES, N_, _, get_language
 from .widgets import ago
 
 
@@ -175,6 +175,55 @@ class LanguageDialog(ModalScreen[str | None]):
 
     def on_option_list_option_selected(self, event) -> None:
         self.dismiss(event.option.id)
+
+
+class ExportDialog(ModalScreen[dict | None]):
+    """Bus monitor export: format and period. Returns ``{"fmt", "hours"}`` (hours None = what is shown) or None."""
+
+    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    #: (format, label) and (hours, label); labels are translated when shown.
+    FORMATS = (("xml", N_("ETS group monitor (.xml) – opens in ETS")), ("csv", N_("CSV (.csv) – Excel, LibreOffice")),
+               ("json", N_("JSON lines (.jsonl) – scripts")))
+    PERIODS = ((None, N_("The telegrams shown in the monitor")), (1, N_("Last hour (from the server's log)")),
+               (24, N_("Last 24 hours")), (168, N_("Last 7 days")))
+
+    def __init__(self, filter_text: str) -> None:
+        super().__init__()
+        self.filter_text = filter_text
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import RadioButton, RadioSet
+
+        with Vertical(classes="dialog"):
+            yield Label(_("Export telegrams"), classes="dialog-title")
+            yield Label(_("Format"))
+            with RadioSet(id="exp-fmt"):
+                for i, (_f, label) in enumerate(self.FORMATS):
+                    yield RadioButton(_(label), value=i == 0)
+            yield Label(_("Period"))
+            with RadioSet(id="exp-period"):
+                for i, (_h, label) in enumerate(self.PERIODS):
+                    yield RadioButton(_(label), value=i == 0)
+            filt = self.filter_text or _("none – all telegrams")
+            yield Static(_("Filter: {filter}").format(filter=filt), classes="muted", markup=False)
+            with Horizontal(classes="dialog-buttons"):
+                yield Button(_("Export"), id="exp-ok", variant="primary")
+                yield Button(_("Cancel"), id="exp-cancel")
+
+    def on_mount(self) -> None:
+        from textual.widgets import RadioSet
+
+        self.query_one("#exp-fmt", RadioSet).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        from textual.widgets import RadioSet
+
+        if event.button.id != "exp-ok":
+            self.dismiss(None)
+            return
+        fmt = self.FORMATS[max(0, self.query_one("#exp-fmt", RadioSet).pressed_index)][0]
+        hours = self.PERIODS[max(0, self.query_one("#exp-period", RadioSet).pressed_index)][0]
+        self.dismiss({"fmt": fmt, "hours": hours})
 
 
 class ConfirmDialog(ModalScreen[bool]):

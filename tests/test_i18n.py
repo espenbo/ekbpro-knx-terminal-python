@@ -76,3 +76,17 @@ def test_tui_modules_import_in_norwegian():
     for name in [m for m in sys.modules if m.startswith("knxscada.tui")]:
         del sys.modules[name]
     import knxscada.tui.app  # noqa: F401
+
+
+def test_colour_theme_is_chosen_per_installation(tmp_path, monkeypatch):
+    from knxscada import prefs
+
+    monkeypatch.setattr(prefs, "PREFS", tmp_path / "ui.json")
+    prefs.save_prefs(theme="amber", language="nb")                 # old format: one theme for everything
+    assert prefs.site_theme("/a/config.yaml", "storm") == "storm"  # the installation's ui.theme wins over it
+    assert prefs.site_theme("/a/config.yaml", None) == "amber"     # … and it is still the fallback
+    prefs.save_site_theme("/a/config.yaml", "modern")
+    prefs.save_site_theme("/b/config.yaml", "retro")
+    assert prefs.site_theme("/a/config.yaml", "storm") == "modern"
+    assert prefs.site_theme("/b/config.yaml", "storm") == "retro"
+    assert prefs.load_prefs()["language"] == "nb"                   # the language is untouched

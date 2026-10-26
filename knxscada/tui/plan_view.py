@@ -326,7 +326,7 @@ class PlanView(View):
                  for i, n in enumerate(names)]
             )
         path = plan_path(self.scada.cfg)
-        legend = _("● lights on   ♨ heating   ! alarm   ←/→, PgUp/PgDn or 1–9: floor · ↑/↓ room · Enter/click opens the room")
+        legend = _("● 1/4 = 1 of 4 lights on   ♨ heating   ! alarm   ←/→, PgUp/PgDn or 1–9: floor · ↑/↓ room · Enter/click opens the room")
         if not self.floors:
             legend = _("No floor plan found in {path}").format(path=path)
         self.query_one("#plan-legend", Static).update(f"{legend}   [dim]({path.name})[/dim]")

@@ -195,6 +195,11 @@ class LineLog(ScrollView, can_focus=True):
         self._show_pending = False  # a _show_appended call is scheduled
 
     # -- data -----------------------------------------------------------------------
+    @property
+    def items(self) -> list[Any]:
+        """The items shown, oldest first."""
+        return list(self._items)
+
     def clear(self) -> None:
         self.set_items([])
 

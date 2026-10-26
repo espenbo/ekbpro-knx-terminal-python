@@ -170,7 +170,7 @@ class ScadaServer:
         }
         self.sim: Simulator | None = None
         self._stop = asyncio.Event()
-        self.plc = self._make_plc_bridge()
+        self.plcs = self._make_plc_bridges()
 
         # Start with the last known values from the database so clients see
         # something immediately, before the bus has answered our read requests.
@@ -198,8 +198,7 @@ class ScadaServer:
                 loop.add_signal_handler(sig, self._on_signal)
 
         tasks = [asyncio.create_task(self._housekeeping())]
-        if self.plc is not None:
-            tasks.append(asyncio.create_task(self.plc.run()))
+        tasks += [asyncio.create_task(b.run()) for b in self.plcs]
         if self.demo:
             self.sim = Simulator(self)
             tasks.append(asyncio.create_task(self.sim.run()))
@@ -219,9 +218,9 @@ class ScadaServer:
         self.clients.clear()
         with contextlib.suppress(Exception):
             await asyncio.wait_for(server.wait_closed(), 2)
-        if self.plc is not None:
+        for b in self.plcs:
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(self.plc.stop(), 5)
+                await asyncio.wait_for(b.stop(), 5)
         for t in tasks:
             t.cancel()
         for xknx in self.xknx.values():
@@ -454,25 +453,42 @@ class ScadaServer:
         self._broadcast(msg)
         if kind != "read" and dst in self.rules:
             self._check_alarm(dst, decoded)
-        if kind != "read" and self.plc is not None:
-            self.plc.on_knx(dst, decoded)
+        if kind != "read":
+            for b in self.plcs:
+                b.on_knx(dst, decoded)
 
-    def _make_plc_bridge(self):
-        """The OPC UA bridge to a PLC when ``plc.enabled`` is set (see :mod:`knxscada.opcua_bridge`)."""
-        if not self.cfg.plc.get("enabled"):
-            return None
+    def _make_plc_bridges(self) -> list:
+        """One OPC UA bridge per enabled PLC in ``plc:`` (see :mod:`knxscada.opcua_bridge`)."""
+        if not self.cfg.plc:
+            return []
         from .opcua_bridge import PlcBridge, parse_security
-        from .plc import load_map
+        from .plc import load_map, plc_configs
 
-        path = self.cfg.resolve(self.cfg.plc.get("map", "plc_map.yaml"))
-        if not path.exists():
-            raise FileNotFoundError(_("plc.enabled is set, but {path} does not exist – create it with ./scada plc-map").format(
-                path=path))
-        parse_security(self.cfg.plc.get("security"))  # fail early on a typo
-        pmap = load_map(path, self.gas)
-        self.status["plc"] = N_("disconnected")
-        log.info(_("PLC bridge: {n} group addresses ({path})").format(n=len(pmap.active()), path=path.name))
-        return PlcBridge(self, self.cfg, pmap)
+        configs = [c for c in plc_configs(self.cfg.plc) if c.get("enabled")]
+        bridges = []
+        for c in configs:
+            path = self.cfg.resolve(c["map"])
+            if not path.exists():
+                raise FileNotFoundError(_("plc.enabled is set, but {path} does not exist – create it with ./scada plc-map").format(
+                    path=path))
+            parse_security(c.get("security"))  # fail early on a typo
+            pmap = load_map(path, self.gas)
+            log.info(_("PLC bridge: {n} group addresses ({path})").format(n=len(pmap.active()), path=path.name))
+            bridges.append(PlcBridge(self, self.cfg, pmap, c, several=len(configs) > 1))
+        if bridges:
+            self.status["plcs"] = [{"name": b.name, "connected": False} for b in bridges]
+            self.status["plc"] = N_("disconnected")
+        return bridges
+
+    def plc_state(self, name: str, connected: bool) -> None:
+        """Called by a bridge when its connection changes; ``status.plc`` sums up all PLCs."""
+        for p in self.status.get("plcs", []):
+            if p["name"] == name:
+                p["connected"] = connected
+        n = sum(p["connected"] for p in self.status["plcs"])
+        total = len(self.status["plcs"])
+        self.status["plc"] = N_("connected") if n == total else N_("partly connected") if n else N_("disconnected")
+        self._broadcast({"type": "status", "status": self.status})
 
     def _check_alarm(self, addr: str, value: Any) -> None:
         """Raise or clear the alarm bound to *addr* according to its rule.

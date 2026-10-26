@@ -91,9 +91,10 @@ ui:
   # Each user can choose their own with Ctrl+L (saved in ~/.config/knxscada/ui.json),
   # and ./scada tui --language nb overrides it for one session.
   language: __LANGUAGE__
-  # Colour theme: retro | retro-classic | amber | modern | solarized
-  # (each user can choose their own with Ctrl+T – saved in ~/.config/knxscada/ui.json)
+  # Colour theme: retro | retro-classic | amber | modern | solarized | storm
+  # (each user can choose their own per installation with Ctrl+T – saved in ~/.config/knxscada/ui.json)
   theme: retro
+  # logo_file: branding/logo.txt     # another start-up logo (█ ▀ ▄ ▒ characters), e.g. a company logo
   splash: true                      # start-up splash screen
   big_digits: false                 # big block digits in status tiles/screensaver
   ascii: false                      # ASCII-only charts (old terminals without Unicode)

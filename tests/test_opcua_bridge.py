@@ -407,3 +407,35 @@ def test_missing_value_is_never_false():
 
     with pytest.raises(ValueError):
         to_knx_value(PlcEntry(ga="1/1/1", on=True, dir="both", type="BOOL", var="x", dpt="1.001"), None)
+
+
+def test_server_with_two_plcs(tmp_path):
+    import json
+
+    from knxscada import project
+    from knxscada.plc import build_map, write_map
+    from knxscada.server import ScadaServer
+    from tests.test_project import raw_project
+
+    model = project.build_model(raw_project())
+    (tmp_path / "cache.json").write_text(json.dumps(model), encoding="utf-8")
+    for name in ("pfc300", "board2"):
+        pmap, _u, _r = build_map(model)
+        pmap.select = "all"
+        write_map(pmap, tmp_path / f"plc_map_{name}.yaml")
+    cfg = Config(path=tmp_path / "config.yaml", knx={"gateway_ip": "10.0.0.1"},
+                 project={"file": "none.knxproj", "cache": "cache.json"},
+                 server={"database": "db.sqlite", "socket": "s.sock"},
+                 plc={"enabled": True, "controllers": [{"name": "pfc300", "endpoint": "opc.tcp://a:4840"},
+                                                       {"name": "board2", "endpoint": "opc.tcp://b:4840"}]})
+    s = ScadaServer(cfg)
+    try:
+        assert [b.name for b in s.plcs] == ["pfc300", "board2"]
+        assert [p["name"] for p in s.status["plcs"]] == ["pfc300", "board2"]
+        s.plcs[0]._set_connected(True)
+        assert s.status["plc"] == "partly connected"
+        s.plcs[1]._set_connected(True)
+        assert s.status["plc"] == "connected"
+        assert s.plcs[0]._tag == " [pfc300]"                      # events say which PLC
+    finally:
+        s.store.close()

@@ -20,7 +20,9 @@ Performance notes (these views run over SSH, often for hours):
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
@@ -186,7 +188,7 @@ class OverviewView(GAWatcher, View):
                 temp_plot.border_title = _("Temperature °C – last 24 hours")
                 yield temp_plot
             rooms = VerticalScroll(id="ov-rooms")
-            rooms.border_title = _("Room status   ● lights  ♨ heating  ! alarm")
+            rooms.border_title = _("Room status   ● 1/4 = lights on/total  ♨ heating  ! alarm")
             with rooms:
                 yield ItemGrid(id="ov-room-grid", min_column_width=26)
         with Horizontal(id="ov-bottom"):
@@ -629,6 +631,7 @@ class MonitorView(View):
     BINDINGS = [
         Binding("p", "pause", _("Pause/resume")),
         Binding("c", "clear", _("Clear")),
+        Binding("e", "export", _("Export for ETS")),
         Binding("slash", "focus_filter", _("Filter")),
     ]
 
@@ -641,6 +644,7 @@ class MonitorView(View):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="toolbar"):
             yield Input(placeholder=_("Filter: address, name, source or value  (/)"), id="mon-filter")
+            yield Button(_("Export (e)"), id="mon-export", compact=True)
             yield Static("", id="mon-state")
         with Vertical(id="mon-box", classes="logbox"):
             yield LiveStatic("", id="mon-head", classes="loghead")
@@ -735,6 +739,58 @@ class MonitorView(View):
 
     def action_clear(self) -> None:
         self.query_one("#mon-log", LineLog).clear()
+
+    @on(Button.Pressed, "#mon-export")
+    def action_export(self) -> None:
+        """Ask for format and period, then save the telegrams that match the filter (see knxscada.export)."""
+        from .dialogs import ExportDialog
+
+        def chosen(choice: dict | None) -> None:
+            if choice:
+                self._export(choice["fmt"], choice["hours"])
+
+        self.app.push_screen(ExportDialog(" ".join(self.words)), chosen)
+
+    #: Most telegrams fetched from the server for one export, and the page size of each request.
+    EXPORT_MAX = 500_000
+    EXPORT_PAGE = 5000
+
+    @work(exclusive=True, group="export")
+    async def _export(self, fmt: str, hours: int | None) -> None:
+        from ..export import FORMATS, render
+
+        app = self.scada
+        if hours is None:
+            items = self.query_one("#mon-log", LineLog).items
+        else:
+            # Page backwards through the server's log; the filter is applied to every page.
+            since, before, items = time.time() - hours * 3600, None, []
+            self.notify(_("Fetching telegrams from the server …"))
+            while len(items) < self.EXPORT_MAX:
+                page = await app.request("telegrams", limit=self.EXPORT_PAGE, before_id=before)
+                if not page:
+                    break
+                for t in page:  # the log stores the decoded value; the display text is made here
+                    if t.get("type") != "read":
+                        t.setdefault("text", dptlib.fmt(app.ga(t["dst"]).get("dpt"), t.get("value")))
+                items[:0] = [t for t in page if t["ts"] >= since and self._match(t)]
+                if page[0]["ts"] < since or len(page) < self.EXPORT_PAGE:
+                    break
+                before = page[0]["id"]
+        if not items:
+            self.notify(_("No telegrams to export"), severity="warning")
+            return
+        folder = Path(os.path.expanduser(str(app.cfg.ui.get("export_dir") or "~")))
+        path = folder / time.strftime(f"knx-busmonitor-%Y%m%d-%H%M%S{FORMATS[fmt]}")
+        try:
+            text, n = render(fmt, items, app.model["gas"], app.title)
+            folder.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            self.notify(_("Export failed: {error}").format(error=exc), severity="error")
+            return
+        hint = _(" – open it in ETS: Diagnostics → Group Monitor → Open") if fmt == "xml" else ""
+        self.notify(_("{n} telegrams saved to {path}").format(n=n, path=path) + hint, timeout=12)
 
     def action_focus_filter(self) -> None:
         self.query_one("#mon-filter", Input).focus()

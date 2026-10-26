@@ -33,27 +33,41 @@ if TYPE_CHECKING:
 
 LOGO_FILE = Path(__file__).with_name("logo.txt")
 
+#: Characters drawn in the solid logo colour (full and half blocks); ▒ is the shade.
+SOLID = set("█▀▄▌▐▖▗▘▝▙▚▛▜▞▟")
 
-@lru_cache(maxsize=1)
-def logo_lines() -> list[str]:
-    """Lines of the logo file (empty list if it is missing)."""
+
+@lru_cache(maxsize=4)
+def logo_lines(path: Path = LOGO_FILE) -> list[str]:
+    """Lines of a logo file (empty list if it is missing)."""
     try:
-        return [line.rstrip() for line in LOGO_FILE.read_text(encoding="utf-8").splitlines()]
+        return [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines()]
     except OSError:
         return []
 
 
-def logo(app, width: int, rows: int | None = None) -> Text:
-    """The logo coloured with the theme, fitted to *width* columns.
+def logo_path(app) -> Path:
+    """``ui.logo_file`` (e.g. a company logo, see docs/04-configuration.md) or the program's own logo."""
+    custom = app.cfg.ui.get("logo_file") if getattr(app, "cfg", None) else None
+    return app.cfg.resolve(str(custom)) if custom else LOGO_FILE
 
-    If the full logo is too wide, only its first block ("EKB PRO") is used;
-    if even that does not fit, a one-line text is returned. *rows* limits
-    the number of lines (used for the line-by-line reveal of the splash).
+
+def logo(app, width: int, rows: int | None = None, height: int | None = None) -> Text:
+    """The logo coloured with the theme, fitted to *width* columns (and *height* lines).
+
+    If the full logo is too big, only its first block (lines up to the first
+    empty line) is used; if even that does not fit, a one-line text is
+    returned. *rows* limits the number of lines (used for the line-by-line
+    reveal of the splash).
     """
-    lines = logo_lines()
-    if lines and max(len(line) for line in lines) > width:
+    lines = logo_lines(logo_path(app))
+
+    def fits(block: list[str]) -> bool:
+        return max(len(line) for line in block) <= width and (height is None or len(block) <= height)
+
+    if lines and not fits(lines):
         first = lines[: lines.index("")] if "" in lines else lines  # blocks are separated by an empty line
-        lines = first if max(len(line) for line in first) <= width else []
+        lines = first if first and fits(first) else []
     theme = app.current_theme
     if not lines:
         return Text(PRODUCT, style=Style(color=theme.primary, bold=True))
@@ -67,7 +81,7 @@ def logo(app, width: int, rows: int | None = None) -> Text:
         if i:
             out.append("\n")
         for ch in line:
-            out.append(ch, solid if ch == "█" else dim if ch == "▒" else None)
+            out.append(ch, solid if ch in SOLID else dim if ch == "▒" else None)
     return out
 
 
@@ -104,10 +118,10 @@ class SplashScreen(Screen):
 
     def _tick(self) -> None:
         app = self.scada
-        total = len(logo_lines()) or 1
+        total = len(logo_lines(logo_path(app))) or 1
         if self.shown < total:
             self.shown += 1
-            self.query_one("#splash-logo", Static).update(logo(app, self.size.width - 4, self.shown))
+            self.query_one("#splash-logo", Static).update(logo(app, self.size.width - 4, self.shown, self.size.height - 8))
         elapsed = time.monotonic() - self.started
         st = app.status
         # Show the connection progress while the splash is visible.

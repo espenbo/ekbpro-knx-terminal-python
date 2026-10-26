@@ -12,12 +12,14 @@ You need no web browser, no per-view licence and no special hardware.
 - **Overview:** status tiles (outdoor, indoor, power, lights, KNX traffic, alarms), climate table with sparklines, room status and charts.
 - **Floor plan** of the building with live status per room. Can be exported to DXF for CAD programs.
 - **Group addresses:** every address with its live value, search, reading and writing.
-- **Bus monitor:** all telegrams live, with filter and pause (and the interface each came through).
+- **Bus monitor:** all telegrams live, with filter and pause (and the interface each came through). Export to
+  ETS (group monitor XML), CSV or JSON – what is shown, or the last hour/day/week from the log.
 - **Alarms:** rules from the configuration, acknowledgement and history.
 - **Event log:** who operated what, and when.
 - **Trends:** curves from the log (1 hour to 30 days) as line, step, filled or bar charts.
 - **Screensaver** that rotates between information pages. Unacknowledged alarms take over the screen.
-- **Five colour themes:** muted green, green phosphor, amber, modern dark and solarized.
+- **Six colour themes:** muted green, green phosphor, amber, modern dark, solarized and Storm Automasjon –
+  chosen per installation, so several sites can be told apart. A company logo can replace the start-up logo.
 - **Two languages:** English (default) and Norwegian bokmål – per installation, per user or per session.
 - **One server, many clients:** one KNX tunnel per IP interface regardless of the number of SSH sessions, and logging around the clock.
 - **Connectivity:** KNX IP tunneling (UDP and TCP), routing and KNX IP Secure with a keyring from ETS.
@@ -26,7 +28,8 @@ You need no web browser, no per-view licence and no special hardware.
 - **Several ETS projects in one site** (e.g. a main building and an annex), `.knxproj` and `.knxprojarchive`.
 - **Rooms from group address names** for projects structured by function ("Actual temp Office 1").
 - **PLC bridge over OPC UA:** a PLC (e.g. CODESYS on a WAGO PFC) reads and writes selected KNX addresses – the GVL is
-  generated from the ETS project, optionally with names from system tags. A PLC download or reset never reaches the bus.
+  generated from the ETS project, optionally with names from system tags. Several PLCs per site. A PLC download or
+  reset never reaches the bus.
 - **Docker:** runs in a container, also on a WAGO PFC200/PFC300.
 
 ## Getting started
@@ -84,8 +87,8 @@ Taken from a real installation, with the user interface in Norwegian (English is
 | `./scada import` | Re-reads the `.knxproj` |
 | `./scada info` | Shows a summary of the project |
 | `./scada plan-dxf [file.dxf]` | Exports the floor plan to DXF |
-| `./scada plc-map [--all\|--marked] [--rename]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL |
-| `./scada plc-browse [FILTER] [--endpoints]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
+| `./scada plc-map [--all\|--marked] [--rename] [--plc NAME]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL, for every PLC or one |
+| `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
 
 All commands accept `-c path/to/config.yaml` (before the command). You can also set the environment variable
 `KNXSCADA_CONFIG`.

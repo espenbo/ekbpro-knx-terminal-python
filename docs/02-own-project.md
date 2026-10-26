@@ -136,13 +136,15 @@ sudo systemctl restart knxscada   # or stop and start the server
 (One site that consists of several ETS projects – e.g. a main building and an annex – is configured in *one*
 installation with `project.files`: see [Configuration](04-configuration.md#several-ets-projects-in-one-site).)
 
-Create one directory or one configuration file per installation, with separate paths for socket and database:
+Create one directory per installation, e.g. under `sites/` (ignored by git); relative paths in its
+`config.yaml` – socket, database, project – are resolved from that directory, so they never collide. To run
+them as services, see [Several installations as services](05-operation-and-ssh.md#several-installations-as-services).
 
 ```bash
-./scada -c ~/cabin/config.yaml init ~/cabin/Cabin.knxproj --gateway 10.0.0.20
-./scada -c ~/cabin/config.yaml server
-./scada -c ~/cabin/config.yaml
+mkdir -p sites/cabin
+./scada -c sites/cabin/config.yaml init ~/Cabin.knxproj --gateway 10.0.0.20
+./scada -c sites/cabin/config.yaml server
+./scada -c sites/cabin/config.yaml
 ```
 
-Relative paths in a configuration are resolved from the directory the file is in, so each installation gets its
-own `var/`.
+Each installation gets its own `sites/<name>/var/` with socket, database and project cache.

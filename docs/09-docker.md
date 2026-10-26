@@ -95,6 +95,9 @@ Or directly from your PC: `ssh -t root@<plc> /home/knx/knx-host.sh`
 The helper passes your SSH client address and terminal type into the container, so the event log shows who
 operated what (`root@192.168.1.10`). Without it: `docker exec -it knx knx`.
 
+The bus monitor export (`e` in F4) is written inside the container. Set `ui.export_dir: /data/export` in
+`config.yaml`, then the files appear in `/home/knx/export` on the host.
+
 ## Try it without an installation
 
 ```sh

@@ -114,6 +114,18 @@ plc:
 Restart the server. The event log shows `PLC (OPC UA) connected: N variables`, and the top bar shows
 `● PLC` (green when connected).
 
+## Several PLCs
+
+A site can have several PLCs (e.g. one per switchboard). List them under `plc.controllers`; each gets its own
+mapping (`plc_map_<name>.yaml`), its own GVL and its own OPC UA connection, and each reads and writes KNX on its
+own. See [Configuration → Several PLCs](04-configuration.md#several-plcs).
+
+```bash
+./scada plc-map --all              # mapping and GVL for every PLC
+./scada plc-map --plc board2       # only this one
+./scada plc-browse --plc board2 GVL_KNX_Board2
+```
+
 ## Security
 
 | Setting | `config.yaml` |

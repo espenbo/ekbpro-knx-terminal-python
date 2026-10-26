@@ -64,6 +64,51 @@ VAR_MAX = 60
 TAG_RE = re.compile(r"(\d{3})_(\d{3})_([A-Z]{2,3}\d+)(?:\._\d+)?_(\w+)$")
 
 
+#: Keys that belong to one PLC only: not inherited from the ``plc:`` level by ``controllers``.
+_OWN_KEYS = {"controllers", "name", "endpoint", "map", "gvl", "gvl_file", "node_prefix", "namespace",
+             "server_certificate", "enabled"}
+
+
+def plc_configs(plc: dict[str, Any]) -> list[dict[str, Any]]:
+    """The PLCs of the ``plc:`` section, each a complete dict with ``name``, ``map`` and ``gvl``.
+
+    One PLC (the keys directly under ``plc:``, name ``plc``) or several under
+    ``plc.controllers``; keys at the ``plc:`` level are then defaults for every
+    PLC (user name, security, timing …). With several PLCs the mapping file
+    defaults to ``plc_map_<name>.yaml``. Raises :class:`ValueError` for missing
+    or duplicate names.
+    """
+    items = plc.get("controllers")
+    if not items:
+        c = {**plc, "name": str(plc.get("name") or "plc")}
+        c.setdefault("map", "plc_map.yaml")
+        c.setdefault("gvl", "GVL_KNX")
+        return [c]
+    if not isinstance(items, list):
+        raise ValueError("plc.controllers must be a list")
+    defaults = {k: v for k, v in plc.items() if k not in _OWN_KEYS}
+    out, names, errors = [], set(), []
+    for i, item in enumerate(items, 1):
+        if not isinstance(item, dict) or not item.get("name"):
+            errors.append(f"plc.controllers[{i}]: name is missing")
+            continue
+        c = {**defaults, **item}
+        name = str(c["name"])
+        if not IDENT_RE.match(name):
+            errors.append(f"plc.controllers[{i}]: name {name!r} – letters, digits and _ only")
+        if name.lower() in names:
+            errors.append(f"plc.controllers: {name!r} is listed twice")
+        names.add(name.lower())
+        c["name"] = name
+        c.setdefault("enabled", plc.get("enabled", True))
+        c.setdefault("map", f"plc_map_{name}.yaml")
+        c.setdefault("gvl", "GVL_KNX")
+        out.append(c)
+    if errors:
+        raise ValueError("\n".join(errors))
+    return out
+
+
 def plc_type(dpt: str | None) -> str | None:
     """IEC 61131-3 type for a DPT, or None when the DPT cannot be exchanged with the PLC."""
     main, sub = dptlib.split(dpt)

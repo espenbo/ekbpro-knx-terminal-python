@@ -68,3 +68,29 @@ def test_table_cells_are_plain_text_not_markup():
             assert str(t.get_cell("r", "a")) == "[b]not bold[/b]"
 
     asyncio.run(run())
+
+
+def test_export_dialog_returns_format_and_period():
+    from textual.widgets import RadioButton
+
+    from knxscada.tui.dialogs import ExportDialog
+
+    result = []
+
+    class T(App):
+        def on_mount(self):
+            self.push_screen(ExportDialog("1/1"), result.append)
+
+    async def run():
+        app = T()
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            buttons = list(app.screen.query(RadioButton))
+            buttons[1].value = True     # CSV
+            buttons[5].value = True     # last 24 hours
+            await pilot.pause()
+            await pilot.click("#exp-ok")
+            await pilot.pause()
+
+    asyncio.run(run())
+    assert result == [{"fmt": "csv", "hours": 24}]

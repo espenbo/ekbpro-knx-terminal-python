@@ -129,6 +129,7 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
             # Without the .knxproj (e.g. copied installation) the cache is still usable.
             fresh = all(not p["file"].exists() or cache.stat().st_mtime >= p["file"].stat().st_mtime for p in projects)
             if data.get("cache_version") == CACHE_VERSION and fresh and data.get("sources", sources) == sources:
+                add_extra_rooms(data, cfg.project.get("extra_rooms"))
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # unreadable cache: rebuild below
@@ -145,7 +146,77 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     model["sources"] = sources
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
+    add_extra_rooms(model, cfg.project.get("extra_rooms"))  # not cached: read from config.yaml every time
     return model
+
+
+#: ``usage`` of an extra card → the ETS usage text the views look for.
+USAGES = {"light": "switchable light", "dimmer": "dimmable light", "heating": "heating radiator", "other": "custom"}
+
+
+def add_extra_rooms(model: dict[str, Any], rooms: list[dict] | None) -> None:
+    """Add rooms defined in ``project.extra_rooms`` – for addresses no ETS room holds.
+
+    ::
+
+        extra_rooms:
+          - floor: Loft                       # an existing floor, or a new one
+            name: Attic                       # also the name plan.yaml links to
+            cards:
+              - name: Temperature
+                addresses: ["3/0/35"]
+              - name: Store room light
+                addresses: ["1/0/5", "1/0/7"]
+                status: {"1/0/5": "1/4/81"}   # control → feedback, when the names do not pair them
+                usage: light                  # light | dimmer | heating | other (default: guessed)
+
+    The cards are built like the others (:func:`build_datapoints`). Raises
+    :class:`ValueError` for addresses that are not in the project.
+    """
+    if not rooms:
+        return
+    gas = model["gas"]
+    unknown = []
+    for i, spec in enumerate(rooms):
+        floor_name = str(spec.get("floor") or N_("Other"))
+        floor = next((f for f in model["floors"] if f["name"] == floor_name), None)
+        if floor is None:
+            floor = {"name": floor_name, "rooms": []}
+            model["floors"].append(floor)
+        room = {"id": f"X-{i}", "name": str(spec.get("name") or f"Room {i + 1}"), "functions": []}
+        for j, card in enumerate(spec.get("cards") or []):
+            addrs = [str(a) for a in card.get("addresses") or []]
+            explicit = {str(k): str(v) for k, v in (card.get("status") or {}).items()}
+            unknown += [a for a in [*addrs, *explicit.values()] if a not in gas]
+            fake = {"name": str(card.get("name") or ""), "group_addresses": {a: {"role": ""} for a in addrs if a in gas}}
+            dps = build_datapoints(fake, gas, room["name"])
+            if explicit:
+                for d in dps:
+                    if d["ga"] in explicit:
+                        d["status"] = explicit[d["ga"]]
+                # A feedback address listed on its own is now shown on its control row.
+                dps = [d for d in dps if d["ga"] or d["status"] not in explicit.values()]
+            if not dps:
+                continue
+            kinds = {d["kind"] for d in dps}
+            usage = USAGES.get(str(card.get("usage") or ""))
+            if usage is None:
+                if {"switch", "percent"} <= kinds:
+                    usage = "dimmable light"
+                elif "switch" in kinds:
+                    usage = "switchable light"
+                elif any(dptlib.split(d["dpt"])[0] == 9 for d in dps):
+                    usage = "heating radiator"  # a temperature: shown as the room temperature
+                else:
+                    usage = "custom"
+            fid = f"X-{i}-{j}"
+            model["functions"][fid] = {"id": fid, "name": fake["name"], "usage": usage, "type": "",
+                                       "room": room["name"], "datapoints": dps}
+            room["functions"].append(fid)
+        floor["rooms"].append(room)
+    if unknown:
+        raise ValueError(_("project.extra_rooms: not in the ETS project: {addresses}").format(
+            addresses=", ".join(sorted(set(unknown)))))
 
 
 def merge_models(projects: list[dict[str, Any]], models: list[dict[str, Any]]) -> dict[str, Any]:

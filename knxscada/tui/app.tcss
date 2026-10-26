@@ -314,6 +314,10 @@ LineLog {
     width: 1fr;
 }
 
+#mon-export {
+    margin: 1 0 0 1;
+}
+
 #mon-state {
     width: auto;
     padding: 1 1;

@@ -48,7 +48,7 @@ from .. import dpt as dptlib
 from ..client import ScadaClient
 from ..config import Config
 from ..i18n import N_, _, get_language
-from ..prefs import load_prefs, save_prefs
+from ..prefs import save_prefs, save_site_theme, site_theme
 from ..project import load_project
 from .dialogs import ConfirmDialog, GADialog, LanguageDialog, ThemeDialog, ValueDialog
 from .home import HomeModel
@@ -173,8 +173,8 @@ class ScadaApp(App):
     def on_mount(self) -> None:
         for theme in THEMES:
             self.register_theme(theme)
-        # The user's own choice (Ctrl+T) wins over the configured default.
-        theme = resolve_theme(load_prefs().get("theme")) or resolve_theme(self.ui.get("theme")) or "retro"
+        # The user's own choice for this installation (Ctrl+T) wins over the configured default.
+        theme = resolve_theme(site_theme(self.cfg.path, self.ui.get("theme"))) or "retro"
         try:
             self.theme = theme
         except Exception:  # noqa: BLE001 - unknown theme name
@@ -462,14 +462,16 @@ class ScadaApp(App):
     def _focus_view(self, vid: str) -> None:
         """Move focus into the view so its key bindings work immediately."""
         view = self.main.query_one(f"#{vid}", View)
-        target = next((w for w in view.query("DataTable, PlotextPlot, Input") if w.focusable), None)
+        # The bus monitor's telegram list before its filter, so p/c/e work at once (/ goes to the filter).
+        target = next((w for w in view.query("LineLog") if w.focusable), None)
+        target = target or next((w for w in view.query("DataTable, PlotextPlot, Input") if w.focusable), None)
         if target is not None:
             target.focus()
 
     def action_pick_theme(self) -> None:
         def done(name: str | None) -> None:
             if name:
-                save_prefs(theme=name)
+                save_site_theme(self.cfg.path, name)
                 self.notify(_("Colour theme: {name} (saved for {user})").format(name=name, user=self.client.user.split("@")[0]))
 
         self.push_screen(ThemeDialog(self.theme), done)
@@ -627,7 +629,12 @@ class ScadaApp(App):
         else:
             t.append("● KNX  ", style="bold red")
             t.append(_(str(st.get("connection", "disconnected"))), style="bold red")
-        if "plc" in st:  # OPC UA bridge to a PLC is configured
+        plcs = st.get("plcs") or []
+        if len(plcs) > 1:  # several PLCs: one dot each
+            t.append("   PLC", style="bold green" if all(p["connected"] for p in plcs) else "bold red")
+            for p in plcs:
+                t.append(f" ●{p['name']}", style="green" if p["connected"] else "bold red")
+        elif "plc" in st:  # OPC UA bridge to a PLC is configured
             plc_ok = st["plc"] == "connected"
             t.append("   ● PLC", style="bold green" if plc_ok else "bold red")
             if not plc_ok:

@@ -4,7 +4,11 @@
 
 Stored as JSON in ``~/.config/knxscada/ui.json`` (``$XDG_CONFIG_HOME`` is
 respected), so every SSH user can have their own choices, independent of
-the shared ``config.yaml``.
+the shared ``config.yaml``. The language is one choice per user; the colour
+theme is chosen per installation (``sites``, keyed by the path of its
+``config.yaml``), so several installations can be told apart by their colours::
+
+    {"language": "nb", "sites": {"/opt/knx/config.yaml": {"theme": "storm"}}}
 """
 
 from __future__ import annotations
@@ -35,6 +39,21 @@ def save_prefs(**changes) -> None:
         PREFS.write_text(json.dumps(prefs, indent=1), encoding="utf-8")
     except OSError:
         pass
+
+
+def site_theme(site: Path | str, configured: str | None) -> str | None:
+    """The colour theme for an installation: the user's choice for it > *configured* (``ui.theme``) >
+    the user's choice from before themes were per installation."""
+    prefs = load_prefs()
+    own = (prefs.get("sites") or {}).get(str(site), {}).get("theme")
+    return own or configured or prefs.get("theme")
+
+
+def save_site_theme(site: Path | str, theme: str) -> None:
+    """Remember the user's colour theme for this installation."""
+    sites = load_prefs().get("sites") or {}
+    sites.setdefault(str(site), {})["theme"] = theme
+    save_prefs(sites=sites)
 
 
 def ui_language(configured: str | None, override: str | None = None) -> str | None:

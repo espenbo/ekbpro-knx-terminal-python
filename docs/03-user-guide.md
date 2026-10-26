@@ -64,6 +64,7 @@ The terminal is cleared when you quit.
   The temperature turns yellow when the room is more than 1.5° below its setpoint. Enter opens the room.
 - **Temperature chart:** outdoor and indoor average for the last 24 hours.
 - **Room status:** one card per room.
+  - `● 1/4` means 1 of the room's 4 lights is on (filled dot: at least one on); `○ 0/3` means none of 3.
   - A yellow frame means a light is on, a yellow `!` is a warning and a red `!!` is critical.
   - ♨ means the heating is on.
   - A click opens the room.
@@ -110,6 +111,15 @@ shows the interface the telegram came through (the filter matches it too).
 
 - **`/`** filters, for example `1/1`, `stue`, `1.1.24` or `read`. Several words mean all must match.
 - **`p`** pauses and resumes.
+- **`e`** (or the *Export* button) exports telegrams. Choose
+  - the **format**: *ETS group monitor (.xml)* – open it in ETS with *Diagnostics → Group Monitor → Open*;
+    *CSV* – `;`-separated with a header, opens in Excel/LibreOffice; or *JSON lines* – one object per line, for
+    scripts;
+  - the **period**: the telegrams shown in the monitor, or the last hour, 24 hours or 7 days from the server's
+    log (up to 500,000 telegrams).
+
+  The filter applies in both cases. The file `knx-busmonitor-<date>-<time>.<ext>` is saved in your home
+  directory (`ui.export_dir`). In the ETS file, group addresses are written without a project prefix.
 - **`c`** clears the view. The log in the database is kept.
 - **`↑` / `↓`, `PgUp` / `PgDn` and `Home` / `End`** scroll. When you are at the bottom, the list follows new telegrams.
 - **Enter or click** opens the address dialog.
@@ -152,8 +162,8 @@ as the server has been running.
 
 ## F8 Floor plan
 
-Shows the building drawn from [`plan.yaml`](06-floor-plan.md). Each room shows temperature → setpoint, ● lights,
-♨ heating and alarm. The colour of the room shows its status.
+Shows the building drawn from [`plan.yaml`](06-floor-plan.md). Each room shows temperature → setpoint, lights
+(`● 1/4` = 1 of 4 lights on), ♨ heating and alarm. The colour of the room shows its status.
 
 - **`←` / `→`, `PgUp` / `PgDn`, `1`–`9` or `n` / `p`** change floor. You can also click the floor tabs.
 - **`↑` / `↓`** select a room.
@@ -183,8 +193,10 @@ screen** with a slow red blink. Any key or click returns to the normal view.
 | Amber | Retro amber IBM or Wyse terminal |
 | Modern dark | Neutral dark with blue, purple and clear signal colours |
 | Solarized | Modern with low contrast, easy on the eyes |
+| Storm Automasjon | The colours of Storm Elektro: deep blue panels, grey text, white focus, green for OK and red/orange for alarms |
 
-`↑` / `↓` previews, Enter selects and Esc cancels. The choice is saved per user in `~/.config/knxscada/ui.json`.
+`↑` / `↓` previews, Enter selects and Esc cancels. The choice is saved per user **and per installation** in
+`~/.config/knxscada/ui.json`, so two sites on the same machine can have different colours.
 
 ## Language (Ctrl+L)
 
