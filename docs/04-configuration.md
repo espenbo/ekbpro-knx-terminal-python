@@ -115,6 +115,10 @@ project:
     # Room names to show instead of the matched text, as "floor/room" (optional).
     names:
       "2nd floor/Office 6": "Office 6 · RT6206"
+    # Further names of setpoints, which get − / + (optional; "setpoint", "setpunkt", "ønsket" … are built in).
+    setpoint: "(?i)set temp"
+    # Names that are only shown, never written from a card, even with the write flag in ETS (optional).
+    read_only: "(?i)desired temp|valve position"
 ```
 
 - The text *before* the room is the row label ("Actual temp", "Switching status"); a name that starts with the room
@@ -124,6 +128,9 @@ project:
   "2nd floor" → **Lighting ceiling**; "Heating 2nd floor" → **Heating**.
 - Control and status addresses are paired as usual ("Switching Office 1 ceiling" + "Switching status Office 1 ceiling").
 - Addresses without a room in the name are shown as before, from the group address structure.
+- Every address with the write flag in ETS can be written from its card. When a thermostat's object has the flag but
+  should only be read (the desired temperature it calculates, the valve position), add the name to `read_only`;
+  `read_only` wins over `setpoint` and the built-in setpoint words.
 - Ignored when the project has ETS functions. With several projects, `rooms` applies to all of them; an entry
   in `files` can have its own `rooms`.
 

@@ -476,6 +476,8 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
         pattern: "(?i)\\b(kontor\\s*\\d+|fellesrom|spiserom)\\b"   # finds the room in a name
         floors: {0: "2. etg", 3: "2. etg", 1: "1. etg", 2: "1. etg"}  # main group → floor (optional)
         names: {"2. etg/Kontor 6": "Office 6 · RT6206"}              # room names shown (optional)
+        setpoint: "(?i)set temp"                                      # more setpoint names (optional)
+        read_only: "(?i)onsket temp|varmepaadrag"                     # never written from a card (optional)
 
     The first group of *pattern* (or the whole match) is the room. The text
     before it is the row label ("Er Verdi", "av/pa Status"), the text after it
@@ -491,6 +493,8 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
     pattern = re.compile(rule["pattern"])
     floor_of = {str(k): str(v) for k, v in (rule.get("floors") or {}).items()}
     names = {_fold(str(k)): str(v) for k, v in (rule.get("names") or {}).items()}
+    setpoint = re.compile(rule["setpoint"]) if rule.get("setpoint") else None
+    read_only = re.compile(rule["read_only"]) if rule.get("read_only") else None
     main_name = {r["address"]: r["name"] or r["address"] for r in ranges}
 
     def usable(addr: str) -> bool:
@@ -526,7 +530,7 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
         room = {"id": rid, "name": shown, "functions": []}
         for i, ((main, _fx), card) in enumerate(entry["cards"].items()):
             fake = {"name": "", "group_addresses": {a: {"role": ""} for a, _l in card["members"]}}
-            dps = build_datapoints(fake, gas, "")
+            dps = build_datapoints(fake, gas, "", setpoint, read_only)
             if not dps:
                 continue
             labels = {a: lab for a, lab in card["members"]}
@@ -612,19 +616,22 @@ def _label(name: str, room: str, func: str) -> str:
     return out[:1].upper() + out[1:] if out else name
 
 
-def build_datapoints(func: dict, gas: dict[str, dict], room: str) -> list[dict]:
+def build_datapoints(func: dict, gas: dict[str, dict], room: str,
+                     setpoint: re.Pattern | None = None, read_only: re.Pattern | None = None) -> list[dict]:
     """Turn the group addresses of one function into card rows (datapoints).
 
     Steps:
 
     1. Classify every address as *control*, *status*, *value* or *skip*, from
        its ETS role if it has one, otherwise from its name and write flag.
+       Names matching *read_only* are values even with the write flag.
     2. Pair each status address with the control address it reports on
        (same main DPT and same name apart from status words), so the card
        shows one row with a control and its feedback.
     3. Choose the kind of row from the DPT: 1.x → switch, 5.001 → percent
        (dimmer), 9.x setpoint → setpoint, 20.x → mode, 17/18 → scene,
-       everything else → read-only value.
+       everything else → read-only value. *setpoint* adds names to the
+       built-in setpoint words.
 
     Each datapoint is ``{"label", "role", "kind", "ga", "status", "dpt"}``
     where ``ga`` is the address written to and ``status`` the one displayed.
@@ -636,7 +643,9 @@ def build_datapoints(func: dict, gas: dict[str, dict], room: str) -> list[dict]:
             continue
         role, label = ROLE_MAP.get(ref.get("role", ""), (None, None))
         if role is None:
-            if STATUS_RE.search(ga["name"]):
+            if read_only and read_only.search(ga["name"]):
+                role = "value"
+            elif STATUS_RE.search(ga["name"]):
                 role = "status"
             elif ga["writable"] or CONTROL_RE.search(ga["name"]):
                 role = "control"
@@ -686,7 +695,8 @@ def build_datapoints(func: dict, gas: dict[str, dict], room: str) -> list[dict]:
             continue  # relative dimming/blinds step – not shown as a control
         elif main == 5 and sub == 1 and is_control:
             kind = "percent"
-        elif main == 9 and is_control and (i["ets_role"] == "TempRoomSetpoint" or SETPOINT_RE.search(ga["name"])):
+        elif main == 9 and is_control and (i["ets_role"] == "TempRoomSetpoint" or SETPOINT_RE.search(ga["name"])
+                                          or (setpoint and setpoint.search(ga["name"]))):
             kind = "setpoint"
         elif main == 20 and is_control:
             kind = "mode"

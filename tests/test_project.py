@@ -240,6 +240,27 @@ def test_rooms_from_names():
     assert floors[1]["rooms"][0]["name"] == "Z 41"
 
 
+def test_rooms_setpoint_and_read_only():
+    gas = {a: _ga(a, n, d) for a, n, d in [
+        ("2/0/0", "Er-Verdi - rom H1001 - VF", "9.001"),
+        ("2/1/0", "Set Temp - rom H1001 - VF", "9.001"),
+        ("2/2/0", "Onsket Temp - rom H1001 - VF", "9.001"),
+        ("2/3/0", "Varmepaadrag - rom H1001 - VF", "5.001"),
+    ]}
+    ranges = [{"address": "2", "name": "1. Etg Varme", "gas": [], "children": []}]
+    rule = {"pattern": r"(?:\brom\s+)?\b(H1\d{3})\b.*", "floors": {2: "1. etg"}}
+    kinds = lambda r: {d["label"]: (d["kind"], d["ga"]) for f in project.build_from_names(ranges, gas, r)[1].values()
+                       for d in f["datapoints"]}
+    # Without the settings "Onsket" is a built-in setpoint word and the W flag makes the valve a control.
+    assert kinds(rule)["Set Temp"] == ("value", None)
+    assert kinds(rule)["Onsket Temp"] == ("setpoint", "2/2/0")
+    assert kinds(rule)["Varmepaadrag"] == ("percent", "2/3/0")
+    k = kinds(dict(rule, setpoint="(?i)set temp", read_only="(?i)onsket temp|varmepaadrag"))
+    assert k["Set Temp"] == ("setpoint", "2/1/0")
+    assert k["Onsket Temp"] == ("value", None) and k["Varmepaadrag"] == ("value", None)
+    assert k["Er-Verdi"] == ("value", None)
+
+
 def test_rooms_rule_is_used_only_without_ets_functions():
     raw = raw_project()
     with_functions = project.build_model(raw, rooms={"pattern": "(?i)kitchen"})
