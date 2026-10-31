@@ -111,6 +111,7 @@ Input:focus {
 .tile.idle { color: $foreground 40%; }
 .tile.warn { color: $warning; border: round $warning; }
 .tile.bad { color: $error; border: heavy $error; }
+.tile.old { color: $foreground 45%; text-style: italic; }
 
 #ov-mid {
     height: 1fr;

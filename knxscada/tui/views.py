@@ -83,7 +83,9 @@ class Tile(LiveStatic):
 
     DEFAULT_CLASSES = "tile"
 
-    def show(self, value: str, unit: str = "", sub: str = "", state: str = "ok", spark: str = "") -> None:
+    def show(self, value: str, unit: str = "", sub: str = "", state: str = "ok", spark: str = "",
+             old: bool = False) -> None:
+        """*old*: the value is from the database of the last run (shown dimmed and in italics)."""
         app: ScadaApp = self.app  # type: ignore[assignment]
         if app.big_digits:
             lines = big_text(value, app.ascii)
@@ -106,6 +108,8 @@ class Tile(LiveStatic):
         for s in ("ok", "warn", "bad", "idle"):
             if self.has_class(s) != (s == state):
                 self.set_class(s == state, s)
+        if self.has_class("old") != old:
+            self.set_class(old, "old")
 
 
 class RoomTile(LiveStatic):
@@ -119,15 +123,23 @@ class RoomTile(LiveStatic):
 
     def show(self, st: dict, spark: str) -> None:
         name = escape(self.room.name)
+        old = st.get("old", ())
+        # Values from the database of the last run: dimmed and in italics until the bus has sent a new one.
+        dim = "$text-muted i"
         flag = {"critical": "  [$error b]!![/]", "warning": "  [$warning b]![/]"}.get(st["alarm"] or "", "")
-        temp = f"[b]{st['temp']:.1f}°[/b]" if st["temp"] is not None else "[$text-muted]–[/]"
-        sp = f" → {st['sp']:.1f}°" if isinstance(st["sp"], (int, float)) and not isinstance(st["sp"], bool) else ""
-        heat = "  [$warning]♨[/]" if st["heating"] else ""
+        if st["temp"] is None:
+            temp = "[$text-muted]–[/]"
+        else:
+            temp = f"[{dim if 'temp' in old else 'b'}]{st['temp']:.1f}°[/]"
+        sp = ""
+        if isinstance(st["sp"], (int, float)) and not isinstance(st["sp"], bool):
+            sp = f"[{dim}] → {st['sp']:.1f}°[/]" if "sp" in old else f" → {st['sp']:.1f}°"
+        heat = f"  [{dim if 'heating' in old else '$warning'}]♨[/]" if st["heating"] else ""
         if st["lights_total"]:
             if st["lights_on"]:
-                lit = f"[$accent b]● {st['lights_on']}/{st['lights_total']}[/]"
+                lit = f"[{dim if 'lights' in old else '$accent b'}]● {st['lights_on']}/{st['lights_total']}[/]"
             else:
-                lit = f"[$text-muted]○ 0/{st['lights_total']}[/]"
+                lit = f"[$text-muted{' i' if 'lights' in old else ''}]○ 0/{st['lights_total']}[/]"
         else:
             lit = "   "
         self.set(f"[b]{name}[/b]{flag}\n{temp}{sp}{heat}\n{lit}  [$text-muted]{spark}[/]")
@@ -188,7 +200,7 @@ class OverviewView(GAWatcher, View):
                 temp_plot.border_title = _("Temperature °C – last 24 hours")
                 yield temp_plot
             rooms = VerticalScroll(id="ov-rooms")
-            rooms.border_title = _("Room status   ● 1/4 = lights on/total  ♨ heating  ! alarm")
+            rooms.border_title = _("Room status   ● 1/4 = lights on/total  ♨ heating  ! alarm  italic = not read yet")
             with rooms:
                 yield ItemGrid(id="ov-room-grid", min_column_width=26)
         with Horizontal(id="ov-bottom"):
@@ -369,14 +381,21 @@ class OverviewView(GAWatcher, View):
         c = self.query_one("#ov-climate", DataTable)
         for r in self.climate_rooms:
             st = self._status[r.id]
-            temp = Text(f"{st['temp']:.1f}°" if st["temp"] is not None else "–", style="bold")
+            old = st["old"]
+            old_style = f"italic {app.color('muted')}"  # value from the last run, not read since the start
+            temp = Text(f"{st['temp']:.1f}°" if st["temp"] is not None else "–",
+                        style=old_style if "temp" in old else "bold")
             sp = st["sp"]
-            sp_text = f"{sp:.1f}°" if isinstance(sp, (int, float)) and not isinstance(sp, bool) else "–"
-            if st["temp"] is not None and isinstance(sp, (int, float)) and st["temp"] < sp - 1.5:
+            sp_text = Text(f"{sp:.1f}°" if isinstance(sp, (int, float)) and not isinstance(sp, bool) else "–",
+                           style=old_style if "sp" in old else "")
+            if "temp" not in old and st["temp"] is not None and isinstance(sp, (int, float)) and st["temp"] < sp - 1.5:
                 temp.stylize(app.color("warning"))  # clearly below setpoint
+            mode = Text(st["mode"], style=old_style if "mode" in old else "")
             heat = Text(_("♨ on"), style=app.color("warning")) if st["heating"] else Text(_("off"), style=app.color("muted"))
+            if "heating" in old:
+                heat.stylize(old_style)
             spark = self._spark(r.temp_ga, 24, now)
-            cells = (("temp", temp), ("sp", sp_text), ("mode", st["mode"]), ("heat", heat),
+            cells = (("temp", temp), ("sp", sp_text), ("mode", mode), ("heat", heat),
                      ("spark", Text(spark, style=app.color("primary"))))
             for col, val in cells:
                 # update_cell is relatively expensive: only call it on real change.
@@ -423,13 +442,15 @@ class OverviewView(GAWatcher, View):
         out = HomeModel.value(state, home.outdoor_ga)
         if isinstance(out, (int, float)):
             spark = self._spark(home.outdoor_ga, 18, now)
-            q("#t-out", Tile).show(f"{out:.1f}", "°C", "", "ok", spark)
+            q("#t-out", Tile).show(f"{out:.1f}", "°C", "", "ok", spark, HomeModel.is_old(state, home.outdoor_ga))
         else:
             q("#t-out", Tile).show("-", "", no_data, "idle")
 
-        temps = [st["temp"] for r in self.climate_rooms if (st := self._status.get(r.id)) and st["temp"] is not None]
+        rooms = [st for r in self.climate_rooms if (st := self._status.get(r.id)) and st["temp"] is not None]
+        temps = [st["temp"] for st in rooms]
         if temps:
-            q("#t-in", Tile).show(f"{sum(temps) / len(temps):.1f}", "°C", f"{min(temps):.1f}–{max(temps):.1f}°", "ok")
+            q("#t-in", Tile).show(f"{sum(temps) / len(temps):.1f}", "°C", f"{min(temps):.1f}–{max(temps):.1f}°", "ok",
+                                  old=any("temp" in st["old"] for st in rooms))
         else:
             q("#t-in", Tile).show("-", "", no_data, "idle")
 
@@ -437,7 +458,8 @@ class OverviewView(GAWatcher, View):
         if isinstance(pw, (int, float)):
             spark = self._spark(home.power_ga, 18, now)
             text = f"{pw / 1000:.2f}" if abs(pw) >= 10000 else f"{pw:.0f}"
-            q("#t-power", Tile).show(text, "kW" if abs(pw) >= 10000 else "W", "", "ok", spark)
+            q("#t-power", Tile).show(text, "kW" if abs(pw) >= 10000 else "W", "", "ok", spark,
+                                     HomeModel.is_old(state, home.power_ga))
         else:
             q("#t-power", Tile).show("-", "", _("no power meter") if not home.power_ga else no_data, "idle")
 

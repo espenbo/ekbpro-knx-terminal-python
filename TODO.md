@@ -92,8 +92,8 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
       der en tagg som ikke kunne leses ved første polling, gir status når den leses).
 - [x] De tre site-konfigurasjonene har fått `read_on_start: status` (2026-10-31; `config.yaml` i rotmappen er
       flyttet til `sites/glommensgate1`). Gjelder fra neste omstart av hver tjeneste.
-- [ ] Oversiktsskjermen (romkort med temperatur) viser ennå ikke gamle verdier i egen farge – bare
-      funksjonskortene og gruppeadresselisten
+- [x] Oversiktsskjermen viser gamle verdier dempet og i kursiv: romkortene (temperatur, settpunkt, varme, lys),
+      klimatabellen og flisene ute / inne snitt / effekt. Forklaring i rammen «Romstatus».
 
 ## Dokumentasjon
 

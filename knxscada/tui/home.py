@@ -123,6 +123,11 @@ class HomeModel:
         return state.get(ga or "", {}).get("value")
 
     @staticmethod
+    def is_old(state: dict, ga: str | None) -> bool:
+        """True if the value of *ga* is from the database of the last run (not read since the start)."""
+        return bool(state.get(ga or "", {}).get("old"))
+
+    @staticmethod
     def text(state: dict, ga: str | None) -> str:
         """Current display text of *ga* (``"–"`` if unknown)."""
         st = state.get(ga or "")
@@ -131,8 +136,10 @@ class HomeModel:
     def room_status(self, room: Room, state: dict, alarms: list[dict]) -> dict[str, Any]:
         """Live status of a room.
 
-        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm"}``
-        where ``alarm`` is None, ``"warning"`` or ``"critical"``. An alarm
+        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm", "old"}``
+        where ``alarm`` is None, ``"warning"`` or ``"critical"`` and ``old`` is the set of
+        fields (``temp``, ``sp``, ``mode``, ``heating``, ``lights``) shown from the database of
+        the last run – not read from the bus since the start. An alarm
         belongs to the room when its group address is one of the room's
         addresses or the alarm text mentions the room name.
         """
@@ -148,6 +155,10 @@ class HomeModel:
                     severity = "warning"
         temp = self.value(state, room.temp_ga)
         heat = self.value(state, room.heat_ga)
+        old = {key for key, ga in (("temp", room.temp_ga), ("sp", room.sp_ga), ("mode", room.mode_ga),
+                                   ("heating", room.heat_ga)) if self.is_old(state, ga)}
+        if any(self.is_old(state, light["status"]) for light in room.lights):
+            old.add("lights")
         return {
             "temp": temp if isinstance(temp, (int, float)) and not isinstance(temp, bool) else None,
             "sp": self.value(state, room.sp_ga),
@@ -157,4 +168,5 @@ class HomeModel:
             "lights_on": lights_on,
             "lights_total": len(room.lights),
             "alarm": severity,
+            "old": old,
         }

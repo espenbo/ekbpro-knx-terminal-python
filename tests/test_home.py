@@ -25,3 +25,13 @@ def test_setpoint_and_valve_without_roles():
     assert (st["temp"], st["sp"], st["heating"]) == (21.3, 21.0, True)
     state["2/3/0"] = {"value": 0}
     assert home.room_status(room, state, [])["heating"] is False
+
+
+def test_old_values_are_marked():
+    """Values from the database of the last run are reported as old until the bus sends new ones."""
+    home = HomeModel(_model(), {})
+    (room,) = home.rooms
+    state = {"2/0/0": {"value": 21.3, "old": True}, "2/1/0": {"value": 21.0}, "2/3/0": {"value": 57, "old": True}}
+    assert home.room_status(room, state, [])["old"] == {"temp", "heating"}
+    state["2/0/0"] = {"value": 21.4}
+    assert home.room_status(room, state, [])["old"] == {"heating"}

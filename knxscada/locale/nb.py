@@ -357,7 +357,8 @@ CATALOGUE: dict[str, str] = {
     "Time": "Tid",
     "GA": "GA",
     "Name": "Navn",
-    "Room status   ● 1/4 = lights on/total  ♨ heating  ! alarm": "Romstatus   ● 1/4 = lys på/totalt  ♨ varme  ! alarm",
+    "Room status   ● 1/4 = lights on/total  ♨ heating  ! alarm  italic = not read yet":
+        "Romstatus   ● 1/4 = lys på/totalt  ♨ varme  ! alarm  kursiv = ikke lest ennå",
     "KNX traffic – telegrams per minute": "KNX-trafikk – telegrammer per minutt",
     "Lights on  (Enter = switch off)": "Lys på  (Enter = slå av)",
     "all normal": "alt normalt",
