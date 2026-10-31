@@ -82,6 +82,12 @@ Tagadresser: `hr:100` holding register, `ir:5` input register, `co:3` coil, `di:
 Datatyper: `bool`, `int16`, `uint16` (standard), `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64`.
 En tag kan overstyre `unit_id` for tilkoblingen (flere enheter på én RS485-linje).
 
+Noe utstyr leses i én tabell og skrives i en annen. `write_address: hr` skriver taggen med funksjon 6/16 til samme
+nummer i holding-registrene – så `ir:10201` med `write_address: hr` kan skrives – og `write_address: hr:200` skriver
+et annet sted. `heartbeat_s: 10` får masteren til å skrive en teller (1, 2, 3 …) til taggen hvert 10. sekund mens den
+er tilkoblet – for en watchdog i utstyret som går til sikre verdier når styringen slutter å skrive. Et livstegn til en
+tagg som ikke kan skrives, meldes én gang i hendelsesloggen.
+
 Som **slave** er gateway-målene registeradresser (`to: hr:100`).
 
 #### Kjent utstyr (`model:`)
@@ -139,8 +145,24 @@ anlegget (3500–3531): `Pac`, `Pdc`, `Uac`, `Udc`, `Daily yield` … `Total yie
 `Daily yield cons.` … `Total yield cons.` og `TotalPower` (installert Wp). `Solar-Log Modbus TCP PM` (lisens 255511)
 legger til verdiene fra innmatingspunktet og vekselretterne (10500–10607, `PM Pac`, `PM Iac L1`, `PM CosPhi`,
 `PM Status` …; noen krever fastvare 6.0.1). Sensorer som ikke er tilkoblet (innstråling 65535, temperatur −273),
-vises som dårlig kvalitet. Registrene for effektbegrensning (10200 og oppover) er ikke med i malen: de leses med
-funksjon 4 og skrives med 6.
+vises som dårlig kvalitet.
+
+PM-modellen har også registrene for effektstyring (10200–10248), med navn `PC …` som i håndboken: `PC PLimit_Type` og
+`PC PLimitPerc` (begrensning av aktiv effekt), `PC Reactive_Type`, `PC CosPhi_Fix`, `PC QPerc` (reaktiv effekt),
+`PC WatchDog_Tag`, `PC WatchDog_Time`, `PC WatchDog_Limit`, verdiene fra en ekstern avregningsmåler
+(`PC Utility_connect_good`, `PC Utility_fUacRS` … `PC Utility_fQacT`) og parameterne for Q(U)-kurvene i fastvare 6
+(`PC Uq0_Uc`, `PC Qref_Pbinst`, `PC Qref_total`, `PC Qref_type`). De leses med funksjon 4 og skrives med 6/16
+(`write_address: hr`). Med en watchdog-tid (`PC WatchDog_Time` > 0 s) må `PC WatchDog_Tag` skrives innen den tiden,
+ellers går Solar-Log til reserveverdiene («Failure of the remote control»). La masteren gjøre det:
+
+```yaml
+  solarlog:
+    protocol: modbus
+    host: 192.168.1.50
+    model: Solar-Log Modbus TCP PM
+    tags:
+      PC WatchDog_Tag: {heartbeat_s: 10}   # kortere enn PC WatchDog_Time
+```
 
 En tagg kan ha sin egen `invalid: [65535]` – råverdier som betyr «ingen verdi» bare for den taggen – i tillegg til
 malens `invalid`-liste.
@@ -167,7 +189,8 @@ Gi taggene navn fra merkesystemet ditt i gatewayen når de skal videre til OPC U
 
 Simulatoren svarer på registrene i malen med troverdige verdier som endrer seg litt (rundt 230 V, 50 Hz,
 energitellere som teller opp) og på identifikasjonsregistrene, så en tilkobling med samme `model:` kjenner den igjen
-og leser verdier som ser ekte ut. Den skriver ut linjene du setter inn i `protocols.yaml` (`transport: tcp`, `host`,
+og leser verdier som ser ekte ut. Det en master skriver til taggene med `write_address` (effektgrensene i Solar-Log),
+blir stående og leses tilbake. Den skriver ut linjene du setter inn i `protocols.yaml` (`transport: tcp`, `host`,
 `port`, `model`). Ctrl+C stopper den.
 
 En ny mal er en YAML-fil i `knxscada/protocols/devices/` – se WAGO-fila og docstringen i

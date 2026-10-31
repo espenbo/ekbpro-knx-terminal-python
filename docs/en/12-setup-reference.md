@@ -503,11 +503,13 @@ Connection settings for **Modbus**, **MQTT** and **OPC UA**: see the tables in
 | `type` | Modbus | `uint16` | `bool`, `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` |
 | `type` | MQTT, OPC UA | automatic | `bool`, `int`, `float`, `str` |
 | `unit_id`, `word_order` | Modbus | the connection's | |
+| `write_address` | Modbus | – (written where it is read) | `hr` / `co` (same number), or an address `hr:N`, `co:N` |
+| `heartbeat_s` | Modbus master | – (off) | seconds; writes 1, 2, 3 … to the tag (device watchdog) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefix + name, –, the topic itself | |
 | `node` | OPC UA | the tag name | node id |
 | `scale`, `offset` | all | – | value = raw × scale + offset |
 | `unit`, `description` | all | – | |
-| `writable` | all | `true` (Modbus `ir`/`di` always read-only) | |
+| `writable` | all | `true` (Modbus `ir`/`di` read-only unless `write_address`) | |
 
 | Mapping key | Level | Default | Valid values |
 |---|---|---|---|

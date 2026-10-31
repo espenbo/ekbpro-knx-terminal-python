@@ -77,8 +77,10 @@ Gren: `feature/modulaer-protokoller`
       `Solar-Log Modbus TCP PM` (lisens, også 10500–10607). Bare FC4 (`ir:`), laveste ord først, `max_gap: 0`.
       `TotalPower` (3530) er fra modbuscloud – sjekk mot et ekte Solar-Log.
 - [x] `invalid:` per tagg (65535 = ingen TCD / ingen sensor, −273 °C = ingen sensor) i tillegg til malens liste
-- [ ] SolarLog effektstyring (10200–10248): leses med FC4, skrives med FC6/16 – trenger en tagg som leser `ir:`
-      og skriver `hr:` (f.eks. `write_address:`), og en syklisk watchdog (10211)
+- [x] SolarLog effektstyring (2026-10-31): 22 `PC …`-tagger (10200–10248) i PM-modellen. Nye taggfelt for Modbus:
+      `write_address` (`hr` = samme nummer; leses med FC4, skrives med FC6/16) og `heartbeat_s` (masteren skriver
+      1, 2, 3 … til watchdogen `PC WatchDog_Tag`). Simulatoren tar imot skrivingene og leser dem tilbake.
+      Ikke prøvd mot et ekte Solar-Log: sjekk ordrekkefølgen på float32 (`PC CosPhi_Fix`).
 - [x] `./scada simulate MODELL` (2026-10-31): Modbus-slave fra en utstyrsmal (TCP, eller `--device` for RS485),
       med troverdige verdier og identifikasjonsregistre – til test uten utstyr. Uten modell: lister malene.
 

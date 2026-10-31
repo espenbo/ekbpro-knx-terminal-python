@@ -213,8 +213,11 @@ def test_solar_log_templates():
     pm = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP PM", "host": "192.0.2.10"})
     assert (free["transport"], free["port"], free["word_order"], free["max_gap"]) == ("tcp", 502, "little", 0)
     assert len(free["tags"]) == 17 and "PM Pac" not in free["tags"]
-    assert len(pm["tags"]) == 17 + 28
+    assert len(pm["tags"]) == 17 + 28 + 22
     assert all(t["address"].startswith("ir:") for t in pm["tags"].values())   # only function code 4 reads
+    control = {n: t for n, t in pm["tags"].items() if n.startswith("PC ")}
+    assert len(control) == 22 and all(t["write_address"] == "hr" for t in control.values())
+    assert not any("/" in n for n in pm["tags"])   # "/" separates connection and tag
     for model in ("Solar-Log Modbus TCP", "Solar-Log Modbus TCP PM"):
         assert validate({"connections": {"s": {"protocol": "modbus", "model": model, "host": "192.0.2.10"}},
                          "gateways": []}) == []
@@ -250,6 +253,82 @@ def test_tag_invalid_codes_and_solar_log_simulator(tmp_path):
             await hub.stop()
             await sim.stop()
             task.cancel()
+
+    asyncio.run(run())
+
+
+def test_write_address_validation():
+    def errors(spec):
+        return validate({"connections": {"m": {"protocol": "modbus", "host": "192.0.2.10", "tags": {"t": spec}}},
+                         "gateways": []})
+
+    assert errors({"address": "ir:10201", "write_address": "hr"}) == []
+    assert errors({"address": "ir:5", "write_address": "hr:200", "type": "float32"}) == []
+    assert errors({"address": "di:3", "write_address": "co"}) == []
+    assert errors({"address": "ir:5", "write_address": "ir"})       # input registers cannot be written
+    assert errors({"address": "ir:5", "write_address": "co:1"})     # a number to a coil
+    assert errors({"address": "ir:5", "write_address": "hr:x"})
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_solar_log_power_control_and_watchdog(tmp_path):
+    """Read with function 4, written with 6/16 to the same number; the heartbeat keeps the watchdog counting."""
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        _tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "poll_ms": 100,
+                                 "model": "Solar-Log Modbus TCP PM",
+                                 "tags": {"PC WatchDog_Tag": {"heartbeat_s": 0.1}}})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.tags["PC PLimitPerc"].writable and not master.tags["PM PLimitPerc"].writable
+            await hub.write("master", "PC PLimitPerc", 60)
+            await hub.write("master", "PC CosPhi_Fix", -0.97)
+            await hub.write("master", "PC QPerc", -12.5)
+            await until(lambda: hub.values["master/PC PLimitPerc"]["v"] == 60)
+            await until(lambda: hub.values["master/PC CosPhi_Fix"]["v"] == pytest.approx(-0.97))
+            await until(lambda: hub.values["master/PC QPerc"]["v"] == pytest.approx(-12.5))
+            # The simulator received them on the holding registers and answers them on the input registers.
+            assert sim.store.data["ir"][10201] == 60 and sim.store.data["hr"][10201] == 60
+            assert (await sim.store.async_getValues(1, 4, 10209, 1)) == [65536 - 125]
+            await until(lambda: (hub.values.get("master/PC WatchDog_Tag") or {}).get("v", 0) >= 3)
+            assert not [t for level, t in hub.server.events if level == "error"]
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_heartbeat_on_a_read_only_tag_is_reported_once(tmp_path):
+    port = free_port()
+
+    async def run():
+        slave = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port,
+                 "tags": {"wd": {"address": "ir:7"}}}
+        hub = await make_hub(tmp_path, {"connections": {"slave": slave}, "gateways": []})
+        try:
+            await until(lambda: hub.drivers["slave"].connected)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "poll_ms": 100,
+                                 "tags": {"wd": {"address": "ir:7", "heartbeat_s": 0.05}}})
+            await until(lambda: hub.drivers["master"].ready)
+            await asyncio.sleep(0.3)
+            errors = [t for level, t in hub.server.events if level == "error"]
+            assert len(errors) == 1 and "heartbeat" in errors[0]
+        finally:
+            await hub.stop()
 
     asyncio.run(run())
 

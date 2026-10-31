@@ -29,6 +29,14 @@ request (up to ``max_registers`` registers – default 100 – or 1000 bits, acr
 gaps of up to ``max_gap`` unused registers). When a device refuses such a
 block, its tags are read one by one from then on.
 
+Some devices (Solar-Log) are read in one table and written in another:
+``write_address: hr`` writes the tag with function 6/16 to the same number in
+the holding registers (or to another address: ``write_address: hr:200``), so
+``ir:10201`` with ``write_address: hr`` can be written. ``heartbeat_s: 10``
+makes the master write a counter (1, 2, 3 …) to the tag every 10 seconds
+while connected – for a device watchdog that falls back to safe values when
+the controller stops writing.
+
 Device templates
 ----------------
 ``model: WAGO 879-3000`` takes the tags and serial settings of a known device
@@ -42,7 +50,8 @@ reported as bad quality instead of as a value.
 Slave
 -----
 Other systems (a SCADA, a PLC) read the tags of a gateway from us, and may
-write the ones mapped with ``direction: both``. Addresses without a tag read
+write the ones mapped with ``direction: both``. A tag with ``write_address`` is
+written by the master there and read back at its ``address``, as in the device. Addresses without a tag read
 as 0; writing them is refused (exception 2, illegal address). The tag name of
 a gateway target is its address (``to: hr:100``), or a name defined under
 ``tags:`` with an ``address``.
@@ -171,6 +180,34 @@ def default_dtype(table: str, bit: int | None, value_type: str = "") -> str:
     return {"float": "float32", "int": "int32", "bool": "bool"}.get(value_type, "uint16")
 
 
+def point_of(spec: dict[str, Any], unit: int) -> Point:
+    """Where a tag (``address``, ``type``, ``unit_id``) is read; *unit* is the connection's unit id."""
+    table, index, bit = parse_address(str(spec.get("address") or ""))
+    typ = str(spec.get("type") or "")
+    dtype = typ if typ in MODBUS_TYPES else default_dtype(table, bit, typ)
+    if table in ("co", "di") or bit is not None:
+        dtype = "bool"
+    count = 1 if dtype == "bool" else FORMATS[dtype][1]
+    own = spec.get("unit_id")
+    return Point(table, index, count, bit, dtype, int(own) if own not in (None, "") else unit)
+
+
+def write_point(text: str, read: Point) -> Point:
+    """Where a tag with ``write_address`` is written: ``"hr"`` = the read address' number in that table."""
+    table = TABLES.get(text.strip().lower())
+    if table is not None:
+        index, bit = read.index, read.bit
+    else:
+        table, index, bit = parse_address(text)
+    if table not in ("hr", "co"):
+        raise ValueError(_("write_address {address}: only holding registers (hr) and coils (co) can be written")
+                         .format(address=repr(text)))
+    if (table == "co") != (read.dtype == "bool" and read.bit is None):
+        raise ValueError(_("write_address {address}: a coil is written as a bool, a register as a number")
+                         .format(address=repr(text)))
+    return Point(table, index, read.count, bit, read.dtype, read.unit)
+
+
 class Driver(BaseDriver):
     protocol = "modbus"
 
@@ -178,6 +215,7 @@ class Driver(BaseDriver):
         self.word_order = str(settings.get("word_order") or "big")
         self.unit = int(settings.get("unit_id") if settings.get("unit_id") not in (None, "") else 1)
         self.points: dict[str, Point] = {}
+        self.write_points: dict[str, Point] = {}   # tags written elsewhere than they are read (write_address)
         self.template = devices.find(settings.get("model"))   # ValueError for an unknown model
         self.identity = ""   # what the device said it is (templates with identify)
         self.invalid = set((self.template or {}).get("invalid") or ())   # raw "out of range" codes
@@ -193,14 +231,8 @@ class Driver(BaseDriver):
 
     # -- tags -------------------------------------------------------------------------------------
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
-        address = str(spec.get("address") or name)
-        table, index, bit = parse_address(address)
-        typ = str(spec.get("type") or "")
-        dtype = typ if typ in MODBUS_TYPES else default_dtype(table, bit, typ)
-        if table in ("co", "di") or bit is not None:
-            dtype = "bool"
-        count = 1 if dtype == "bool" else FORMATS[dtype][1]
-        unit = spec.get("unit_id")
+        point = point_of({**spec, "address": spec.get("address") or name}, self.unit)
+        table, index, bit, dtype = point.table, point.index, point.bit, point.dtype
         scale, offset = as_float(spec.get("scale")), as_float(spec.get("offset"))
         if dtype == "bool":
             vtype = "bool"
@@ -209,13 +241,15 @@ class Driver(BaseDriver):
         else:
             vtype = "int"
         writable = bool(spec.get("writable", True))
-        if self.role == "client" and table in ("ir", "di"):
+        self.write_points.pop(name, None)
+        if spec.get("write_address") not in (None, ""):
+            self.write_points[name] = write_point(str(spec["write_address"]), point)
+        elif self.role == "client" and table in ("ir", "di"):
             writable = False
         tag = Tag(name=name, address=f"{table}:{index}" + (f".{bit}" if bit is not None else ""), type=vtype,
                   writable=writable, unit=str(spec.get("unit") or ""), description=str(spec.get("description") or ""),
                   scale=scale, offset=offset, extra={**spec, "dtype": dtype})
-        self.points[name] = Point(table, index, count, bit, dtype,
-                                  int(unit) if unit not in (None, "") else self.unit)
+        self.points[name] = point
         return tag
 
     def resolve(self, ref: str) -> Tag | None:
@@ -309,6 +343,32 @@ class Driver(BaseDriver):
         self.set_state(True)
         if self.template and self.template.get("identify"):
             await self._identify()
+        beats = [asyncio.create_task(self._heartbeat(tag, float(tag.extra["heartbeat_s"])))
+                 for tag in self.tags.values() if as_float(tag.extra.get("heartbeat_s"))]
+        try:
+            await self._poll_loop()
+        finally:
+            for task in beats:
+                task.cancel()
+
+    async def _heartbeat(self, tag: Tag, every: float) -> None:
+        """Write 1, 2, 3 … to *tag* every *every* seconds (a device watchdog); a refused write is reported once."""
+        count, failed = 0, False
+        while not self._stop:
+            count = count % 30000 + 1   # fits every data type, also int16
+            try:
+                await self._send(tag, count)
+                failed = False
+            except (RuntimeError, ValueError) as exc:
+                if not failed:
+                    self.hub.event("error", _("{connection}: heartbeat {tag}: {error}").format(
+                        connection=self.name, tag=tag.name, error=exc))
+                failed = True
+            except ConnectionError:
+                pass   # the poll notices it and reconnects
+            await asyncio.sleep(max(every, 0.1))
+
+    async def _poll_loop(self) -> None:
         interval = max(int(self.settings.get("poll_ms") or 1000), 50) / 1000
         while not self._stop:
             started = asyncio.get_running_loop().time()
@@ -402,11 +462,17 @@ class Driver(BaseDriver):
         return str(tag.extra.get("word_order") or self.word_order)
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
-        p = self.points[tag.name]
         raw = tag.to_raw(value)
         if self.role == "server":
-            self.store.put(p, raw, self._order(tag))
+            self.store.put(self.points[tag.name], raw, self._order(tag))
             return
+        await self._send(tag, raw)
+
+    async def _send(self, tag: Tag, raw: Any) -> None:
+        """Write a raw value to the device (to ``write_address`` when the tag has one)."""
+        if not tag.writable:
+            raise ValueError(_("{tag} is read-only").format(tag=f"{self.name}/{tag.name}"))
+        p = self.write_points.get(tag.name) or self.points[tag.name]
         c = self.client
         if c is None or not self.connected:
             raise ConnectionError(_("{connection} is not connected").format(connection=self.name))
@@ -471,17 +537,24 @@ class Store:
         self.data: dict[str, dict[int, int]] = {"co": {}, "di": {}, "hr": {}, "ir": {}}
         self.writable: dict[str, set[int]] = {"co": set(), "hr": set()}
         self.by_addr: dict[tuple[str, int], list[Tag]] = {}
+        self.by_write: dict[tuple[str, int], list[Tag]] = {}   # tags with write_address, by where they are written
 
     def index(self) -> None:
         """Rebuild the address → tag index (after tags were added)."""
         self.writable = {"co": set(), "hr": set()}
         self.by_addr = {}
+        self.by_write = {}
         for tag in self.d.tags.values():
             p = self.d.points[tag.name]
+            wp = self.d.write_points.get(tag.name)
             for a in range(p.index, p.end):
                 self.by_addr.setdefault((p.table, a), []).append(tag)
-                if tag.writable and p.table in self.writable:
+                if tag.writable and wp is None and p.table in self.writable:
                     self.writable[p.table].add(a)
+            if wp is not None and tag.writable:
+                for a in range(wp.index, wp.end):
+                    self.by_write.setdefault((wp.table, a), []).append(tag)
+                    self.writable[wp.table].add(a)
 
     def device_ids(self) -> list[int]:
         return [self.d.unit] if self.d.unit else [0]
@@ -532,14 +605,19 @@ class Store:
         touched: dict[str, Tag] = {}
         for a in range(address, address + len(values)):
             for tag in self.by_addr.get((table, a), ()):
+                if tag.name not in self.d.write_points:
+                    touched[tag.name] = tag
+            for tag in self.by_write.get((table, a), ()):
                 touched[tag.name] = tag
         for tag in touched.values():
-            p = self.d.points[tag.name]
+            p = self.d.write_points.get(tag.name) or self.d.points[tag.name]
             if table == "co":
                 raw: Any = bool(data.get(p.index, 0))
             elif p.bit is not None:
                 raw = bool((data.get(p.index, 0) >> p.bit) & 1)
             else:
                 raw = from_registers([data.get(p.index + i, 0) for i in range(p.count)], p.dtype, self.d._order(tag))
+            if tag.name in self.d.write_points:
+                self.put(self.d.points[tag.name], raw, self.d._order(tag))   # read back where the master reads it
             self.d.publish(tag, raw)
         return None

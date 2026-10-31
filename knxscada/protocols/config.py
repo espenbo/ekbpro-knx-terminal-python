@@ -232,10 +232,12 @@ def validate(data: dict[str, Any], knx: bool = False) -> list[str]:
                 if (err := _check_value(f, (spec or {}).get(f.key))) is not None:
                     errors.append(f"{where}, tag {tname}: {err}")
             if pname == "modbus" and spec and spec.get("address"):
-                from .modbus import parse_address
+                from .modbus import point_of, write_point
 
                 try:
-                    parse_address(str(spec["address"]))
+                    point = point_of(spec, 1)
+                    if spec.get("write_address") not in (None, ""):
+                        write_point(str(spec["write_address"]), point)
                 except ValueError as exc:
                     errors.append(f"{where}, tag {tname}: {exc}")
     gws = data.get("gateways") or []

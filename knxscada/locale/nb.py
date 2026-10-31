@@ -742,4 +742,17 @@ CATALOGUE: dict[str, str] = {
     "Gateway {name} saved": "Gatewayen {name} er lagret",
     "protocols.yaml re-read": "protocols.yaml lest på nytt",
     "line {n}: {error}": "linje {n}: {error}",
+    "Write address": "Skriveadresse",
+    "Heartbeat (s)": "Livstegn (s)",
+    "Empty = write where it is read · hr = the same number in the holding registers (read ir:, write hr:) · "
+    "or an address such as hr:200":
+        "Tom = skriv der den leses · hr = samme nummer i holding-registrene (les ir:, skriv hr:) · "
+        "eller en adresse som hr:200",
+    "Write a counter (1, 2, 3 …) to the tag at this interval – for a device watchdog. Empty = off":
+        "Skriv en teller (1, 2, 3 …) til taggen med dette intervallet – for en watchdog i utstyret. Tom = av",
+    "write_address {address}: only holding registers (hr) and coils (co) can be written":
+        "write_address {address}: bare holding-registre (hr) og coils (co) kan skrives",
+    "write_address {address}: a coil is written as a bool, a register as a number":
+        "write_address {address}: en coil skrives som av/på, et register som et tall",
+    "{connection}: heartbeat {tag}: {error}": "{connection}: livstegn {tag}: {error}",
 }

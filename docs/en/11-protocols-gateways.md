@@ -80,6 +80,12 @@ Tag addresses: `hr:100` holding register, `ir:5` input register, `co:3` coil, `d
 Data types: `bool`, `int16`, `uint16` (default), `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64`.
 A tag can override the connection's `unit_id` (several devices on one RS485 line).
 
+Some devices are read in one table and written in another. `write_address: hr` writes the tag with function
+6/16 to the same number in the holding registers – so `ir:10201` with `write_address: hr` can be written – and
+`write_address: hr:200` writes somewhere else. `heartbeat_s: 10` makes the master write a counter (1, 2, 3 …)
+to the tag every 10 s while it is connected – for a device watchdog that falls back to safe values when the
+controller stops writing. A heartbeat to a tag that cannot be written is reported once in the event log.
+
 As a **slave**, the gateway targets are register addresses (`to: hr:100`).
 
 #### Known devices (`model:`)
@@ -138,7 +144,23 @@ live data of the whole plant (3500–3531): `Pac`, `Pdc`, `Uac`, `Udc`, `Daily y
 `Solar-Log Modbus TCP PM` (licence 255511) adds the values from the feed-in point and the inverters
 (10500–10607, `PM Pac`, `PM Iac L1`, `PM CosPhi`, `PM Status` …; some need firmware 6.0.1). Sensors that
 are not connected (irradiation 65535, temperature −273) are shown as bad quality. The power limiting
-registers (10200 and on) are not in the template: they are read with function 4 and written with 6.
+
+The PM model also has the power control registers (10200–10248), named `PC …` as in the manual: `PC PLimit_Type`
+and `PC PLimitPerc` (active power limit), `PC Reactive_Type`, `PC CosPhi_Fix`, `PC QPerc` (reactive power),
+`PC WatchDog_Tag`, `PC WatchDog_Time`, `PC WatchDog_Limit`, the external utility meter values
+(`PC Utility_connect_good`, `PC Utility_fUacRS` … `PC Utility_fQacT`) and the Q(U) curve parameters of firmware 6
+(`PC Uq0_Uc`, `PC Qref_Pbinst`, `PC Qref_total`, `PC Qref_type`). They are read with function 4 and written
+with 6/16 (`write_address: hr`). With a watchdog time (`PC WatchDog_Time` > 0 s), `PC WatchDog_Tag` must be
+written within that time, or the Solar-Log falls back ("Failure of the remote control"). Let the master do it:
+
+```yaml
+  solarlog:
+    protocol: modbus
+    host: 192.168.1.50
+    model: Solar-Log Modbus TCP PM
+    tags:
+      PC WatchDog_Tag: {heartbeat_s: 10}   # shorter than PC WatchDog_Time
+```
 
 A tag can have its own `invalid: [65535]` – raw values that mean "no value" for that tag alone – in addition to
 the template's `invalid` list.
@@ -165,7 +187,8 @@ Give the tags names from your tagging system in the gateway, when they go on to 
 
 The simulator answers on the template's registers with plausible values that change a little (about 230 V,
 50 Hz, energy counters counting up) and on its identification registers, so a connection with the same `model:`
-identifies it and reads real-looking values. It prints the lines to put in `protocols.yaml` (`transport: tcp`,
+identifies it and reads real-looking values. What a master writes to the tags with `write_address` (the
+Solar-Log power limits) is kept and read back. It prints the lines to put in `protocols.yaml` (`transport: tcp`,
 `host`, `port`, `model`). Ctrl+C stops it.
 
 A new template is a YAML file in `knxscada/protocols/devices/` – see the WAGO file and the docstring of

@@ -4,7 +4,8 @@
 
 For testing without the equipment: the simulator answers on the template's
 registers – its tags with plausible, slowly changing values (voltage around
-230 V, energy counters that count up …) and its ``identify`` registers with
+230 V, energy counters that count up …), keeps what a master writes to the
+tags with ``write_address`` (power limits), and answers its ``identify`` registers with
 the model, unit id, baud rate and parity – so a master with ``model: …``
 identifies it and reads real-looking values. It listens on Modbus TCP (default
 ``127.0.0.1:5020``) or, with ``--device``, on a serial port with the template's
@@ -135,13 +136,17 @@ def build(model: str, host: str = "127.0.0.1", port: int = 5020, unit: int = 1, 
 
     drv.store = SimStore(drv)
     drv.store.index()
+    for name in drv.write_points:   # settings a master writes (power limits, watchdog): start at 0, then kept
+        drv.store.put(drv.points[name], 0, drv._order(drv.tags[name]))
     return tpl, drv
 
 
 def refresh(drv, start: float, now: float | None = None) -> None:
-    """Put the current values into the slave's registers."""
+    """Put the current measured values into the slave's registers (not the ones a master writes)."""
     now = time.time() if now is None else now
     for name, tag in drv.tags.items():
+        if name in drv.write_points:
+            continue
         drv.store.put(drv.points[name], tag.to_raw(value_at(name, tag.unit, start, now)), drv._order(tag))
 
 

@@ -505,11 +505,13 @@ Tilkoblingsinnstillinger for **Modbus**, **MQTT** og **OPC UA**: se tabellene i
 | `type` | Modbus | `uint16` | `bool`, `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` |
 | `type` | MQTT, OPC UA | automatisk | `bool`, `int`, `float`, `str` |
 | `unit_id`, `word_order` | Modbus | tilkoblingens | |
+| `write_address` | Modbus | – (skrives der den leses) | `hr` / `co` (samme nummer), eller en adresse `hr:N`, `co:N` |
+| `heartbeat_s` | Modbus-master | – (av) | sekunder; skriver 1, 2, 3 … til taggen (watchdog i utstyret) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefiks + navn, –, selve topicen | |
 | `node` | OPC UA | taggnavnet | node id |
 | `scale`, `offset` | alle | – | verdi = råverdi × scale + offset |
 | `unit`, `description` | alle | – | |
-| `writable` | alle | `true` (Modbus `ir`/`di` alltid skrivebeskyttet) | |
+| `writable` | alle | `true` (Modbus `ir`/`di` skrivebeskyttet uten `write_address`) | |
 
 | Koblingsnøkkel | Nivå | Standard | Gyldige verdier |
 |---|---|---|---|

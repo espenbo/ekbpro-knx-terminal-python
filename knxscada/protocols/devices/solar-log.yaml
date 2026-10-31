@@ -3,8 +3,11 @@
 # "Solar-Log Modbus TCP PM", version 2.17 (09.2024), section 2.2 "PM – Data confirmation" (10500–10617).
 # Only function code 4 reads (input registers); 32-bit values have the low word first.
 # Turn the interface on in the Solar-Log: Configuration | Digital interfaces | Modbus TCP.
-# The power management registers (10200–10248: active/reactive power limits, watchdog) are read with function
-# 4 and written with 6/16, which one tag cannot do yet – they are not in the template.
+# The power control registers (PM licence, section 2.1, 10200–10248: active/reactive power limits, watchdog,
+# external utility meter data) are read with function 4 and written with 6/16 to the same number
+# (write_address: hr). Watchdog: write the timeout to "PC WatchDog_Time" and let the master write
+# "PC WatchDog_Tag" cyclically – tags: {PC WatchDog_Tag: {heartbeat_s: 10}} – shorter than the timeout,
+# or the Solar-Log falls back ("Failure of the remote control").
 # Tag names are written as in the manuals; give them names from your tagging system in the gateway.
 manufacturer: Solar-Log
 protocol: modbus
@@ -83,3 +86,42 @@ tags:
   PM Uac total inv: {address: 'ir:10606', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
   PM Iac sum inv: {address: 'ir:10607', type: uint32, scale: 0.001, unit: A, writable: false,
                    only: [Modbus TCP PM]}
+
+  # PM licence, power control V2 (section 2.1): read with function 4, written with 6/16 to the same number.
+  # 0 = no limitation via Power Control V2, 1 = no limitation (100 %), 2 = fixed limit in %,
+  # 4 = limit in % considering self-consumption.
+  PC PLimit_Type: {address: 'ir:10200', write_address: hr, type: uint16, only: [Modbus TCP PM]}
+  # 100 = no limit.
+  PC PLimitPerc: {address: 'ir:10201', write_address: hr, type: uint16, unit: '%', only: [Modbus TCP PM]}
+  # 0 = no control via V2, 1 = cos(phi) 1.0, 2 = fixed cos(phi), 4 = fixed Q in % of Pn,
+  # 5 = cos(phi)(P/Pn), 6 = Q(U), 7 = Q(U) with voltage dead band, 8 = Q(U) with voltage limitation,
+  # 9 = Q(P/Pn), 10 = cos(phi)(U).
+  PC Reactive_Type: {address: 'ir:10204', write_address: hr, type: uint16, only: [Modbus TCP PM]}
+  # Reactive_Type 2: >0 inductive, <0 capacitive (e.g. 0.97 / -0.97).
+  PC CosPhi_Fix: {address: 'ir:10205', write_address: hr, type: float32, only: [Modbus TCP PM]}
+  # Reactive_Type 4: ±75 % (raw 125 = 12.5 %).
+  PC QPerc: {address: 'ir:10209', write_address: hr, type: int16, scale: 0.1, unit: '%', only: [Modbus TCP PM]}
+  # Must be written within WatchDog_Time (heartbeat_s); 0 s = watchdog off.
+  PC WatchDog_Tag: {address: 'ir:10211', write_address: hr, type: uint32, only: [Modbus TCP PM]}
+  PC WatchDog_Time: {address: 'ir:10213', write_address: hr, type: uint32, unit: s, only: [Modbus TCP PM]}
+  # Active power limit after a watchdog timeout (firmware 3.3.0 – 5.x).
+  PC WatchDog_Limit: {address: 'ir:10215', write_address: hr, type: uint16, unit: '%', only: [Modbus TCP PM]}
+  # 1 = use the values written to 10218–10234 as utility meter data.
+  PC Utility_connect_good: {address: 'ir:10216', write_address: hr, type: uint16, only: [Modbus TCP PM]}
+  PC Utility_fUacRS: {address: 'ir:10218', write_address: hr, type: float32, unit: V, only: [Modbus TCP PM]}
+  PC Utility_fUacST: {address: 'ir:10220', write_address: hr, type: float32, unit: V, only: [Modbus TCP PM]}
+  PC Utility_fUacTR: {address: 'ir:10222', write_address: hr, type: float32, unit: V, only: [Modbus TCP PM]}
+  PC Utility_fPacR: {address: 'ir:10224', write_address: hr, type: float32, unit: W, only: [Modbus TCP PM]}
+  PC Utility_fPacS: {address: 'ir:10226', write_address: hr, type: float32, unit: W, only: [Modbus TCP PM]}
+  PC Utility_fPacT: {address: 'ir:10228', write_address: hr, type: float32, unit: W, only: [Modbus TCP PM]}
+  PC Utility_fQacR: {address: 'ir:10230', write_address: hr, type: float32, unit: var, only: [Modbus TCP PM]}
+  PC Utility_fQacS: {address: 'ir:10232', write_address: hr, type: float32, unit: var, only: [Modbus TCP PM]}
+  PC Utility_fQacT: {address: 'ir:10234', write_address: hr, type: float32, unit: var, only: [Modbus TCP PM]}
+  # Firmware 6.x: Q(U) characteristic curves.
+  # Reactive_Type 7 (manual: Uq0/Uc): offset of Uq0/Uc to the reference voltage, 0.7–1.3 (1.0 = no offset).
+  PC Uq0_Uc: {address: 'ir:10242', write_address: hr, type: float32, only: [Modbus TCP PM]}
+  # Manual: Qref/Pbinst – Q for the voltage limiting function in % of Pbinst, with sign (ind./cap.).
+  PC Qref_Pbinst: {address: 'ir:10244', write_address: hr, type: float32, unit: '%', only: [Modbus TCP PM]}
+  PC Qref_total: {address: 'ir:10246', write_address: hr, type: float32, unit: var, only: [Modbus TCP PM]}
+  # 0 = Qref/Pbinst (10244) is valid, 1 = Qref_total (10246) is valid.
+  PC Qref_type: {address: 'ir:10248', write_address: hr, type: uint16, only: [Modbus TCP PM]}

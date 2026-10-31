@@ -143,7 +143,14 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("type", N_("Data type"), "choice", "uint16", MODBUS_TYPES),
             _SCALE, _OFFSET, _UNIT,
             Field("unit_id", N_("Unit id"), "int", None, help=N_("Empty = the connection's unit id")),
-            _WRITABLE, _DESCRIPTION,
+            _WRITABLE,
+            Field("write_address", N_("Write address"), "str", "",
+                  help=N_("Empty = write where it is read · hr = the same number in the holding registers "
+                          "(read ir:, write hr:) · or an address such as hr:200")),
+            Field("heartbeat_s", N_("Heartbeat (s)"), "float", None,
+                  help=N_("Write a counter (1, 2, 3 …) to the tag at this interval – for a device watchdog. "
+                          "Empty = off")),
+            _DESCRIPTION,
         ),
     ),
     Protocol(
