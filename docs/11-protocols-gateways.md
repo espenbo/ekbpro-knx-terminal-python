@@ -155,8 +155,11 @@ Rules that keep the plant safe and quiet:
   - Modbus master: ready after the first poll of all registers.
   - OPC UA client: ready when every node has been read once.
   - MQTT: ready 1 s after subscribing (the retained messages are the statuses).
-  - KNX: ready at once, or with `server.read_on_start` (in `config.yaml`) when the bus has been read
-    (+2 s for the last answers). Values from the database are statuses too.
+  - KNX: ready when the feedback, sensor and alarm addresses have been read (`server.read_on_start: status`, the
+    default, +2 s for the last answers); with `read_on_start: false` at once.
+  - **Old values are never passed on.** The KNX values in the database from the last run are only shown in the
+    TUI (dimmed) – OPC UA, MQTT and Modbus get a KNX value first when the bus has sent it since the start. Until
+    then the tag is empty.
   - Our own servers (OPC UA server, Modbus slave) are ready as soon as they run.
 - **Start-up values fill our own address space only.** The OPC UA server, the Modbus slave and the MQTT state
   topics a gateway creates get every value at once (and again when they come back, e.g. after a broker restart),

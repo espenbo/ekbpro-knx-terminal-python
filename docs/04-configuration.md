@@ -219,7 +219,7 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 | `socket` | `var/knxscada.sock` | Unix socket between server and visualisation |
 | `database` | `var/knxscada.db` | SQLite with telegrams, events and alarms. Demo mode uses `var/knxscada-demo.db`. |
 | `retention_days` | `90` | How long telegrams and events are kept. Old data is deleted every hour. Alarms are kept. |
-| `read_on_start` | `false` | Read values from the bus when the server starts: `false` (send no telegrams; the last values are taken from the database), `status` (feedback, sensor and alarm addresses only) or `all` (see the warning below). `true` means `status`. |
+| `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`. Values from the database are never passed on to gateways. |
 | `read_interval_ms` | `80` | Pause between the reads, so the bus is not overloaded |
 
 **Why reading at start-up is off by default, and `all` is not recommended.** A GroupValueRead on a *control*

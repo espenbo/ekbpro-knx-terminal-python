@@ -296,12 +296,13 @@ def test_gateway_forward_rename_scale_and_no_echo(tmp_path):
 def test_initial_values_never_reach_a_quiet_target(tmp_path):
     """Like KNX: a source that (re)connects must not cause writes to a target with initial_allowed = False."""
     async def run():
-        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
+        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False, reads_first=True)
         quiet = Mem("quiet", {"tags": {"x": {}, "y": {}}}, None, initial_allowed=False, server=False)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "quiet", "map": ["a -> x", "b -> y"]}]},
                              {"src": src, "quiet": quiet})
         try:
-            hub.update("src", "a", 1)            # first value since src came up: initial
+            hub.update("src", "a", 1)            # read after src came up: a status
+            src.set_ready()
             await asyncio.sleep(0.1)
             assert quiet.writes == []
             hub.update("src", "a", 1)            # unchanged: nothing
@@ -322,7 +323,7 @@ def test_initial_values_never_reach_a_quiet_target(tmp_path):
 def test_start_up_sends_nothing_to_devices(tmp_path):
     """Read first, send afterwards: initial values reach our own servers, never a device (client) by default."""
     async def run():
-        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
+        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False, reads_first=True)
         dev = Mem("dev", {"tags": {"x": {}}}, None, server=False)
         srv = Mem("srv", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [
@@ -333,6 +334,7 @@ def test_start_up_sends_nothing_to_devices(tmp_path):
         try:
             hub.update("src", "a", 1)
             hub.update("src", "b", 5)
+            src.set_ready()
             await until(lambda: srv.writes)
             await asyncio.sleep(0.1)
             assert srv.writes == [("b", 5)]          # our own server is filled at once
@@ -421,12 +423,13 @@ def test_own_server_is_filled_again_when_it_comes_back(tmp_path):
 
 def test_initial_false_and_deadband(tmp_path):
     async def run():
-        src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False)
+        src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False, reads_first=True)
         dst = Mem("dst", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dst", "initial": False,
                                                      "deadband": 0.5, "map": ["t"]}]}, {"src": src, "dst": dst})
         try:
             hub.update("src", "t", 20.0)
+            src.set_ready()
             await asyncio.sleep(0.1)
             assert dst.writes == []
             for v in (20.2, 20.4, 20.6):
@@ -643,11 +646,14 @@ def test_knx_gateway_both_ways_and_quiet_start(knx_server):
         try:
             await wait_for(lambda: s.hub.drivers["plc"].connected and s.hub.drivers["knx"].connected)
             await asyncio.sleep(0.2)
-            # Start-up: the known KNX value reached the slave, and nothing was sent to the bus.
+            # Start-up: the old value from the database did not reach the slave, and nothing was sent to the bus.
             assert s.store.telegrams() == []
             c = AsyncModbusTcpClient("127.0.0.1", port=port)
             await c.connect()
-            assert (await c.read_coils(0, count=1)).bits[0] is True
+            assert (await c.read_coils(0, count=1)).bits[0] is False
+            assert not (await c.write_coil(0, True)).isError()   # the master's first write is a change
+            await wait_for(lambda: any(t["dir"] == "out" and t["dst"] == "1/1/1" for t in s.store.telegrams()))
+            await asyncio.sleep(0.6)
             # A telegram on the bus → the slave.
             s.ingest(src="1.1.5", dst="3/0/1", kind="write", value=dptlib.encode("9.001", 22.5), direction="in")
             await asyncio.sleep(0.1)
@@ -656,12 +662,13 @@ def test_knx_gateway_both_ways_and_quiet_start(knx_server):
             # The master switches the light off → a KNX write, logged with the gateway as the user.
             assert not (await c.write_coil(0, False)).isError()
             await wait_for(lambda: any(t["dir"] == "out" and t["dst"] == "1/1/1" for t in s.store.telegrams()))
+            await wait_for(lambda: len([t for t in s.store.telegrams() if t["dir"] == "out"]) == 2)
             out = [t for t in s.store.telegrams() if t["dir"] == "out"]
-            assert [(t["dst"], t["value"]) for t in out] == [("1/1/1", False)]
+            assert [(t["dst"], t["value"]) for t in out] == [("1/1/1", True), ("1/1/1", False)]
             assert any(e["user"] == "gw:KNX-PLC" and "1/1/1" in e["text"] for e in s.store.events())
             # The status echo of the actuator (simulator) does not travel back to the slave as a new write.
             await asyncio.sleep(0.6)
-            assert len([t for t in s.store.telegrams() if t["dir"] == "out"]) == 1
+            assert len([t for t in s.store.telegrams() if t["dir"] == "out"]) == 2
             c.close()
         finally:
             await s.hub.stop()

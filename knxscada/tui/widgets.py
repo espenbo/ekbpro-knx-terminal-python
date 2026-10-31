@@ -380,13 +380,21 @@ class GAWatcher:
     def on_mount(self) -> None:
         for ga in self.watched:
             self.scada.watch_ga(ga, self)
-        self.on_state()  # show the current value immediately
+        self.state_changed()  # show the current value immediately
 
     def on_unmount(self) -> None:
         for ga in self.watched:
             self.scada.unwatch_ga(ga, self)
 
+    def state_changed(self) -> None:
+        """Called by the app when a watched address changed."""
+        self.on_state()
+        self.after_state()
+
     def on_state(self) -> None:  # overridden by subclasses
+        pass
+
+    def after_state(self) -> None:  # overridden by subclasses
         pass
 
 
@@ -419,10 +427,18 @@ class DatapointRow(GAWatcher, Horizontal):
         if self.dp["status"]:
             parts.append(f"{_('Status:')}  {self.dp['status']}")
         parts.append(f"DPT {self.dp['dpt'] or '?'}  •  {ago(st.get('ts'))}")
+        if st.get("old"):
+            parts.append(_("Old value (from before the start) – not read yet"))
         return "\n".join(parts)
 
     def label(self) -> Label:
         return Label(_(self.dp["label"]), classes="dp-label", markup=False)
+
+    def after_state(self) -> None:
+        # A value from the database of the last run is shown dimmed until the bus has sent a new one.
+        old = bool(self.scada.state.get(self.read_ga, {}).get("old"))
+        for widget in self.query(".dp-value"):
+            widget.set_class(old, "old")
 
     def write(self, value: Any) -> None:
         self.scada.write(self.dp["ga"], value, self.dp["dpt"])

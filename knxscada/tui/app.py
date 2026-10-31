@@ -381,7 +381,7 @@ class ScadaApp(App):
     def _notify_watchers(self, ga: str) -> None:
         for w in list(self._watchers.get(ga, ())):
             if w.is_mounted:
-                w.on_state()
+                w.state_changed()
 
     def ga(self, addr: str | None) -> dict:
         """Group address record from the model (empty dict if unknown)."""

@@ -15,7 +15,7 @@ from knxscada.server import read_mode, read_targets
 from tests.test_project import raw_project
 
 
-@pytest.mark.parametrize(("value", "mode"), [(None, "off"), (False, "off"), ("false", "off"), ("off", "off"),
+@pytest.mark.parametrize(("value", "mode"), [(None, "status"), ("", "status"), (False, "off"), ("false", "off"), ("off", "off"),
                                               (True, "status"), ("status", "status"), ("all", "all"), ("ALL", "all")])
 def test_read_mode(value, mode):
     assert read_mode(value) == mode
@@ -26,9 +26,13 @@ def model_and_gas():
     return model, model["gas"]
 
 
-def test_default_reads_nothing():
+def test_off_reads_nothing():
     model, gas = model_and_gas()
-    assert read_targets(model, gas, [], read_mode(None)) == []
+    assert read_targets(model, gas, [], read_mode(False)) == []
+
+
+def test_default_reads_statuses():
+    assert read_mode(None) == "status"
 
 
 def test_status_mode_never_reads_control_addresses():

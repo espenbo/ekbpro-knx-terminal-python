@@ -142,8 +142,8 @@ Configuration, database and preferences stay in `/home/knx`. After changing the 
 - **Flash memory:** the server writes the telegram log continuously (about 10–20 MB per day at 1–2
   telegrams/s, committed once per second). Keep the data directory on `/home`, and lower `retention_days` in
   `config.yaml` if the disk fills up.
-- **No telegrams at start-up:** by default the server sends nothing to the bus when it starts
-  (`read_on_start: false`, see [Configuration](04-configuration.md#server)).
+- **Reads at start-up:** by default the server reads the feedback, sensor and alarm addresses when it starts,
+  never control addresses (`read_on_start: status`, see [Configuration](04-configuration.md#server)).
 - **One tunnel per server:** if the program also runs on another machine against the same KNX IP interface,
   each server uses its own tunnel, and each keeps its own log.
 - **Firmware updates:** check afterwards that Docker is still enabled and the container is running

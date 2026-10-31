@@ -96,12 +96,14 @@ START_READ_SETTLE_S = 2.0
 
 
 def read_mode(value: Any) -> str:
-    """``server.read_on_start`` → ``"off"`` (default), ``"status"`` or ``"all"``.
+    """``server.read_on_start`` → ``"status"`` (default), ``"off"`` or ``"all"``.
 
-    ``true`` means ``"status"``: reading control addresses is never done unless
-    ``"all"`` is given explicitly (see :func:`read_targets` for why).
+    ``true`` (and nothing) means ``"status"``: reading control addresses is never
+    done unless ``"all"`` is given explicitly (see :func:`read_targets` for why).
     """
-    if value is None or value is False or str(value).strip().lower() in ("false", "off", "no", "0", ""):
+    if value is None or value == "":
+        return "status"
+    if value is False or str(value).strip().lower() in ("false", "off", "no", "0"):
         return "off"
     if str(value).strip().lower() == "all":
         return "all"
@@ -189,9 +191,12 @@ class ScadaServer:
 
         # Start with the last known values from the database so clients see
         # something immediately, before the bus has answered our read requests.
+        # They are marked old (the TUI shows them in another colour) and are never
+        # passed on to gateways: only values read or received from now on are.
         for ga, last in self.store.last_values(list(self.gas)).items():
             if ga in self.gas:
                 last["text"] = dptlib.fmt(self.gas[ga]["dpt"], last["value"])
+                last["old"] = True
                 self.state[ga] = last
 
     # -- life cycle -----------------------------------------------------------------------

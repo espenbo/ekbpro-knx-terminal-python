@@ -49,10 +49,11 @@ server:
   socket: var/knxscada.sock
   database: var/knxscada.db
   retention_days: 90                # how long telegrams and events are kept
-  # Read values from the bus when the server starts: false (default, sends no telegrams),
-  # status (feedback/sensor/alarm addresses only) or all (also control addresses – not recommended,
-  # a stale answer from another device can switch actuators). See docs/04-configuration.md.
-  read_on_start: false
+  # Read values from the bus when the server starts: status (default – feedback/sensor/alarm addresses
+  # only, safe), false (sends no telegrams; the old values from the database are shown, marked as old)
+  # or all (also control addresses – not recommended, a stale answer from another device can switch
+  # actuators). See docs/04-configuration.md.
+  read_on_start: status
   read_interval_ms: 80              # pause between reads (keeps the bus load low)
 
 # Alarms: rules select group addresses by address (glob) and/or name (regex).

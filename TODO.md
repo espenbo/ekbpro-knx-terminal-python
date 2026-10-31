@@ -80,11 +80,17 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 - [x] Rettet: svarene på `read_on_start` ble sendt videre som endringer fra KNX
 - [x] TUI: «Send verdier ved oppstart» er nå et valg (bare til egne servere / ja / nei)
 - [x] Tester (4 nye), `docs/11-protocols-gateways.md`, docstringen i `gateway.py`
-- [ ] Avklare: skal egne servere også vente med å fylles (streng tolkning av regelen)? I dag fylles de straks,
-      fordi det ikke sender noe til utstyr, og fordi en tom OPC UA-server ellers ville vist tomme verdier til
-      første endring.
-- [ ] Vurdere `read_on_start: status` som standard når KNX er kilde i en gateway (i dag er standarden `false`,
-      og KNX-statusene kommer da fra databasen)
+- [x] Gamle verdier sendes aldri videre (besluttet 2026-10-31): KNX-verdiene i databasen fra forrige kjøring
+      vises bare i TUI-en, dempet og i kursiv («Gammel verdi – ikke lest ennå»), til bussen har sendt en ny.
+      OPC UA, MQTT og Modbus får en KNX-verdi først når den er lest eller mottatt etter oppstart – til da er
+      taggen tom. Ferske statuser som leses ved oppstart, fyller egne servere.
+- [x] `read_on_start: status` er standard (KNX-statusene leses alltid ved oppstart, aldri styreadresser)
+- [x] Rettet: første skriving fra en ekstern klient til egen server (Modbus-slave, OPC UA-server) ble tolket som
+      status og ikke sendt videre. Etter at en tilkobling er klar, er alle verdier endringer (unntak: Modbus-master,
+      der en tagg som ikke kunne leses ved første polling, gir status når den leses).
+- [ ] De tre site-konfigurasjonene og `config.yaml` har `read_on_start: false` – endres til `status` (venter på ok)
+- [ ] Oversiktsskjermen (romkort med temperatur) viser ennå ikke gamle verdier i egen farge – bare
+      funksjonskortene og gruppeadresselisten
 
 ## Dokumentasjon
 

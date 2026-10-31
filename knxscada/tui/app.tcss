@@ -237,6 +237,11 @@ Input:focus {
     background: $success 15%;
 }
 
+.dp-value.old {
+    color: $foreground 45%;
+    text-style: italic;
+}
+
 .dp-value.alarm {
     color: $text;
     background: $error;

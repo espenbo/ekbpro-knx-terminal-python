@@ -170,6 +170,7 @@ class Driver(BaseDriver):
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the next poll reads a written value back
         self.reads_first = self.role == "client"   # ready after the first poll
+        self.first_value_is_status = self.role == "client"
         self.client = None
         self.server = None
         self.blocks: list[Block] = []

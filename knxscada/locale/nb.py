@@ -659,6 +659,7 @@ CATALOGUE: dict[str, str] = {
     "only to own servers": "bare til egne servere",
     "yes, also to devices (not KNX)": "ja, også til utstyr (ikke KNX)",
     "reading …": "leser …",
+    "Old value (from before the start) – not read yet": "Gammel verdi (fra før oppstart) – ikke lest ennå",
     "no": "nei",
     "Never to KNX: a start-up or reconnect does not put telegrams on the bus.":
         "Aldri til KNX: oppstart eller ny tilkobling legger ikke telegrammer på bussen.",

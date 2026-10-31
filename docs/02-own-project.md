@@ -108,7 +108,8 @@ up in that room. See [Configuration](04-configuration.md#rooms-from-the-group-ad
   "switching" or "av/på". Then switch and status are paired.
 - **Setpoint addresses** are recognised by "setpoint", "setpunkt", "settpunkt", "skal", "ønsket" or "basis" in the name.
 - **The read flag (R)** on the status objects lets the server read the current value at start-up when
-  `read_on_start: status` is set (off by default). Otherwise "–" is shown until the first telegram arrives.
+  `read_on_start: status` is set (the default). Otherwise the old value from the database (dimmed) or "–" is shown
+  until the first telegram arrives.
 - **Placeholders** (names consisting only of characters such as `-`, `_`, `.` or `x`) and addresses without linked
   objects are hidden by default. Press `u` in the group address view to show them.
 

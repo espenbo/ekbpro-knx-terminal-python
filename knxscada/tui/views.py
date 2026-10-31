@@ -564,7 +564,8 @@ class GroupAddressView(View):
             if not self._matches(ga, words):
                 continue
             st = state.get(addr, {})
-            t.add_row(addr, ga["name"], ga["dpt"] or "", st.get("text", ""),
+            text = Text(st.get("text", ""), style="dim italic") if st.get("old") else st.get("text", "")
+            t.add_row(addr, ga["name"], ga["dpt"] or "", text,
                       hms(st["ts"]) if st.get("ts") else "", st.get("src", ""), key=addr)
             self.rows.add(addr)
         title = _("{n} group addresses").format(n=len(self.rows))

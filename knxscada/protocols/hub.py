@@ -52,6 +52,7 @@ class Hub:
         self.tasks: dict[str, asyncio.Task] = {}
         self.values: dict[str, dict[str, Any]] = {}  # "conn/tag" → {"v", "ts", "q"}
         self._seen: set[str] = set()                 # tags with a value since their connection came up
+                                                     # (Driver.first_value_is_status)
         self._dirty: dict[str, dict[str, Any]] = {}  # values not yet sent to the clients
         self._flusher: asyncio.Task | None = None
         self.engine = GatewayEngine(self, [])
@@ -162,7 +163,7 @@ class Hub:
         key = f"{conn}/{tag}"
         # Until its connection has read everything once, a value is a status, not a change.
         drv = self.drivers.get(conn)
-        initial = key not in self._seen or drv is None or not drv.ready
+        initial = drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
         self._seen.add(key)
         old = self.values.get(key)
         if old is not None and old["q"] == quality and same_value(old["v"], value):
@@ -270,7 +271,7 @@ class Hub:
             rec = self.values.get(f"{conn}/{t.name}") or {}
             if conn == "knx":
                 st = self.server.state.get(t.name) or {}
-                rec = {"v": st.get("value"), "ts": st.get("ts"), "q": "good" if st else ""}
+                rec = {"v": st.get("value"), "ts": st.get("ts"), "q": ("old" if st.get("old") else "good") if st else ""}
             out.append({**t.info(), "value": rec.get("v"), "ts": rec.get("ts"), "q": rec.get("q", "")})
         return out
 

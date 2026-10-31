@@ -188,6 +188,9 @@ class Driver:
     #: True: the driver reads every tag after connecting and calls :meth:`set_ready` when done.
     #: Until then its values are *initial* (statuses, not changes) and gateways wait with writes to it.
     reads_first = False
+    #: True: the first good value of a tag is a status even after the connection is ready
+    #: (a polled tag that could not be read the first time).
+    first_value_is_status = False
     #: False: gateways never send initial values here, not even with ``initial: true``.
     #: KNX uses this – a start-up or a reconnect must never put telegrams on the bus.
     initial_allowed = True

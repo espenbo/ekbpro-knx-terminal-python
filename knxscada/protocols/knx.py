@@ -14,8 +14,9 @@ connects it to the gateways:
   and logged in the event log with the gateway as the user.
 
 KNX never gets *initial* values from a gateway (see :attr:`Driver.initial_allowed`).
-With ``server.read_on_start`` the connection is *ready* only when the server has
-read the statuses of the bus, so the answers are statuses, not changes.
+With ``server.read_on_start`` (default ``status``) the connection is *ready* only
+when the server has read the statuses of the bus, so the answers are statuses,
+not changes. The values in the database from the last run are never passed on.
 """
 
 from __future__ import annotations
@@ -83,20 +84,10 @@ class Driver(BaseDriver):
         return not self.server.start_read_done
 
     async def session(self) -> None:
-        # The values known at start-up (from the database) go to the gateways as initial values,
-        # so an OPC UA server or MQTT broker shows them at once.
-        for addr, st in list(self.server.state.items()):
-            if addr in self.tags and st.get("value") is not None:
-                self.hub.update(self.name, addr, st["value"])
+        # The values in the database from the last run are old: they never go to the gateways.
+        # Only telegrams received from now on (also the answers to read_on_start) do.
         self.set_state(bool(self.server.status.get("connected")))
         await self.wait_stopped()
-
-    def set_ready(self) -> None:
-        # From now on every KNX value is a real event (a telegram), never an "initial" one –
-        # also for addresses that have not been seen yet.
-        if self.connected and not self.ready:
-            self.hub._seen.update(f"{self.name}/{a}" for a in self.tags)
-        super().set_ready()
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
         dpt = tag.extra.get("dpt")
