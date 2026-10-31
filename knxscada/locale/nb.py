@@ -663,6 +663,16 @@ CATALOGUE: dict[str, str] = {
     "reading …": "leser …",
     "Device": "Utstyr",
     "Registers per request": "Registre per lesing",
+    "Device templates:": "Utstyrsmaler:",
+    'Example: ./scada simulate "WAGO 879-3000" --port 5020': 'Eksempel: ./scada simulate "WAGO 879-3000" --port 5020',
+    "The Modbus module is not installed. Install it with: ./scada modules install modbus":
+        "Modbus-modulen er ikke installert. Installer den med: ./scada modules install modbus",
+    "Connect to it in protocols.yaml:": "Koble til den i protocols.yaml:",
+    'Name a device, e.g.: ./scada simulate "WAGO 879-3000"': 'Oppgi utstyret, f.eks.: ./scada simulate "WAGO 879-3000"',
+    "Simulating {model} on {where}, unit id {unit} – {n} tags. Ctrl+C stops.":
+        "Simulerer {model} på {where}, adresse {unit} – {n} tagger. Ctrl+C stopper.",
+    "{model} is a {protocol} device": "{model} er utstyr for {protocol}",
+    "<the other serial port>": "<den andre serieporten>",
     "At most this many registers in one read (some devices: 50 or less)":
         "Høyst så mange registre i én lesing (noe utstyr: 50 eller færre)",
     "Gap read across": "Hull som leses over",

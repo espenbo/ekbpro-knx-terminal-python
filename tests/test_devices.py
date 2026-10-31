@@ -102,7 +102,7 @@ def test_master_identifies_the_meter(tmp_path):
 # -- Carlo Gavazzi ---------------------------------------------------------------------------------------
 @pytest.mark.parametrize(("model", "n_tags", "max_regs", "max_gap"), [
     ("Carlo Gavazzi EM111", 17, 50, 8), ("Carlo Gavazzi EM112", 17, 50, 8), ("Carlo Gavazzi ET112", 18, 50, 8),
-    ("Carlo Gavazzi EM270", 36, 18, 8), ("Carlo Gavazzi EM280", 36, 18, 8),
+    ("Carlo Gavazzi EM270", 36, 18, 8), ("Carlo Gavazzi EM280", 36, 18, 8), ("Carlo Gavazzi EM271", 44, 18, 8),
     ("Carlo Gavazzi EM580", 34, 125, 0), ("Carlo Gavazzi WM15", 40, 125, 8),
 ])
 def test_carlo_gavazzi_templates(model, n_tags, max_regs, max_gap):
@@ -167,3 +167,96 @@ def test_master_reads_a_carlo_gavazzi_meter(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+# -- ./scada simulate -------------------------------------------------------------------------------------
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+@pytest.mark.parametrize(("model", "tag", "lo", "hi"), [
+    ("WAGO 879-3000", "L1 voltage", 220, 240),
+    ("Carlo Gavazzi EM111", "V L-N", 220, 240),          # 000Bh is both the ID code and the high word of W dmd
+    ("Carlo Gavazzi EM270", "kWh (+) TOT TCDA2", 12000, 13000),
+    ("Carlo Gavazzi EM271", "W TOT TCDA1 DMD", 800, 1500),
+])
+def test_simulator_is_identified_and_read_by_the_master(tmp_path, model, tag, lo, hi):
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        tpl, sim = simulate.build(model, port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            hub._make("master", {"protocol": "modbus", "transport": "tcp", "host": "127.0.0.1", "port": port,
+                                 "model": model, "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.identity.startswith(tpl["model"]), master.identity
+            assert not [t for level, t in hub.server.events if level == "error"]
+            assert lo < hub.values[f"master/{tag}"]["v"] < hi
+            assert all(r["q"] == "good" for k, r in hub.values.items() if k.startswith("master/"))
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+# -- Solar-Log ---------------------------------------------------------------------------------------------
+def test_solar_log_templates():
+    free = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP", "host": "192.0.2.10"})
+    pm = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP PM", "host": "192.0.2.10"})
+    assert (free["transport"], free["port"], free["word_order"], free["max_gap"]) == ("tcp", 502, "little", 0)
+    assert len(free["tags"]) == 17 and "PM Pac" not in free["tags"]
+    assert len(pm["tags"]) == 17 + 28
+    assert all(t["address"].startswith("ir:") for t in pm["tags"].values())   # only function code 4 reads
+    for model in ("Solar-Log Modbus TCP", "Solar-Log Modbus TCP PM"):
+        assert validate({"connections": {"s": {"protocol": "modbus", "model": model, "host": "192.0.2.10"}},
+                         "gateways": []}) == []
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_tag_invalid_codes_and_solar_log_simulator(tmp_path):
+    """A tag's own ``invalid`` (-273 = no sensor) gives bad quality; the rest of the Solar-Log reads fine."""
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            sim.store.put(sim.points["PM Module temp."], -273, "little")
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port,
+                                 "model": "Solar-Log Modbus TCP PM", "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            v = hub.values
+            assert 800 < v["master/Pac"]["v"] < 1500
+            assert v["master/Total yield"]["v"] > 12_000_000
+            assert v["master/PM Module temp."]["q"] == "bad"
+            assert v["master/PM Ambient temp."]["q"] == "good"
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+def test_simulate_lists_templates(capsys):
+    from knxscada.__main__ import main
+
+    assert main(["simulate"]) == 0
+    out = capsys.readouterr().out
+    assert "WAGO 879-3000" in out and "Carlo Gavazzi EM580" in out

@@ -49,8 +49,8 @@ Gren: `feature/modulaer-protokoller`
 - [x] Kontrollert 2026-10-31: kopiene i `sites/glommensgate1` er identiske med filene i rotmappen
 - [x] Kjørt `sudo bash sites/glommensgate1/migrate.sh` (2026-10-31 17:10). `knxscada-glommensgate1` kjører:
       KNX og PLS (435 variabler) tilkoblet, `knx-glommensgate1` virker.
-- [ ] TUI-en på tty1 (startet manuelt 26.10 som `knxscada tui` uten `-c`) bruker fortsatt den gamle sokkelen
-      `var/knxscada.sock`, som er borte. Avslutt den på tty1 og start `knx-glommensgate1`.
+- [x] Den gamle TUI-en på tty1 (`python -m knxscada tui`, PID 137932) avsluttet 2026-10-31.
+      Start `knx-glommensgate1` på tty1.
 
 ## WAGO Edge (github.com/espenbo/wagoEdgeStart)
 
@@ -71,9 +71,16 @@ Gren: `feature/modulaer-protokoller`
       WM15. 8N1 (fabrikk), heltall med vekt og laveste ord først, skalert i malen. Nye Modbus-innstillinger
       `max_registers` (EM100: 50, EM270: 18) og `max_gap` (EM580: 0), `invalid` (EEE-koder → dårlig kvalitet),
       `only:` for tagger som bare finnes på én modell (timeteller ET112).
-- [ ] EM271 mangler protokolldokument (ikke med i EM270/EM280-dokumentet)
-- [ ] Flere maler: SolarLog (venter på dokumentasjon/modellnavn)
-- [ ] `./scada modules simulate wago-879-30xx` (eller tilsvarende): Modbus-slave fra en mal, til test uten utstyr
+- [x] EM271 (2026-10-31): eget protokolldokument funnet («EM271 Communication Protocol» v0 r0, enika.cz),
+      `carlo-gavazzi-em271.yaml`. Samme registre som EM270 + DMD/MAXDMD og TCD-primærstrøm; kode 274–277; ingen PF.
+- [x] SolarLog (2026-10-31): `solar-log.yaml`, modellene `Solar-Log Modbus TCP` (gratis, live data 3500–3531) og
+      `Solar-Log Modbus TCP PM` (lisens, også 10500–10607). Bare FC4 (`ir:`), laveste ord først, `max_gap: 0`.
+      `TotalPower` (3530) er fra modbuscloud – sjekk mot et ekte Solar-Log.
+- [x] `invalid:` per tagg (65535 = ingen TCD / ingen sensor, −273 °C = ingen sensor) i tillegg til malens liste
+- [ ] SolarLog effektstyring (10200–10248): leses med FC4, skrives med FC6/16 – trenger en tagg som leser `ir:`
+      og skriver `hr:` (f.eks. `write_address:`), og en syklisk watchdog (10211)
+- [x] `./scada simulate MODELL` (2026-10-31): Modbus-slave fra en utstyrsmal (TCP, eller `--device` for RS485),
+      med troverdige verdier og identifikasjonsregistre – til test uten utstyr. Uten modell: lister malene.
 
 ## Oppstart: les først, send etterpå (ferdig 2026-10-31)
 
@@ -113,10 +120,6 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 - [ ] Når en engelsk side endres, må den norske endres likt.
 - [x] `server.protocols: var/protocols.yaml` (besluttet 2026-10-31): satt på de tre anleggene og i
       `config.example.yaml`, standard i dokumentasjonen – systemd-tjenesten får bare skrive i `var/`.
-
-## Neste steg (venter på avklaring)
-
-- SolarLog-mal: hvilken modell, og registerkart
 
 ## Runde 2
 

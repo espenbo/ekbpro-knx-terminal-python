@@ -28,7 +28,8 @@ register map:
 ``tags``
     The tags, written like ``tags:`` in ``protocols.yaml``. The connection's own
     ``tags:`` are added to them and override a template tag with the same name.
-    ``only: [ET112]`` limits a tag to some of the family's models.
+    ``only: [ET112]`` limits a tag to some of the family's models, and a tag's own
+    ``invalid: [65535]`` adds "no value" codes for that tag alone.
 ``invalid``
     Raw register values that mean "no value" (overflow, not measured); they are
     shown as bad quality. ``links`` and ``manual`` are for people only.

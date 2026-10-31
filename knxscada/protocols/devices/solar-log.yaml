@@ -1,0 +1,85 @@
+# Solar-Log data loggers (Solar-Log 300/1200/2000/50/Base, firmware 3.3.0 or newer) – Modbus TCP, port 502.
+# Sources: "Solar-Log ModbusTCP free", section 1.1 "Live data compact" (3500–3529), and
+# "Solar-Log Modbus TCP PM", version 2.17 (09.2024), section 2.2 "PM – Data confirmation" (10500–10617).
+# Only function code 4 reads (input registers); 32-bit values have the low word first.
+# Turn the interface on in the Solar-Log: Configuration | Digital interfaces | Modbus TCP.
+# The power management registers (10200–10248: active/reactive power limits, watchdog) are read with function
+# 4 and written with 6/16, which one tag cannot do yet – they are not in the template.
+# Tag names are written as in the manuals; give them names from your tagging system in the gateway.
+manufacturer: Solar-Log
+protocol: modbus
+models:
+  Modbus TCP: Solar-Log with the free Modbus TCP interface – live data of the whole plant
+  Modbus TCP PM: Solar-Log with the Modbus TCP PM licence (item 255511) – also feed-in point and inverter values
+manual: Solar-Log ModbusTCP free; Solar-Log Modbus TCP PM, version 2.17
+links:
+  - https://www.solar-log.com/fileadmin/user_upload/documents/Datenblaetter/en_GB/Komponenten/Kommunikation/SolarLog_Datasheet_Modbus_TCP_PM_EN.pdf
+  - https://www.modbuscloud.com/templates/solarlog-solarlog
+
+# Unit id 1. Unknown addresses (10517, firmware-dependent registers) are not read together with others.
+settings:
+  transport: tcp
+  port: 502
+  unit_id: 1
+  poll_ms: 5000
+  word_order: little
+  max_gap: 0
+
+tags:
+  lastUpdateTime: {address: 'ir:3500', type: uint32, unit: s, writable: false}
+  Pac: {address: 'ir:3502', type: uint32, unit: W, writable: false}
+  Pdc: {address: 'ir:3504', type: uint32, unit: W, writable: false}
+  Uac: {address: 'ir:3506', type: uint16, unit: V, writable: false}
+  Udc: {address: 'ir:3507', type: uint16, unit: V, writable: false}
+  Daily yield: {address: 'ir:3508', type: uint32, unit: Wh, writable: false}
+  Yesterday yield: {address: 'ir:3510', type: uint32, unit: Wh, writable: false}
+  Monthly yield: {address: 'ir:3512', type: uint32, unit: Wh, writable: false}
+  Yearly yield: {address: 'ir:3514', type: uint32, unit: Wh, writable: false}
+  Total yield: {address: 'ir:3516', type: uint32, unit: Wh, writable: false}
+  Pac consumption: {address: 'ir:3518', type: uint32, unit: W, writable: false}
+  Daily yield cons.: {address: 'ir:3520', type: uint32, unit: Wh, writable: false}
+  Yesterday yield cons.: {address: 'ir:3522', type: uint32, unit: Wh, writable: false}
+  Monthly yield cons.: {address: 'ir:3524', type: uint32, unit: Wh, writable: false}
+  Yearly yield cons.: {address: 'ir:3526', type: uint32, unit: Wh, writable: false}
+  Total yield cons.: {address: 'ir:3528', type: uint32, unit: Wh, writable: false}
+  # Installed generator power (modbuscloud.com; not in the excerpt of the manual).
+  TotalPower: {address: 'ir:3530', type: uint32, unit: Wp, writable: false}
+
+  # PM licence: values from the utility meter at the feed-in point (most need one) and the inverters.
+  PM lastUpdateTime: {address: 'ir:10500', type: uint32, unit: s, writable: false, only: [Modbus TCP PM]}
+  PM PLimit_Confirm: {address: 'ir:10502', type: uint16, unit: '%', writable: false, only: [Modbus TCP PM]}
+  PM Pac: {address: 'ir:10503', type: int32, unit: W, writable: false, only: [Modbus TCP PM]}
+  PM Iac: {address: 'ir:10505', type: uint32, scale: 0.01, unit: A, writable: false, only: [Modbus TCP PM]}
+  PM Uac: {address: 'ir:10507', type: int16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Fac: {address: 'ir:10508', type: uint16, scale: 0.01, unit: Hz, writable: false, only: [Modbus TCP PM]}
+  # >0 inductive, <0 capacitive.
+  PM CosPhi: {address: 'ir:10509', type: int16, scale: 0.001, writable: false, only: [Modbus TCP PM]}
+  PM QPerc: {address: 'ir:10510', type: int16, scale: 0.1, unit: '%', writable: false, only: [Modbus TCP PM]}
+  PM Q: {address: 'ir:10511', type: int32, unit: var, writable: false, only: [Modbus TCP PM]}
+  # Sensors: 65535 / -273 = no sensor connected.
+  PM Solar irradiation: {address: 'ir:10513', type: uint16, unit: W/m2, writable: false, invalid: [65535],
+                         only: [Modbus TCP PM]}
+  PM Module temp.: {address: 'ir:10514', type: int16, unit: °C, writable: false, invalid: [-273],
+                    only: [Modbus TCP PM]}
+  PM Ambient temp.: {address: 'ir:10515', type: int16, unit: °C, writable: false, invalid: [-273],
+                     only: [Modbus TCP PM]}
+  PM Windspeed: {address: 'ir:10516', type: uint16, scale: 0.1, unit: m/s, writable: false, invalid: [65535],
+                 only: [Modbus TCP PM]}
+  PM Uac L1-L2: {address: 'ir:10518', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Uac L2-L3: {address: 'ir:10519', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Uac L3-L1: {address: 'ir:10520', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Iac L1: {address: 'ir:10521', type: uint32, scale: 0.01, unit: A, writable: false, only: [Modbus TCP PM]}
+  PM Iac L2: {address: 'ir:10523', type: uint32, scale: 0.01, unit: A, writable: false, only: [Modbus TCP PM]}
+  PM Iac L3: {address: 'ir:10525', type: uint32, scale: 0.01, unit: A, writable: false, only: [Modbus TCP PM]}
+  PM Uac inverter: {address: 'ir:10527', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Iac inverter: {address: 'ir:10528', type: uint32, scale: 0.01, unit: A, writable: false, only: [Modbus TCP PM]}
+  PM Plant availability: {address: 'ir:10530', type: uint16, unit: '%', writable: false, only: [Modbus TCP PM]}
+  # Firmware 6.0.1 or newer.
+  PM PLimitPerc: {address: 'ir:10600', type: uint16, unit: '%', writable: false, only: [Modbus TCP PM]}
+  # 1 = all inverters online, 0 = at least one offline.
+  PM Status: {address: 'ir:10601', type: uint16, writable: false, only: [Modbus TCP PM]}
+  PM Pac total inv: {address: 'ir:10602', type: uint32, unit: W, writable: false, only: [Modbus TCP PM]}
+  PM Qac total inv: {address: 'ir:10604', type: int32, unit: var, writable: false, only: [Modbus TCP PM]}
+  PM Uac total inv: {address: 'ir:10606', type: uint16, unit: V, writable: false, only: [Modbus TCP PM]}
+  PM Iac sum inv: {address: 'ir:10607', type: uint32, scale: 0.001, unit: A, writable: false,
+                   only: [Modbus TCP PM]}

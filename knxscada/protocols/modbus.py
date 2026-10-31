@@ -392,7 +392,7 @@ class Driver(BaseDriver):
                 raw = bool((data[off] >> p.bit) & 1)
             else:
                 raw = from_registers(data[off:off + p.count], p.dtype, self._order(tag))
-                if raw in self.invalid and not isinstance(raw, float):
+                if not isinstance(raw, float) and (raw in self.invalid or raw in (tag.extra.get("invalid") or ())):
                     rec = self.hub.values.get(f"{self.name}/{tag.name}")
                     self.hub.update(self.name, tag.name, rec["v"] if rec else None, "bad")
                     continue

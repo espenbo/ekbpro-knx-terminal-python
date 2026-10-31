@@ -74,6 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", nargs="?", choices=("list", "install"), default="list")
     p.add_argument("names", nargs="*", help="modules to install, e.g. modbus mqtt")
     sub.add_parser("gateway", help="check protocols.yaml and show connections and gateways (live when the server runs)")
+    p = sub.add_parser("simulate", help="play a device from a template as a Modbus slave, for tests without equipment")
+    p.add_argument("model", nargs="?", default="", help='device template, e.g. "WAGO 879-3000" or EM111')
+    p.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 = all)")
+    p.add_argument("--port", type=int, default=5020, help="Modbus TCP port")
+    p.add_argument("--unit", type=int, default=1, help="unit id (slave address)")
+    p.add_argument("--device", help="serial port (RS485) instead of TCP, with the template's serial settings")
 
     args = ap.parse_args(argv)
     cmd = args.cmd or "tui"
@@ -82,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config(args.config)
     except FileNotFoundError:
-        if cmd != "modules":
+        if cmd not in ("modules", "simulate"):
             raise
         # A fresh installation (setup.sh, Dockerfile) installs modules before there is a config.yaml.
         import os
@@ -131,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd == "plc-map":
         return plc_map(cfg, args)
+
+    if cmd == "simulate":
+        return simulate(args)
 
     if cmd == "plc-browse":
         from .opcua_bridge import browse, endpoints
@@ -235,6 +244,31 @@ def plc_map(cfg, args) -> int:
             path=gvl_path, n=active, gvl=pmap.gvl))
         if not active:
             print(_("Mark addresses with use: true in {path} (or use --all) and run plc-map again.").format(path=path.name))
+    return 0
+
+
+def simulate(args) -> int:
+    """``simulate MODEL``: a Modbus slave that plays a device template (list the templates without a model)."""
+    from .protocols import devices, installed
+
+    if not args.model:
+        print(_("Device templates:"))
+        for name, tpl in devices.templates().items():
+            print(f"  {name:<24} {tpl['title']}")
+        print(_("Example: ./scada simulate \"WAGO 879-3000\" --port 5020"))
+        return 0
+    if not installed("modbus"):
+        print(_("The Modbus module is not installed. Install it with: ./scada modules install modbus"))
+        return 1
+    from .protocols.simulate import run
+
+    try:
+        asyncio.run(run(args.model, args.host, args.port, args.unit, args.device))
+    except ValueError as exc:
+        print(exc)
+        return 1
+    except KeyboardInterrupt:
+        pass
     return 0
 
 

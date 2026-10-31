@@ -100,8 +100,11 @@ navn som en tag i malen endrer den, f.eks. en `description`). I F11 velger du ut
 | `Carlo Gavazzi ET112` | 1-fase energimåler med timeteller, direkte, 100 A | samme |
 | `Carlo Gavazzi EM270` | dobbel 3-fase energimåler, TCD-strømsensorer opptil 630 A | `carlo-gavazzi-em270.yaml` |
 | `Carlo Gavazzi EM280` | dobbel 3-fase energimåler, TCD06-strømsensorer, 32 A | samme |
+| `Carlo Gavazzi EM271` | flerkanals nettanalysator, TCD_M-sensorblokker opptil 400 A | `carlo-gavazzi-em271.yaml` |
 | `Carlo Gavazzi EM580` | 3-fase MID-energimåler for elbillading, direkte, 65 A | `carlo-gavazzi-em580.yaml` |
 | `Carlo Gavazzi WM15` | 3-fase nettanalysator, 5 A strømtrafo | `carlo-gavazzi-wm15.yaml` |
+| `Solar-Log Modbus TCP` | Solar-Log datalogger, gratis Modbus TCP-grensesnitt (sanntidsdata for anlegget) | `solar-log.yaml` |
+| `Solar-Log Modbus TCP PM` | det samme med PM-lisens: også verdier fra innmatingspunktet og vekselretterne | samme |
 
 Produktnummeret alene virker også (`model: 879-3000`, `model: EM111`).
 
@@ -121,11 +124,26 @@ Er måleren en annen modell, eller avviker innstillingene fra tilkoblingens, gir
 **Carlo Gavazzi:** RS485, Modbus RTU, 9600 baud, **ingen paritet** (8N1, fabrikkinnstillingen), adresse 1, lest hvert
 5. s. Verdiene er heltall med vekt (V × 10, A × 1000, W × 10, kWh × 10) og laveste ord først – malen skalerer
 dem, så taggene har den riktige enheten (V, A, W, kWh). Taggnavnene er de fra Carlo Gavazzis manualer: `V L1-N`,
-`A L1`, `W sys`, `PF sys`, `Hz`, `kWh (+) TOT`, `kWh (-) TOT` …; på EM270/EM280 har hvert av de to sensorsettene
-egne tagger (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). Målerne svarer på høyst 50 (EM100-serien) eller 18
-(EM270/EM280) registre per forespørsel; malen setter `max_registers`. «Utenfor område» (EEE) og «ikke målt» vises
-som dårlig kvalitet, ikke som et tall. Identifikasjonskoden (`0x000B`) forteller modellen, `0x2000`–`0x2002`
-adresse, baudrate og paritet. EM271 er ikke med i malen: protokollen er ikke dokumentert sammen med EM270/EM280.
+`A L1`, `W sys`, `PF sys`, `Hz`, `kWh (+) TOT`, `kWh (-) TOT` …; på EM270/EM280/EM271 har hvert av de to
+sensorsettene egne tagger (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). Målerne svarer på høyst 50 (EM100-serien) eller 18
+(EM270/EM280/EM271) registre per forespørsel; malen setter `max_registers`. «Utenfor område» (EEE) og «ikke målt»
+vises som dårlig kvalitet, ikke som et tall. Identifikasjonskoden (`0x000B`) forteller modellen, `0x2000`–`0x2002`
+adresse, baudrate og paritet. EM271 har eget protokolldokument (kode 274–277): ingen PF, men effektbehov
+(`W TOT TCDA1 DMD`, `… MAXDMD`) og primærstrømmen som måleren har funnet for hver sensorblokk (`TCDA1 CT primary`,
+dårlig kvalitet når ingen TCD er tilkoblet).
+
+**Solar-Log:** Modbus TCP, port 502, unit id 1, lest hvert 5. s; slå på grensesnittet i Solar-Log
+(*Konfigurasjon → Digitale grensesnitt → Modbus TCP*). Solar-Log leser bare med funksjonskode 4, så alle taggene
+er input-registre (`ir:`); 32-bits verdier har laveste ord først. `Solar-Log Modbus TCP` gir sanntidsdata for hele
+anlegget (3500–3531): `Pac`, `Pdc`, `Uac`, `Udc`, `Daily yield` … `Total yield` (Wh), `Pac consumption`,
+`Daily yield cons.` … `Total yield cons.` og `TotalPower` (installert Wp). `Solar-Log Modbus TCP PM` (lisens 255511)
+legger til verdiene fra innmatingspunktet og vekselretterne (10500–10607, `PM Pac`, `PM Iac L1`, `PM CosPhi`,
+`PM Status` …; noen krever fastvare 6.0.1). Sensorer som ikke er tilkoblet (innstråling 65535, temperatur −273),
+vises som dårlig kvalitet. Registrene for effektbegrensning (10200 og oppover) er ikke med i malen: de leses med
+funksjon 4 og skrives med 6.
+
+En tagg kan ha sin egen `invalid: [65535]` – råverdier som betyr «ingen verdi» bare for den taggen – i tillegg til
+malens `invalid`-liste.
 
 Gi taggene navn fra merkesystemet ditt i gatewayen når de skal videre til OPC UA eller BACnet:
 
@@ -137,6 +155,20 @@ Gi taggene navn fra merkesystemet ditt i gatewayen når de skal videre til OPC U
       - Total active power -> 320.001-OE001.P
       - Total active energy -> 320.001-OE001.E
 ```
+
+#### Test uten utstyret (`./scada simulate`)
+
+```bash
+./scada simulate                                  # lister utstyrsmalene
+./scada simulate "Carlo Gavazzi EM111"            # Modbus TCP-slave på 127.0.0.1:5020, adresse 1
+./scada simulate EM270 --port 5021 --unit 3
+./scada simulate "WAGO 879-3000" --device /dev/ttyUSB1   # på en serieport, med malens serieinnstillinger
+```
+
+Simulatoren svarer på registrene i malen med troverdige verdier som endrer seg litt (rundt 230 V, 50 Hz,
+energitellere som teller opp) og på identifikasjonsregistrene, så en tilkobling med samme `model:` kjenner den igjen
+og leser verdier som ser ekte ut. Den skriver ut linjene du setter inn i `protocols.yaml` (`transport: tcp`, `host`,
+`port`, `model`). Ctrl+C stopper den.
 
 En ny mal er en YAML-fil i `knxscada/protocols/devices/` – se WAGO-fila og docstringen i
 `knxscada/protocols/devices/__init__.py`.

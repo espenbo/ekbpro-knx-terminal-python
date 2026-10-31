@@ -63,6 +63,7 @@ the program folder. Without a command, `tui` starts.
 | `plc-browse [FILTER]` | `--endpoints`, `--plc NAME` | Lists the PLC's OPC UA variables / endpoints |
 | `modules` | `install NAME …` | Lists the protocol modules, or installs them |
 | `gateway` | | Checks `protocols.yaml`, with live status when the server runs |
+| `simulate [MODEL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Plays a device template as a Modbus slave, for tests without equipment; without a model it lists the templates |
 
 `./setup.sh [modbus mqtt opcua]` creates `venv/`, installs the packages (and the named protocol modules) and runs
 `./scada import` when `config.yaml` exists.

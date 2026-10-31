@@ -95,6 +95,7 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
 | `./scada modules [install NAME …]` | Lists the protocol modules (Modbus, MQTT, OPC UA), or installs their packages |
 | `./scada gateway` | Checks `protocols.yaml` and shows connections and gateways (live when the server runs) |
+| `./scada simulate [MODEL] [--port 5020] [--device TTY]` | Plays a device template (WAGO, Carlo Gavazzi …) as a Modbus slave, for tests without equipment |
 
 All commands accept `-c path/to/config.yaml` (before the command). You can also set the environment variable
 `KNXSCADA_CONFIG`.

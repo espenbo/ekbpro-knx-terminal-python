@@ -65,6 +65,7 @@ programmappen. Uten kommando starter `tui`.
 | `plc-browse [FILTER]` | `--endpoints`, `--plc NAME` | Lister PLS-ens OPC UA-variabler / endpoints |
 | `modules` | `install NAME …` | Lister protokollmodulene, eller installerer dem |
 | `gateway` | | Sjekker `protocols.yaml`, med direktestatus når serveren kjører |
+| `simulate [MODELL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Spiller en utstyrsmal som Modbus-slave, for test uten utstyr; uten modell lister den malene |
 
 `./setup.sh [modbus mqtt opcua]` lager `venv/`, installerer pakkene (og protokollmodulene du nevner) og kjører
 `./scada import` når `config.yaml` finnes.

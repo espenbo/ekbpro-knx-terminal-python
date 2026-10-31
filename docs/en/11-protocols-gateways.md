@@ -98,8 +98,11 @@ name as a template tag changes it, e.g. a `description`). In F11, choose the dev
 | `Carlo Gavazzi ET112` | 1-phase energy meter with hour counter, direct, 100 A | same |
 | `Carlo Gavazzi EM270` | dual 3-phase energy meter, TCD current sensors up to 630 A | `carlo-gavazzi-em270.yaml` |
 | `Carlo Gavazzi EM280` | dual 3-phase energy meter, TCD06 current sensors, 32 A | same |
+| `Carlo Gavazzi EM271` | multi-channel power analyzer, TCD_M current sensor blocks up to 400 A | `carlo-gavazzi-em271.yaml` |
 | `Carlo Gavazzi EM580` | 3-phase MID energy meter for EV charging, direct, 65 A | `carlo-gavazzi-em580.yaml` |
 | `Carlo Gavazzi WM15` | 3-phase power analyzer, 5 A CT | `carlo-gavazzi-wm15.yaml` |
+| `Solar-Log Modbus TCP` | Solar-Log data logger, free Modbus TCP interface (live data of the plant) | `solar-log.yaml` |
+| `Solar-Log Modbus TCP PM` | the same with the PM licence: also feed-in point and inverter values | same |
 
 The product number alone works too (`model: 879-3000`, `model: EM111`).
 
@@ -120,11 +123,25 @@ When the meter is another model, or its settings differ from the connection's, a
 5 s. The values are integers with a value weight (V × 10, A × 1000, W × 10, kWh × 10) and the low word first –
 the template scales them, so the tags have the real unit (V, A, W, kWh). The tag names are those of the
 Carlo Gavazzi manuals: `V L1-N`, `A L1`, `W sys`, `PF sys`, `Hz`, `kWh (+) TOT`, `kWh (-) TOT` …; on the
-EM270/EM280 each of the two sensor sets has its own tags (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). The meters
-answer at most 50 (EM100 series) or 18 (EM270/EM280) registers per request; the template sets `max_registers`.
-"Out of range" (EEE) and "not measured" are shown as bad quality, not as a number. The identification code
-(`0x000B`) tells the model, `0x2000`–`0x2002` the address, baud rate and parity. EM271 is not in the
-template: its protocol is not documented with the EM270/EM280.
+EM270/EM280/EM271 each of the two sensor sets has its own tags (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). The meters
+answer at most 50 (EM100 series) or 18 (EM270/EM280/EM271) registers per request; the template sets
+`max_registers`. "Out of range" (EEE) and "not measured" are shown as bad quality, not as a number. The
+identification code (`0x000B`) tells the model, `0x2000`–`0x2002` the address, baud rate and parity. The EM271
+has its own protocol document (codes 274–277): no PF, but power demand (`W TOT TCDA1 DMD`, `… MAXDMD`) and the
+detected primary current of each sensor block (`TCDA1 CT primary`, bad quality when no TCD is connected).
+
+**Solar-Log:** Modbus TCP, port 502, unit id 1, read every 5 s; turn the interface on in the Solar-Log
+(*Configuration → Digital interfaces → Modbus TCP*). The Solar-Log reads only with function code 4, so all
+tags are input registers (`ir:`); 32-bit values have the low word first. `Solar-Log Modbus TCP` gives the
+live data of the whole plant (3500–3531): `Pac`, `Pdc`, `Uac`, `Udc`, `Daily yield` … `Total yield` (Wh),
+`Pac consumption`, `Daily yield cons.` … `Total yield cons.` and `TotalPower` (installed Wp).
+`Solar-Log Modbus TCP PM` (licence 255511) adds the values from the feed-in point and the inverters
+(10500–10607, `PM Pac`, `PM Iac L1`, `PM CosPhi`, `PM Status` …; some need firmware 6.0.1). Sensors that
+are not connected (irradiation 65535, temperature −273) are shown as bad quality. The power limiting
+registers (10200 and on) are not in the template: they are read with function 4 and written with 6.
+
+A tag can have its own `invalid: [65535]` – raw values that mean "no value" for that tag alone – in addition to
+the template's `invalid` list.
 
 Give the tags names from your tagging system in the gateway, when they go on to OPC UA or BACnet:
 
@@ -136,6 +153,20 @@ Give the tags names from your tagging system in the gateway, when they go on to 
       - Total active power -> 320.001-OE001.P
       - Total active energy -> 320.001-OE001.E
 ```
+
+#### Test without the equipment (`./scada simulate`)
+
+```bash
+./scada simulate                                  # lists the device templates
+./scada simulate "Carlo Gavazzi EM111"            # Modbus TCP slave on 127.0.0.1:5020, unit id 1
+./scada simulate EM270 --port 5021 --unit 3
+./scada simulate "WAGO 879-3000" --device /dev/ttyUSB1   # on a serial port, with the template's serial settings
+```
+
+The simulator answers on the template's registers with plausible values that change a little (about 230 V,
+50 Hz, energy counters counting up) and on its identification registers, so a connection with the same `model:`
+identifies it and reads real-looking values. It prints the lines to put in `protocols.yaml` (`transport: tcp`,
+`host`, `port`, `model`). Ctrl+C stops it.
 
 A new template is a YAML file in `knxscada/protocols/devices/` – see the WAGO file and the docstring of
 `knxscada/protocols/devices/__init__.py`.
