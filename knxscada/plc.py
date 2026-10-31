@@ -289,7 +289,7 @@ def load_map(path: Path, gas: dict | None = None) -> PlcMap:
 def write_map(pmap: PlcMap, path: Path) -> None:
     """Write the mapping, one address per line with its name and DPT as a comment."""
     lines = [
-        f"# PLC mapping for {PRODUCT} – created with ./scada plc-map, see docs/10-plc-opcua.md",
+        f"# PLC mapping for {PRODUCT} – created with ./scada plc-map, see docs/en/10-plc-opcua.md",
         "#",
         "# select: marked = only lines with use: true are exchanged with the PLC; all = every line.",
         "# dir:    to_plc = KNX → PLC (read in the PLC) · to_knx = PLC → KNX (written by the PLC) · both",

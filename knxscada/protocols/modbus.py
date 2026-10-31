@@ -28,6 +28,14 @@ Tags are read every ``poll_ms``. Neighbouring addresses are read in one
 request (up to 100 registers or 1000 bits). When a device refuses such a
 block, its tags are read one by one from then on.
 
+Device templates
+----------------
+``model: WAGO 879-3000`` takes the tags and serial settings of a known device
+from :mod:`.devices`. After connecting, the master reads the template's
+``identify`` registers once and reports which device answers and how it is set
+up (model, unit id, baud rate, parity, serial number) – with a warning when that
+does not fit the settings. The text is also shown in F11 (``where``).
+
 Slave
 -----
 Other systems (a SCADA, a PLC) read the tags of a gateway from us, and may
@@ -46,7 +54,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from ..i18n import _
-from . import MODBUS_TYPES
+from . import MODBUS_TYPES, devices
 from .base import Driver as BaseDriver
 from .base import Tag, as_float
 
@@ -167,6 +175,8 @@ class Driver(BaseDriver):
         self.word_order = str(settings.get("word_order") or "big")
         self.unit = int(settings.get("unit_id") if settings.get("unit_id") not in (None, "") else 1)
         self.points: dict[str, Point] = {}
+        self.template = devices.find(settings.get("model"))   # ValueError for an unknown model
+        self.identity = ""   # what the device said it is (templates with identify)
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the next poll reads a written value back
         self.reads_first = self.role == "client"   # ready after the first poll
@@ -230,7 +240,9 @@ class Driver(BaseDriver):
     # -- connection -------------------------------------------------------------------------------
     def describe(self) -> str:
         where = super().describe()
-        return f"{where}  unit {self.unit}" if self.role == "client" else where
+        if self.role != "client":
+            return where
+        return f"{where}  unit {self.unit}" + (f"  · {self.identity}" if self.identity else "")
 
     async def session(self) -> None:
         if self.role == "server":
@@ -288,6 +300,8 @@ class Driver(BaseDriver):
             raise ConnectionError(_("cannot connect to {where}").format(where=super().describe()))
         self._build_blocks()
         self.set_state(True)
+        if self.template and self.template.get("identify"):
+            await self._identify()
         interval = max(int(self.settings.get("poll_ms") or 1000), 50) / 1000
         while not self._stop:
             started = asyncio.get_running_loop().time()
@@ -300,6 +314,37 @@ class Driver(BaseDriver):
                     await self._read_block(block)
             self.set_ready()
             await asyncio.sleep(max(0.0, interval - (asyncio.get_running_loop().time() - started)))
+
+    async def _identify(self) -> None:
+        """Read the template's ``identify`` registers once and report what answers (never fails the connection)."""
+        tpl = self.template or {}
+        found: dict[str, Any] = {}
+        for key, spec in (tpl.get("identify") or {}).items():
+            try:
+                table, index, _bit = parse_address(str(spec["address"]))
+                dtype = str(spec.get("type") or "uint16")
+                data = await self._read(table, self.unit, index, FORMATS[dtype][1])
+            except (KeyError, ValueError):
+                continue
+            if data is None:
+                continue
+            raw = from_registers(data, dtype, "big")
+            values = spec.get("values") or {}
+            if values:
+                # A HEX register (meter code 0x1111) may also hold the digits as a decimal number (1111).
+                found[key] = values[raw] if raw in values else next(
+                    (v for k, v in values.items() if isinstance(k, int) and f"{k:x}" == str(raw)), f"? ({raw})")
+            else:
+                found[key] = f"{raw:08X}" if spec.get("hex") else raw
+        if not found:
+            self.identity = ""
+            self.hub.event("error", _("{connection}: the device does not answer the identification "
+                                      "(unit id {unit}?)").format(connection=self.name, unit=self.unit))
+            return
+        self.identity = devices.describe(tpl, found)
+        self.hub.event("info", _("{connection}: found {device}").format(connection=self.name, device=self.identity))
+        for problem in devices.mismatches(tpl, found, self.settings):
+            self.hub.event("error", _("{connection}: {problem}").format(connection=self.name, problem=problem))
 
     async def _read(self, table: str, unit: int, start: int, count: int):
         """One read request (raises on connection problems; returns None for an exception response)."""

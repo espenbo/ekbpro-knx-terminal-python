@@ -26,7 +26,7 @@ outgoing telegram and drops copies of a telegram seen through more than one.
 In ``--demo`` mode a :class:`Simulator` produces telegrams instead of xknx,
 so the whole system can be tried without a KNX installation.
 
-Protocol: newline-delimited JSON, documented in ``docs/08-architecture.md``.
+Protocol: newline-delimited JSON, documented in ``docs/en/08-architecture.md``.
 """
 
 from __future__ import annotations

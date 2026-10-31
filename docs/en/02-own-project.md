@@ -28,7 +28,7 @@ If the installation uses **KNX Secure** (IP Secure or Data Secure), you also nee
 
 `init` does the following:
 
-1. Writes `config.yaml` from the template [`config.example.yaml`](../config.example.yaml).
+1. Writes `config.yaml` from the template [`config.example.yaml`](../../config.example.yaml).
 2. Reads the project. This takes 5–30 seconds depending on its size.
 3. Stores the result in `var/project_cache.json`.
 4. Uses the project name from ETS as the title.

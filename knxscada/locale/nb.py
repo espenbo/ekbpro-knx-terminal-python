@@ -543,7 +543,8 @@ CATALOGUE: dict[str, str] = {
     "JSON key": "JSON-nøkkel",
     "Take the value from this key of a JSON payload": "Hent verdien fra denne nøkkelen i JSON-innholdet",
     "Topic for writing": "Topic for skriving",
-    "Empty = <topic>/set": "Tom = <topic>/set",
+    "Empty = the topic itself (tags found through subscribe: <topic>/set)":
+        "Tom = selve topicen (tagger funnet via abonnement: <topic>/set)",
     "OPC UA – client of a PLC/server, or our own OPC UA server for SCADA systems":
         "OPC UA – klient mot en PLS/server, eller vår egen OPC UA-server for SD-anlegg",
     "Endpoint": "Endepunkt",
@@ -660,6 +661,25 @@ CATALOGUE: dict[str, str] = {
     "only to own servers": "bare til egne servere",
     "yes, also to devices (not KNX)": "ja, også til utstyr (ikke KNX)",
     "reading …": "leser …",
+    "Device": "Utstyr",
+    "Known equipment: its tags and serial settings come with it, and the device is identified after connecting. "
+    "Empty = list the tags yourself":
+        "Kjent utstyr: taggene og serieinnstillingene følger med, og utstyret identifiseres etter tilkobling. "
+        "Tomt = skriv taggene selv",
+    "none": "ingen",
+    "{where}: {model} is a {protocol} device": "{where}: {model} er utstyr for {protocol}",
+    "unknown device {model} – known devices: {valid}": "ukjent utstyr {model} – kjent utstyr: {valid}",
+    "unit {n}": "adresse {n}",
+    "serial {n}": "serienr. {n}",
+    "the device is a {found}, not a {model}": "utstyret er en {found}, ikke en {model}",
+    "{key} is {found} in the device, {setting} in the settings":
+        "{key} er {found} i utstyret, {setting} i innstillingene",
+    "{connection}: found {device}": "{connection}: fant {device}",
+    "{connection}: the device does not answer the identification (unit id {unit}?)":
+        "{connection}: utstyret svarer ikke på identifiseringen (adresse {unit}?)",
+    "{connection}: {problem}": "{connection}: {problem}",
+    "{model}: {n} tags and the serial settings come from the device template":
+        "{model}: {n} tagger og serieinnstillingene kommer fra utstyrsmalen",
     "Old value (from before the start) – not read yet": "Gammel verdi (fra før oppstart) – ikke lest ennå",
     "no": "nei",
     "Never to KNX: a start-up or reconnect does not put telegrams on the bus.":

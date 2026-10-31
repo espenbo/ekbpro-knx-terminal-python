@@ -61,9 +61,12 @@ Gren: `feature/modulaer-protokoller`
   - `modbus_slaves/SolarLog/…/README.md`: SolarLog Modbus TCP PM 2.17 – live data 3500–3529 (uint32),
     effektstyring 10200–10231.
   - To slavesimulatorer (pymodbus, port 5020) – nyttige som testutstyr.
-- [ ] Enhetsmaler: `knxscada/protocols/devices/*.yaml` med ferdige tagger (wago-879-30xx, solarlog), slik at en
-      tilkobling kan skrive `model: wago-879-30xx` (ikke `device:` – det er serieporten) i stedet for å liste
-      alle registrene. Valg av mal i F11-skjemaet.
+- [x] Enhetsmaler (2026-10-31): `knxscada/protocols/devices/*.yaml`, `model: WAGO 879-3000` (også 879-3020,
+      879-3040; produktnummeret alene går også). 35 måleverdier med engelske navn som i håndboken (V1.8, A3.2),
+      får nytt navn etter merkesystemet i gatewayen. Paritet Even (håndboken sier None, WAGO-biblioteket Even).
+      Identifisering etter tilkobling: meter code 0x4002, adresse, baud, paritet 0x4011, serienr. – vises i
+      hendelsesloggen og F11, med feil når modell eller innstillinger ikke stemmer. Valg i F11-skjemaet (Utstyr).
+- [ ] Flere maler: SolarLog (venter på dokumentasjon/modellnavn)
 - [ ] `./scada modules simulate wago-879-30xx` (eller tilsvarende): Modbus-slave fra en mal, til test uten utstyr
 
 ## Oppstart: les først, send etterpå (ferdig 2026-10-31)
@@ -97,16 +100,17 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 
 ## Dokumentasjon
 
-- [ ] Skrives slik at en AI enkelt kan brukes til å sette opp programmet: fullstendige eksempler på
-      `config.yaml` og `protocols.yaml`, alle nøkler med type, standardverdi og gyldige verdier, oppgaver steg
-      for steg, og hvilke kommandoer som kontrollerer at oppsettet virker
-- [ ] All dokumentasjon på både engelsk og norsk bokmål, i hver sine filer
-      i `docs/en/` og `docs/nb/` (besluttet 2026-10-31). README får lenke til begge.
-- [ ] I dag er `docs/01`–`11` og README bare på engelsk – alle må oversettes
+- [x] Flyttet til `docs/en/`, oversatt til `docs/nb/` (alle 12 dokumenter, 2026-10-31). README lenker til begge.
+- [x] `docs/*/12-setup-reference.md`: oppsett for folk og AI – fullstendige eksempler på `config.yaml` og
+      `protocols.yaml`, alle nøkler med type, standardverdi og gyldige verdier, oppgaver steg for steg, sjekker.
+- [x] Avvik mellom koden og dokumentasjonen rettet (04, 06, 08, 10, 11; MQTT `set_topic`-hjelpeteksten var feil).
+- [ ] Når en engelsk side endres, må den norske endres likt.
+- [ ] Tjenestene (`ProtectHome=read-only`, `ReadWritePaths=…/var`) kan ikke lagre `protocols.yaml` fra F11 –
+      venter på beslutning (se under).
 
 ## Neste steg (venter på avklaring)
 
-- Enhetsmaler (WAGO-måler, SolarLog) – format og navn
+- SolarLog-mal: hvilken modell, og registerkart
 
 ## Runde 2
 

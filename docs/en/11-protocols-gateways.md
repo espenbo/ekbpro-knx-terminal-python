@@ -15,7 +15,8 @@ KNX bus ─KNX IP──────────┘   gateways (rename, scale)└
 - A **gateway** copies tags from one connection to another, optionally under a new name, scaled, in one or
   both directions.
 
-Everything is in `protocols.yaml` next to `config.yaml` (for a site: `sites/<site>/protocols.yaml`), and can be
+Everything is in `var/protocols.yaml` next to `config.yaml` (for a site: `sites/<site>/var/protocols.yaml`; set with
+`server.protocols: var/protocols.yaml` – it is in `var/` because the systemd service may only write there), and can be
 edited in the file or in the TUI (**F11 Gateways**). The server reads the file again when it is saved from the TUI;
 after editing the file by hand press **r** in F11 (or restart the server).
 
@@ -46,14 +47,15 @@ BACnet/IP, MQTT Sparkplug B and Matter are planned.
 connections:
   meter1:                       # name: letters, digits, - and _
     protocol: modbus
-    transport: rtu              # tcp · rtu (RS485) · rtu_over_tcp (through a TCP converter)
     device: /dev/ttyUSB0
-    baudrate: '9600'
-    parity: E
-    unit_id: 1
-    poll_ms: 5000
+    model: WAGO 879-3000        # known device: tags and serial settings come from the template
+
+  plc1:
+    protocol: modbus
+    transport: tcp              # tcp · rtu (RS485) · rtu_over_tcp (through a TCP converter)
+    host: 192.168.1.20
     tags:
-      Spenning_L1: {address: 'hr:0x5002', type: float32, unit: V}
+      Temp_ute: {address: 'ir:0', type: int16, scale: 0.1, unit: °C}
 ```
 
 Settings every tag can have: `type`, `scale` and `offset` (value = raw × scale + offset), `unit`, `writable`,
@@ -65,10 +67,10 @@ Settings every tag can have: `type`, `scale` and `offset` (value = raw × scale 
 |---|---|---|
 | `role` | `client` | `client` = master, `server` = slave |
 | `transport` | `tcp` | `tcp`, `rtu`, `rtu_over_tcp` |
-| `host`, `port` | –, `502` | Slave: the address to listen on (`0.0.0.0` = all) |
+| `host`, `port` | master `127.0.0.1`, slave `0.0.0.0`; `502` | Master: the device. Slave: the address to listen on (`0.0.0.0` = all) |
 | `device`, `baudrate`, `parity`, `stopbits` | `/dev/ttyUSB0`, `9600`, `N`, `1` | RTU only |
 | `unit_id` | `1` | Master: default address of the device. Slave: our address, `0` answers every address |
-| `poll_ms`, `timeout_s` | `1000`, `3` | Master only |
+| `poll_ms`, `timeout_s` | `1000`, `3` | Master only (`poll_ms` at least 50) |
 | `word_order` | `big` | `big`: high word first (most devices) · `little`: low word first |
 
 Tag addresses: `hr:100` holding register, `ir:5` input register, `co:3` coil, `di:7` discrete input,
@@ -77,6 +79,47 @@ Data types: `bool`, `int16`, `uint16` (default), `int32`, `uint32`, `float32`, `
 A tag can override the connection's `unit_id` (several devices on one RS485 line).
 
 As a **slave**, the gateway targets are register addresses (`to: hr:100`).
+
+#### Known devices (`model:`)
+
+For equipment the program knows, write `model:` instead of listing the registers. The template gives the tags
+and the serial settings; settings you write yourself win, and your own `tags:` are added (a tag with the same
+name as a template tag changes it, e.g. a `description`). In F11, choose the device under *Device*.
+
+| `model` | Equipment | Template |
+|---|---|---|
+| `WAGO 879-3000` | MID energy meter 4PU, direct, 65 A | `knxscada/protocols/devices/wago-879-30xx.yaml` |
+| `WAGO 879-3020` | MID energy meter 4PS, direct, 40 A | same |
+| `WAGO 879-3040` | MID energy meter 2PU CT, current transformer | same |
+
+The product number alone works too (`model: 879-3000`).
+
+**WAGO 879-30xx:** RS485, Modbus RTU, 9600 baud, **even parity** (8E1), unit id 1, read every 5 s. The 35 tags
+are the main values with the names from the manual (appendix A3.2): `Voltage`, `L1 voltage` … `L2-L3 voltage`,
+`Frequency`, `Current`, `L1 current` …, `Total active power`, `L1 active power` …, reactive and apparent power,
+`Power factor` …, and the energy counters `Total active energy`, `L1`–`L3 Total active energy`,
+`Active energy import`, `Active energy export` and `Total reactive energy`. All are `float32` (Float ABCD) and
+read-only. Note: the WAGO manual says the factory parity is *none*, the WAGO CODESYS library says *even* –
+the template uses even, as our meters do. Set `parity: N` on the connection if a meter answers only then.
+
+After connecting, the master reads the meter's identification once – meter code (`0x4002`: which of the
+three it is), unit id, baud rate, parity (`0x4011`) and serial number – and reports it in the event log and in
+F11, e.g. `meter1: found WAGO 879-3000 (4PU – direct connection, 65 A)  unit 1  9600 E  serial 0012AB34`.
+When the meter is another model, or its settings differ from the connection's, an error says so.
+
+Give the tags names from your tagging system in the gateway, when they go on to OPC UA or BACnet:
+
+```yaml
+  - name: Energimåler til SCADA
+    from: meter1
+    to: scada
+    map:
+      - Total active power -> 320.001-OE001.P
+      - Total active energy -> 320.001-OE001.E
+```
+
+A new template is a YAML file in `knxscada/protocols/devices/` – see the WAGO file and the docstring of
+`knxscada/protocols/devices/__init__.py`.
 
 ### MQTT
 
@@ -90,7 +133,7 @@ As a **slave**, the gateway targets are register addresses (`to: hr:100`).
 | `qos`, `retain` | `0`, `true` | |
 
 Tags: `topic` (default prefix + tag name), `json_key` (pick the value out of a larger JSON object) and `set_topic`
-(where writes go). A gateway target is published to prefix + name; with `direction: both` the gateway also listens
+(where writes go; empty = the tag's own topic, and `<topic>/set` for tags found through `subscribe`). A gateway target is published to prefix + name; with `direction: both` the gateway also listens
 to `<topic>/set`.
 
 ### OPC UA
@@ -98,11 +141,14 @@ to `<topic>/set`.
 | Setting | Default | |
 |---|---|---|
 | `role` | `client` | `client` of a PLC/server, or `server` for SCADA systems |
-| `endpoint` | `opc.tcp://127.0.0.1:4840` | Server: `opc.tcp://0.0.0.0:4840` listens on every address |
+| `endpoint` | `opc.tcp://127.0.0.1:4840` | Server: write `opc.tcp://0.0.0.0:4840` to listen on every address – left out, the server is only reachable from this machine |
 | `username`, `password` | | Empty = anonymous |
 | `security` | `None` | As for the [PLC bridge](10-plc-opcua.md) |
 | `namespace` | `urn:ekbpro:gateway` | Server only |
 | `publish_interval_ms` | `500` | Client only |
+| `timeout_s` | `10` | Client only |
+| `certificate`, `private_key` | client `var/opcua/client_cert.der`, `…/client_key.pem`; server `var/opcua/server_cert.der`, `…/server_key.pem` | Created automatically; used with `security` |
+| `server_certificate` | – | Client: pin the server's certificate (recommended with `security`) |
 
 Client tags name a node id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`); `./scada plc-browse` lists them.
 As a server, every gateway target becomes a variable, and dots or slashes in the name make folders:
@@ -123,7 +169,8 @@ gateways:
     from: meter1
     to: scada
     map:
-      - '*  -> Energi.Hovedtavle.{name}'        # every tag, under one folder
+      - Total active power -> Energi.Hovedtavle.Effekt      # a new name for each tag
+      - Total active energy -> Energi.Hovedtavle.Energi
 
   - name: KNX til MQTT
     from: knx
@@ -192,9 +239,9 @@ runs. In the TUI, **F11 Gateways** shows the connections (top), the tags of the 
 | Key | |
 |---|---|
 | `a` | New connection (choose the protocol, then a form with only the settings that apply) |
-| `e` / Enter | Edit the selected connection |
-| `g` / `G` | New gateway / edit the selected gateway |
-| `w` / Enter | Write a value to the selected tag |
+| `e` or Enter | Edit the selected connection |
+| `g` / `G` or Enter | New gateway / edit the selected gateway |
+| `w` or Enter | Write a value to the selected tag |
 | `r` | Re-read `protocols.yaml` |
 
 ## 5. Without KNX

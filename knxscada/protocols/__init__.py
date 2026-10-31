@@ -25,7 +25,7 @@ Overview of the package::
       mqtt.py       MQTT client (subscribe and publish)                – aiomqtt
       opcua.py      OPC UA client and server                           – asyncua
 
-Guide: ``docs/11-protocols-gateways.md``.
+Guide: ``docs/en/11-protocols-gateways.md``.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..i18n import N_
+from .devices import names as device_names
 
 #: Roles a connection can have. ``client`` = we talk to a device (master, client, subscriber);
 #: ``server`` = other systems talk to us (slave, server).
@@ -61,6 +62,7 @@ class Field:
     help: str = ""
     show: dict[str, tuple[str, ...]] = field(default_factory=dict)
     required: bool = False
+    blank: str = ""   # label of the empty choice (default: "automatic")
 
     def visible(self, values: dict[str, Any]) -> bool:
         """Whether the field applies, given the other settings (*values* merged with the defaults)."""
@@ -108,6 +110,9 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
         description=N_("Modbus TCP and RTU (RS485) – master (client) or slave (server)"),
         settings=(
             _ROLE,
+            Field("model", N_("Device"), "choice", "", ("", *device_names("modbus")),
+                  N_("Known equipment: its tags and serial settings come with it, and the device is identified "
+                     "after connecting. Empty = list the tags yourself"), show={"role": ("client",)}, blank=N_("none")),
             Field("transport", N_("Transport"), "choice", "tcp", ("tcp", "rtu", "rtu_over_tcp"),
                   N_("tcp: Modbus TCP · rtu: RS485/serial · rtu_over_tcp: RTU frames through a TCP converter")),
             Field("host", N_("IP address"), "str", "", help=N_("Server: the address to listen on, 0.0.0.0 = all"),
@@ -159,7 +164,8 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("topic", N_("Topic"), "str", "", help=N_("Empty = topic prefix + tag name")),
             _TYPE,
             Field("json_key", N_("JSON key"), "str", "", help=N_("Take the value from this key of a JSON payload")),
-            Field("set_topic", N_("Topic for writing"), "str", "", help=N_("Empty = <topic>/set")),
+            Field("set_topic", N_("Topic for writing"), "str", "",
+                  help=N_("Empty = the topic itself (tags found through subscribe: <topic>/set)")),
             _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION,
         ),
     ),

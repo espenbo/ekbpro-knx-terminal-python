@@ -63,19 +63,22 @@ Taken from a real installation, with the user interface in Norwegian (English is
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [Installation](docs/01-installation.md) | Requirements, installation, first test |
-| [Using your own KNX project](docs/02-own-project.md) | Export from ETS, `init`, what makes a good visualisation, customisation, KNX Secure |
-| [User guide](docs/03-user-guide.md) | All views, keys and functions |
-| [Configuration](docs/04-configuration.md) | Complete reference for `config.yaml`: alarm rules, language, several KNX interfaces and ETS projects, rooms from names |
-| [Operation and SSH](docs/05-operation-and-ssh.md) | systemd, multiple users, dedicated SSH user, security, backup |
-| [Floor plan](docs/06-floor-plan.md) | `plan.yaml` and DXF export |
-| [Troubleshooting](docs/07-troubleshooting.md) | Common problems and solutions |
-| [Docker](docs/09-docker.md) | Running in a container, e.g. on a WAGO PFC200/PFC300 |
-| [PLC bridge (OPC UA)](docs/10-plc-opcua.md) | Let a PLC read and write KNX: mapping, CODESYS GVL, security |
-| [Protocols and gateways](docs/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT and OPC UA as modules, gateways between them and KNX, running without KNX |
-| [Architecture](docs/08-architecture.md) | For developers: components, protocol, database, translations, tests, extensions |
+Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
+
+| English | Norsk | Contents |
+|---|---|---|
+| [Installation](docs/en/01-installation.md) | [Installasjon](docs/nb/01-installation.md) | Requirements, installation, first test |
+| [Using your own KNX project](docs/en/02-own-project.md) | [Eget KNX-prosjekt](docs/nb/02-own-project.md) | Export from ETS, `init`, what makes a good visualisation, customisation, KNX Secure |
+| [User guide](docs/en/03-user-guide.md) | [Brukerveiledning](docs/nb/03-user-guide.md) | All views, keys and functions |
+| [Configuration](docs/en/04-configuration.md) | [Konfigurasjon](docs/nb/04-configuration.md) | Complete reference for `config.yaml`: alarm rules, language, several KNX interfaces and ETS projects, rooms from names |
+| [Operation and SSH](docs/en/05-operation-and-ssh.md) | [Drift og SSH](docs/nb/05-operation-and-ssh.md) | systemd, multiple users, dedicated SSH user, security, backup |
+| [Floor plan](docs/en/06-floor-plan.md) | [Plantegning](docs/nb/06-floor-plan.md) | `plan.yaml` and DXF export |
+| [Troubleshooting](docs/en/07-troubleshooting.md) | [Feilsøking](docs/nb/07-troubleshooting.md) | Common problems and solutions |
+| [Docker](docs/en/09-docker.md) | [Docker](docs/nb/09-docker.md) | Running in a container, e.g. on a WAGO PFC200/PFC300 |
+| [PLC bridge (OPC UA)](docs/en/10-plc-opcua.md) | [PLS-bro (OPC UA)](docs/nb/10-plc-opcua.md) | Let a PLC read and write KNX: mapping, CODESYS GVL, security |
+| [Protocols and gateways](docs/en/11-protocols-gateways.md) | [Protokoller og gatewayer](docs/nb/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT and OPC UA as modules, gateways between them and KNX, running without KNX |
+| [Setup reference](docs/en/12-setup-reference.md) | [Oppsettsreferanse](docs/nb/12-setup-reference.md) | Everything to set the program up – also for AI assistants: complete examples, every key with type, default and valid values, tasks step by step, checks |
+| [Architecture](docs/en/08-architecture.md) | [Arkitektur](docs/nb/08-architecture.md) | For developers: components, protocol, database, translations, tests, extensions |
 
 ## Commands
 
@@ -101,7 +104,7 @@ All commands accept `-c path/to/config.yaml` (before the command). You can also 
 `F1` Overview · `F2` Rooms · `F3` Addresses · `F4` Monitor · `F5` Alarms · `F6` Log · `F7` Trends ·
 `F8` Plan · `F9` Screensaver · `F10` Quit · `F11` Gateways · `F12` About · `Ctrl+T` Colour theme · `Ctrl+L` Language · `/` Search
 
-More in the [user guide](docs/03-user-guide.md).
+More in the [user guide](docs/en/03-user-guide.md).
 
 ## Development
 
@@ -112,7 +115,7 @@ venv/bin/pip install -r requirements-dev.txt
 venv/bin/python -m pytest
 ```
 
-See [Architecture](docs/08-architecture.md) for the code structure and how to add translations.
+See [Architecture](docs/en/08-architecture.md) for the code structure and how to add translations.
 
 ## License
 

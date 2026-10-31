@@ -6,7 +6,7 @@
 millimetres with the origin in the top-left corner – the same orientation as
 a paper drawing. A room can be linked to an ETS room by name (``room:``) so
 the terminal view can show live temperature, lights and alarms inside it.
-See ``docs/06-floor-plan.md`` for the format.
+See ``docs/en/06-floor-plan.md`` for the format.
 
 The DXF export writes a minimal AutoCAD R12 ASCII file that practically every
 CAD program can open (LibreCAD, QCAD, FreeCAD, AutoCAD …). It is one-way: the

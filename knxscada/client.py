@@ -2,7 +2,7 @@
 # Copyright (C) 2026 EKB PRO
 """Asynchronous client for the SCADA server's Unix-socket API.
 
-The protocol is newline-delimited JSON (see ``docs/08-architecture.md``):
+The protocol is newline-delimited JSON (see ``docs/en/08-architecture.md``):
 
 * The client sends requests ``{"id": n, "cmd": "...", "user": "...", ...}``.
 * The server answers with ``{"type": "reply", "id": n, "ok": true, "data": ...}``.

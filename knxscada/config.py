@@ -5,7 +5,7 @@
 The configuration is a plain YAML file with the sections ``knx``,
 ``project``, ``server``, ``alarms``, ``ui`` and (optional) ``plc``. This module only parses the
 file and offers helpers for resolving paths; the meaning of the individual
-keys is documented in ``docs/04-configuration.md`` and in
+keys is documented in ``docs/en/04-configuration.md`` and in
 ``config.example.yaml``.
 
 Relative paths in the configuration are resolved against the directory that
@@ -88,7 +88,7 @@ class Config:
         ``project.files``. The group addresses of the first keep their plain form
         (``1/2/3``); those of the others get their prefix (``S:1/2/3``), because
         the projects may use the same addresses for different things.
-        See ``docs/04-configuration.md``.
+        See ``docs/en/04-configuration.md``.
         """
         items = self.project.get("files")
         if not items:

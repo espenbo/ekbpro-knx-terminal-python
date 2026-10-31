@@ -43,10 +43,11 @@ set `select: all` (or run `./scada plc-map --all`).
 
 | Field | Meaning |
 |---|---|
-| `use` | `true` = exchanged with the PLC (ignored with `select: all`). |
-| `dir` | `to_plc`: KNX → PLC, the PLC reads it. `to_knx`: PLC → KNX, the PLC writes it. `both`: both directions. |
+| `use` | `true` = exchanged with the PLC (ignored with `select: all`). Default `false`. |
+| `dir` | `to_plc`: KNX → PLC, the PLC reads it. `to_knx`: PLC → KNX, the PLC writes it. `both`: both directions. Left out = `to_plc`. |
 | `type` | IEC type of the PLC variable, from the DPT (see below). |
-| `var` | Name of the PLC variable. You may rename it; it must be a valid IEC identifier. |
+| `var` | Name of the PLC variable. You may rename it; it must be a valid IEC identifier (letters, digits, `_`, no `__`) and unique. |
+| `ga` | The group address. An address that is no longer in the ETS project stops the server with an error – run `./scada plc-map` after changing the project. |
 
 **Names from the system tags.** If the PLC already has its own KNX objects in ETS, named with the system tag
 (as the ST_KNX code generator does: `KNX_Linje_M1.M1_000_564_002_RT6101._01_Rom_SP`), set `plc.tag_prefix`

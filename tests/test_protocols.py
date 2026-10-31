@@ -710,7 +710,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_example_file_is_valid():
     data = pconfig.load_data(ROOT / "protocols.example.yaml")
     assert pconfig.validate(data, knx=True) == []
-    assert parse_address(data["connections"]["meter1"]["tags"]["Energi_total"]["address"]) == ("hr", 0x6000, None)
+    meter = pconfig.settings_of(data["connections"]["meter1"])   # tags from the device template
+    assert parse_address(meter["tags"]["Total active energy"]["address"]) == ("hr", 0x6000, None)
 
 
 def test_cli_modules_and_gateway(tmp_path, capsys):

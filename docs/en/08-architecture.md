@@ -4,7 +4,7 @@
 
 ```
 knxscada/
-  __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse
+  __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse, modules, gateway
   config.py       loading of config.yaml, path resolution
   prefs.py        per-user preferences (~/.config/knxscada/ui.json: colour theme, language)
   i18n.py         translation support: _(), N_(), set_language(), LANGUAGES
@@ -24,6 +24,14 @@ knxscada/
                   several PLCs (plc_configs)
   opcua_bridge.py OPC UA client to the PLC: sync, subscriptions, echo suppression, restart protection,
                   security
+  protocols/      protocol modules and gateways (docs/en/11-protocols-gateways.md)
+    __init__.py   registry: protocols, their settings and tag fields, module install
+    base.py       Tag and Driver (base class of every protocol), value conversion
+    config.py     protocols.yaml: load, validate (also device templates), save
+    gateway.py    gateway engine: renaming, scaling, direction, echo suppression, deadband, start-up rules
+    hub.py        runs the drivers in the server, keeps the values, talks to the TUI
+    knx.py, modbus.py, mqtt.py, opcua.py   the drivers
+    devices/      device templates (model: WAGO 879-3000 …): one YAML file per device family
   tui/
     app.py        the Textual app: menu, top bar, key bar, navigation, message handling
     views.py      Overview, Rooms, Group addresses, Bus monitor, Alarms, Events, Trends
@@ -33,6 +41,7 @@ knxscada/
     screensaver.py, splash.py (start-up logo and the About dialog)
     charts.py     plotext helpers (palette from theme, time axis, chart types)
     graphics.py   sparklines, bars, large digits
+    gateways.py   F11 Gateways: connections, tags, gateways and their forms
     home.py       summary per room (temperature, lights, heating, alarm)
     themes.py     colour themes
     app.tcss      style sheet
@@ -195,7 +204,8 @@ It lists strings used in the code that have no translation, and catalogue entrie
 The tests are in `tests/` and cover DPT conversion, alarm rules, the interpretation of ETS projects (also
 several projects and rooms from names), several KNX interfaces (routing, de-duplication), the store, the
 start-up rules (no telegrams), the TUI widgets, the PLC mapping, the OPC UA bridge against a real asyncua
-server (including PLC restart protection) and the Docker files.
+server (including PLC restart protection), the protocol modules and gateways against real Modbus, OPC UA and
+MQTT (`test_protocols.py`), the device templates (`test_devices.py`) and the Docker files.
 pytest is listed in `requirements-dev.txt`:
 
 ```bash

@@ -1,7 +1,8 @@
 # Connections and gateways – EKBPRO KNX Terminal Python
 #
-# Copy this file to protocols.yaml next to config.yaml (for a site: sites/<site>/protocols.yaml),
-# or build it in the user interface (F11 Gateways). Guide: docs/11-protocols-gateways.md
+# Copy this file to var/protocols.yaml next to config.yaml (for a site: sites/<site>/var/protocols.yaml;
+# config.yaml: server.protocols: var/protocols.yaml – the systemd service may only write in var/),
+# or build it in the user interface (F11 Gateways). Guide: docs/en/11-protocols-gateways.md
 #
 # Each protocol is a module; install the ones you use:  ./scada modules install modbus mqtt
 # Check the file:  ./scada gateway
@@ -12,25 +13,14 @@ connections:
   # The connection "knx" exists by itself when KNX is set up in config.yaml.
   # Its tags are the group addresses (1/2/3) or their unique ETS names.
 
-  # WAGO 879-30xx energy meter (4PU / 4PS / 2PU) on RS485, Modbus RTU. Factory setting: 9600 baud,
-  # 8 data bits, even parity, 1 stop bit (8E1), unit id 1. Values are float32, high word first (Float ABCD),
-  # read with function code 3. Register map: wagoEdgeStart/modbus_slaves/wago meter/wago_modbus_registers.csv.
+  # WAGO 879-3000 energy meter (879-3020 and 879-3040 have the same registers) on RS485, Modbus RTU.
+  # model: gives the 35 main values with the names from the WAGO manual and the serial settings
+  # (9600 baud, 8E1, unit id 1, every 5 s). After connecting, the meter's model, unit id, baud rate,
+  # parity and serial number are read and reported. Settings written here win over the template.
   meter1:
     protocol: modbus
-    transport: rtu
     device: /dev/ttyUSB0
-    baudrate: '9600'
-    parity: E
-    unit_id: 1
-    poll_ms: 5000
-    tags:
-      Spenning_L1: {address: 'hr:0x5002', type: float32, unit: V}
-      Spenning_L2: {address: 'hr:0x5004', type: float32, unit: V}
-      Spenning_L3: {address: 'hr:0x5006', type: float32, unit: V}
-      Frekvens: {address: 'hr:0x5008', type: float32, unit: Hz}
-      Strom_L1: {address: 'hr:0x500C', type: float32, unit: A}
-      Effekt_total: {address: 'hr:0x5012', type: float32, unit: kW}
-      Energi_total: {address: 'hr:0x6000', type: float32, unit: kWh}
+    model: WAGO 879-3000
 
   # A PLC or a heat pump over Modbus TCP.
   plc1:
@@ -56,8 +46,10 @@ gateways:
   - name: Energimåler til SCADA
     from: meter1
     to: scada
-    map:
-      - '*  -> Energi.Hovedtavle.{name}'           # every tag of the meter, under one folder
+    map:                                           # names from your tagging system
+      - Total active power -> Energi.Hovedtavle.Effekt
+      - Total active energy -> Energi.Hovedtavle.Energi
+      - L1 current -> Energi.Hovedtavle.Strom_L1
 
   - name: Anlegg til SCADA
     from: plc1

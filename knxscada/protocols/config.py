@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from ..i18n import _
-from . import PROTOCOLS, Field
+from . import PROTOCOLS, Field, devices
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -68,7 +68,7 @@ HEADER = """\
 # Edit this file by hand or in the user interface (F11 Gateways); the program keeps it tidy
 # when it saves it (comments other than this header are not kept).
 # The server picks up changes made in the user interface at once; after editing by hand,
-# restart it or press r in F11.  Guide: docs/11-protocols-gateways.md
+# restart it or press r in F11.  Guide: docs/en/11-protocols-gateways.md
 #
 # Mapping lines:  "source"  ·  "source -> new name"  ·  {from: …, to: …, direction: both, scale: 0.1}
 """
@@ -115,12 +115,33 @@ def link_text(link: dict[str, Any]) -> str | dict[str, Any]:
 
 
 def settings_of(conn: dict[str, Any]) -> dict[str, Any]:
-    """A connection's settings with the registry defaults filled in (``tags`` unchanged)."""
+    """A connection's settings with the defaults filled in: the registry's, then the device template's.
+
+    With ``model`` the template's tags come first and the connection's own ``tags`` are added
+    (:func:`.devices.apply`). An unknown model is left for :func:`validate` and the driver to report.
+    """
     p = PROTOCOLS.get(str(conn.get("protocol")))
     out: dict[str, Any] = {}
     if p is not None:
         out.update({f.key: f.default for f in p.settings if f.default is not None})
+    try:
+        conn = devices.apply(conn)
+    except ValueError:
+        pass
     out.update({k: v for k, v in conn.items() if v is not None})
+    return out
+
+
+def defaults_of(conn: dict[str, Any]) -> dict[str, Any]:
+    """The settings a connection gets when it leaves them out (registry, then device template)."""
+    p = PROTOCOLS.get(str(conn.get("protocol")))
+    out = {f.key: f.default for f in p.settings} if p else {}
+    try:
+        tpl = devices.find(conn.get("model"))
+    except ValueError:
+        tpl = None
+    if tpl is not None:
+        out.update(tpl.get("settings") or {})
     return out
 
 
@@ -183,10 +204,20 @@ def validate(data: dict[str, Any], knx: bool = False) -> list[str]:
         if role not in p.roles:
             errors.append(_("{where}: role {role} – {protocol} can be: {valid}").format(
                 where=where, role=repr(role), protocol=p.title, valid=", ".join(p.roles)))
+        try:
+            tpl = devices.find(conn.get("model"))
+        except ValueError as exc:
+            errors.append(f"{where}: {exc}")
+            tpl = None
+        if tpl is not None and tpl.get("protocol") != pname:
+            errors.append(_("{where}: {model} is a {protocol} device").format(
+                where=where, model=tpl["model"], protocol=tpl.get("protocol")))
         values = settings_of(conn)
         for f in p.settings:
             if f.required and f.visible(values) and not values.get(f.key):
                 errors.append(_("{where}: {key} is missing").format(where=where, key=f.key))
+            if f.key == "model":
+                continue   # checked above (a template name, any case)
             if (err := _check_value(f, conn.get(f.key))) is not None:
                 errors.append(f"{where}: {err}")
         tags = conn.get("tags") or {}
@@ -270,8 +301,7 @@ _Dumper.add_representer(_Flow, _flow_representer)
 
 def _clean(conn: dict[str, Any]) -> dict[str, Any]:
     """A connection as it is written: no empty values, no defaults, tags on one line each."""
-    p = PROTOCOLS.get(str(conn.get("protocol")))
-    defaults = {f.key: f.default for f in p.settings} if p else {}
+    defaults = defaults_of(conn)
     out: dict[str, Any] = {"protocol": conn.get("protocol")}
     for k, v in conn.items():
         if k in ("protocol", "tags") or v is None or v == "" or v == []:

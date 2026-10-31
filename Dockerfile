@@ -2,7 +2,7 @@
 # Copyright (C) 2026 EKB PRO
 #
 # EKBPRO KNX Terminal Python in a container – e.g. on a WAGO PFC200/PFC300 or any
-# Linux machine with Docker (amd64, arm64 or armv7). Guide: docs/09-docker.md
+# Linux machine with Docker (amd64, arm64 or armv7). Guide: docs/en/09-docker.md
 #
 # Code lives in /app, everything that belongs to *your* installation in /data
 # (a volume): config.yaml, the .knxproj, plan.yaml, the database and the socket.
@@ -34,7 +34,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore --prefer-binary -r requirements.txt
 
 COPY knxscada/ knxscada/
-# Protocol modules (docs/11-protocols-gateways.md): only their packages are installed, e.g. MODULES="modbus mqtt".
+# Protocol modules (docs/en/11-protocols-gateways.md): only their packages are installed, e.g. MODULES="modbus mqtt".
 ARG MODULES=""
 RUN if [ -n "$MODULES" ]; then PIP_NO_CACHE_DIR=1 PIP_ROOT_USER_ACTION=ignore python -m knxscada modules install $MODULES; fi
 COPY config.example.yaml plan.example.yaml protocols.example.yaml LICENSE ./

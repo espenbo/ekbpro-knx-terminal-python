@@ -15,7 +15,7 @@
 
 ## The server as a systemd service
 
-[`deploy/knxscada.service`](../deploy/knxscada.service) contains the placeholders `YOUR_USER` and `INSTALL_DIR`.
+[`deploy/knxscada.service`](../../deploy/knxscada.service) contains the placeholders `YOUR_USER` and `INSTALL_DIR`.
 Run this from the program directory as the user that owns it – it fills them in and installs the service:
 
 ```bash
@@ -31,13 +31,14 @@ clients are connected. The clients show "server lost" and reconnect by themselve
 If you run the server in a terminal, `Ctrl+C` stops it. A second `Ctrl+C` forces it to exit.
 
 The unit is hardened: the file system is read-only for the server except `var/`, it gets no new privileges and
-no capabilities, and its memory is limited to 1 GB.
+no capabilities, and its memory is limited to 1 GB. That is why `protocols.yaml` belongs in `var/`
+(`server.protocols: var/protocols.yaml`): only there can F11 save it.
 
 ### Several installations as services
 
 Several sites can run on one machine, each with its own server, socket and database. Put each in its own
 directory under `sites/` (ignored by git), e.g. `sites/cabin/config.yaml` with the project file next to it, and
-use the template [`deploy/knxscada@.service`](../deploy/knxscada@.service) – the part after `@` is the
+use the template [`deploy/knxscada@.service`](../../deploy/knxscada@.service) – the part after `@` is the
 directory name:
 
 ```bash

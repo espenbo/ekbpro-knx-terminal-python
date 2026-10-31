@@ -30,7 +30,7 @@ from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionLis
 from textual.widgets.option_list import Option
 
 from ..i18n import N_, _
-from ..protocols import PROTOCOLS, Field, installed
+from ..protocols import PROTOCOLS, Field, devices, installed
 from ..protocols.config import DIRECTIONS, link_text, parse_link
 from .views import View, hms
 from .widgets import FastTable
@@ -132,6 +132,7 @@ class ConnectionDialog(ModalScreen[dict | None]):
         self.name_ = name
         self.conn = dict(conn or {"protocol": protocol})
         self.new = not name
+        self._model = str(self.conn.get("model") or "")   # device template in the form
 
     def _value(self, f: Field) -> Any:
         v = self.conn.get(f.key)
@@ -174,7 +175,11 @@ class ConnectionDialog(ModalScreen[dict | None]):
         value = self._value(f)
         wid = f"f-{f.key}"
         if f.kind == "choice":
-            return Select([(c or _("automatic"), c) for c in f.choices], value=str(value) if value is not None else
+            choices = list(f.choices)
+            if value not in (None, "") and str(value) not in choices:
+                choices.append(str(value))   # e.g. a model written another way in the file: keep it
+            blank = _(f.blank) if f.blank else _("automatic")
+            return Select([(c or blank, c) for c in choices], value=str(value) if value is not None else
                           Select.NULL, allow_blank=False, id=wid)
         if f.kind == "bool":
             return Checkbox("", bool(value), id=wid)
@@ -187,8 +192,33 @@ class ConnectionDialog(ModalScreen[dict | None]):
         self.query_one("#f-name", Input).focus()
 
     @on(Select.Changed)
-    def _changed(self) -> None:
+    def _changed(self, event: Select.Changed) -> None:
+        if event.select.id == "f-model":
+            model = "" if event.value is Select.NULL else str(event.value)
+            if model != self._model:   # chosen by the user (not the initial value)
+                self._model = model
+                self._fill_from_model(model)
         self._update_visible()
+
+    def _fill_from_model(self, model: Any) -> None:
+        """A device was chosen: put its settings (serial settings, poll interval) in the form."""
+        try:
+            tpl = devices.find(model)
+        except ValueError:
+            return
+        if tpl is None:
+            return
+        for key, value in (tpl.get("settings") or {}).items():
+            try:
+                w = self.query_one(f"#f-{key}")
+            except Exception:  # noqa: BLE001 - a setting the form does not show
+                continue
+            if isinstance(w, Select):
+                w.value = str(value)
+            elif isinstance(w, Input):
+                w.value = str(value)
+        self.notify(_("{model}: {n} tags and the serial settings come from the device template").format(
+            model=tpl["model"], n=len(tpl.get("tags") or {})))
 
     def _read(self) -> dict[str, Any]:
         """The settings as they are in the form (empty fields left out)."""

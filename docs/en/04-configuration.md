@@ -1,7 +1,7 @@
 # Configuration (`config.yaml`)
 
 `config.yaml` lives in the program directory. Choose another file with `-c file.yaml` or `KNXSCADA_CONFIG=file.yaml`.
-Relative paths are resolved from the directory the file is in. The template is [`config.example.yaml`](../config.example.yaml).
+Relative paths are resolved from the directory the file is in. The template is [`config.example.yaml`](../../config.example.yaml).
 
 Changes to `knx`, `project`, `server`, `alarms` and `plc` require a restart of the server. Changes to `ui` require a
 restart of the visualisation. `ui.language` is also used by the server (for event log and alarm texts), so
@@ -11,6 +11,7 @@ restart the server as well when you change it.
 
 | Key | Default | Description |
 |---|---|---|
+| `enabled` | on when `knx:` or `project:` is filled in | `false` = run without KNX (only the connections and gateways of `protocols.yaml`; the TUI starts on F11) |
 | `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (discovery), `tunneling_secure`, `routing_secure` |
 | `gateway_ip` | – | IP address of the IP interface. Not needed for `routing` and `automatic`. |
 | `gateway_port` | `3671` | |
@@ -37,7 +38,7 @@ it, and the TUI shows one dot per interface in the top bar and the interface in 
 
 ```yaml
 knx:
-  keyring_file: MyProject.knxkeys      # keys at this level are defaults for every interface
+  keyring_file: MyProject.knxkeys      # see below which keys at this level are defaults for every interface
   interfaces:
     - name: house                      # short name, shown in the TUI and the event log
       connection: tunneling
@@ -51,8 +52,9 @@ knx:
 
 | Key (per interface) | Default | Description |
 |---|---|---|
-| `name` | `gateway_ip` | Letters, digits, `-`, `_`, `.`; at most 16 characters. |
-| `connection`, `gateway_ip`, `gateway_port`, `local_ip`, `route_back`, `individual_address`, `keyring_file`, `keyring_password`, `user_id` | | As above, for this interface. |
+| `name` | `gateway_ip`, else `knx1`, `knx2` … | Letters, digits, `-`, `_`, `.`; at most 16 characters; unique. |
+| `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`, `user_id`, `dedup_ms` | from the `knx:` level | As above, for this interface. These are the only keys taken from the `knx:` level. |
+| `gateway_ip`, `gateway_port`, `individual_address` | as in the table above | Per interface only – never taken from the `knx:` level. |
 | `addresses` | – | Group addresses whose telegrams are **sent** through this interface: a list of patterns, `*` matches anything (`"4/*"`, `"1/2/1?"`, `"3/1/0"`). |
 | `project` | first project | With several ETS projects (`project.files`): the project whose bus this interface is connected to. |
 | `default` | first interface of the project | The interface for addresses that no `addresses` pattern matches and that have not been seen yet. |
@@ -86,8 +88,9 @@ connected; operation works as long as the interface for that address is connecte
 | `file` | `project.knxproj` | Path to the `.knxproj` (or `.knxprojarchive`) |
 | `password` | – | Password if the project is protected |
 | `cache` | `var/project_cache.json` | The parsed project. Rebuilt automatically when the project file is newer, or when `files` or `rooms` change. |
-| `files` | – | Several ETS projects in one site, instead of `file` (see below) |
+| `files` | – | Several ETS projects in one site, instead of `file` (see below). `password` is then given per entry. |
 | `rooms` | – | Rooms from the group address names (see below) |
+| `extra_rooms` | – | Rooms of your own for addresses no ETS room holds (see [Extra rooms](#extra-rooms)) |
 
 `.knxprojarchive` files from ETS 6 can be used directly as well.
 
@@ -164,6 +167,9 @@ project:
           usage: light                # light | dimmer | heating | other (default: guessed)
 ```
 
+Defaults: `floor` = `Other`, `name` = `Room 1`, `Room 2` …, `usage` guessed from the addresses. With several ETS
+projects, the addresses of the second and later projects need their prefix (`S:3/0/35`).
+
 Each card is built like the cards from ETS: control and status addresses are paired by name (or by
 `status`), the DPT decides switch, dimmer, setpoint or value. A card with a temperature counts as the room
 temperature. Addresses that are not in the project stop the start with an error. The rooms are read from
@@ -205,7 +211,7 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 
 | Key (per entry in `files`) | Default | Description |
 |---|---|---|
-| `file` | required | Path to the `.knxproj` / `.knxprojarchive` |
+| `file` | required | Path to the `.knxproj` / `.knxprojarchive`. An entry can also be just the path as a string. |
 | `name` | `p1`, `p2` … | Used by `knx.interfaces[].project` |
 | `label` | the name | Shown in the TUI (floors, address tree) |
 | `prefix` | the name | Letters and digits. The first project never gets one. |
@@ -219,16 +225,18 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 | `socket` | `var/knxscada.sock` | Unix socket between server and visualisation |
 | `database` | `var/knxscada.db` | SQLite with telegrams, events and alarms. Demo mode uses `var/knxscada-demo.db`. |
 | `retention_days` | `90` | How long telegrams and events are kept. Old data is deleted every hour. Alarms are kept. |
-| `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`. Values from the database are never passed on to gateways. |
+| `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`, and `off`, `no`, `0` mean `false`. Any other value is taken as `status`. Values from the database are never passed on to gateways. |
 | `read_interval_ms` | `80` | Pause between the reads, so the bus is not overloaded |
+| `protocols` | `protocols.yaml` | Connections and gateways (Modbus, MQTT, OPC UA): see [Protocols and gateways](11-protocols-gateways.md). Use `var/protocols.yaml`, as `config.example.yaml` does: the systemd service may only write in `var/`, so F11 can only save the file there. |
 
-**Why reading at start-up is off by default, and `all` is not recommended.** A GroupValueRead on a *control*
+**Why `status` is the default, and `all` is not recommended.** A GroupValueRead on a *control*
 address (e.g. "Hall light switching") is answered by every device that has the read flag (R) on that address –
 also by a push button or logic module that still holds an old value. Actuators whose object has the update
 flag (U) treat such a response like a write, so a read can switch a light off. `status` therefore never reads
-an address that is used to control something; it only reads feedback, sensor and alarm addresses. With `false`
-the server sends nothing at start-up: it logs all bus traffic around the clock, so the last values in the
-database are normally up to date, and every value is refreshed with the next telegram.
+an address that is used to control something; it only reads feedback, sensor and alarm addresses, so the
+values are fresh right after a start. With `false` the server sends nothing at start-up: the last values from
+the database are shown dimmed and in italics ("not read yet") until the bus sends a new one, and they are never
+passed on to the PLC bridge or to gateways.
 
 The database grows with the traffic, approx. 115 bytes per telegram. At 1–2 telegrams/s that is approx. 10–20 MB
 per day, and 0.9–1.8 GB with `retention_days: 90`.
@@ -249,7 +257,9 @@ alarms:
     text: "Smoke alarm: {name}"     # {name}, {address}, {value}
 ```
 
-`address` is accepted as an alias for `match_address`. Placeholder addresses and addresses without any linked
+`address` is accepted as an alias for `match_address`. `dpt_main` must be a number (`1`, not `"1"`). A rule
+whose `condition` is none of the forms below is never active – there is no warning. A rule without `condition`
+uses `"true"`, without `text` the GA name. Placeholder addresses and addresses without any linked
 communication object are never monitored.
 
 | `condition` | Active when |
@@ -315,7 +325,9 @@ Optional. Exchanges KNX values with a PLC (e.g. CODESYS on a WAGO PFC). Guide: [
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Start the bridge with the server |
+| `enabled` | `false` | Start the bridge with the server. With `controllers` (below), each PLC is on unless it or `plc.enabled` says `false`. |
+| `name` | `plc` | Name of the PLC in the top bar and the event log |
+| `controllers` | – | Several PLCs (see below) |
 | `endpoint` | `opc.tcp://127.0.0.1:4840` | The PLC's OPC UA server |
 | `username`, `password` | – | User of the PLC runtime. Without `username` the connection is anonymous. |
 | `security` | `None` | `None`, or `<policy>,Sign` / `<policy>,SignAndEncrypt` with policy `Basic256Sha256`, `Aes128Sha256RsaOaep` or `Aes256Sha256RsaPss` |
@@ -324,7 +336,7 @@ Optional. Exchanges KNX values with a PLC (e.g. CODESYS on a WAGO PFC). Guide: [
 | `map` | `plc_map.yaml` | Which group addresses are exchanged, their direction and PLC variable names (`./scada plc-map`) |
 | `gvl` | `GVL_KNX` | Name of the GVL in the PLC. Only used when `plc_map.yaml` is first created; after that, `gvl:` at the top of `plc_map.yaml` counts. |
 | `gvl_file` | `<gvl>.st` | Where `./scada plc-map` writes the GVL |
-| `node_prefix`, `namespace` | found automatically | Node id prefix of the GVL variables (e.g. `\|var\|<device>.Application.GVL_KNX.`) and its namespace index – only needed if the automatic search does not find the GVL |
+| `node_prefix`, `namespace` | found automatically | Node id prefix of the GVL variables (e.g. `\|var\|<device>.Application.GVL_KNX.`) and its namespace index – only needed if the automatic search does not find the GVL. With `node_prefix` and no `namespace`, the namespace is `4`. |
 | `publish_interval_ms` | `200` | How often the PLC reports changes |
 | `min_interval_ms` | `200` | At most one KNX write per address in this time; the latest value wins |
 | `timeout_s` | `10` | Connection timeout |
@@ -353,6 +365,9 @@ plc:
       gvl: GVL_KNX_Board2
       # enabled: false                  # keep it configured, but do not connect
 ```
+
+`enabled` on a PLC wins; without it, `plc.enabled` counts, and without that the PLC is **on**. Give each PLC its own
+`gvl` – two PLCs with the default `GVL_KNX` would write the same `GVL_KNX.st`.
 
 Each PLC has its own mapping, by default `plc_map_<name>.yaml`, and its own GVL; `./scada plc-map` creates or
 updates all of them (`--plc board2` for one), `./scada plc-browse --plc board2` checks one. Every PLC reads and

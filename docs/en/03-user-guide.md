@@ -33,6 +33,7 @@ the logged-in user with IP, and a clock. In demo mode a yellow **DEMO** label is
 | `F8` | Floor plan |
 | `F9` | Screensaver |
 | `F10` | Quit |
+| `F11` | Gateways (connections, tags and gateways – see [Protocols and gateways](11-protocols-gateways.md)) |
 | `F12` | About |
 | `Ctrl+T` | Colour theme |
 | `Ctrl+L` | Language |
