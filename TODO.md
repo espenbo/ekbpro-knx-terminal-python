@@ -47,8 +47,10 @@ Gren: `feature/modulaer-protokoller`
 
 - [x] Filene kopiert til `sites/glommensgate1` (config, knxproj, plan, plc_map, GVL), tjenestefil og `migrate.sh`
 - [x] Kontrollert 2026-10-31: kopiene i `sites/glommensgate1` er identiske med filene i rotmappen
-- [ ] Kjøre `sudo bash sites/glommensgate1/migrate.sh` (krever sudo; laster den nye koden ved omstart)
-- [ ] Etterpå: sjekke at `knx-glommensgate1` virker, og at TUI-en på tty1 startes med `-c sites/glommensgate1/config.yaml`
+- [x] Kjørt `sudo bash sites/glommensgate1/migrate.sh` (2026-10-31 17:10). `knxscada-glommensgate1` kjører:
+      KNX og PLS (435 variabler) tilkoblet, `knx-glommensgate1` virker.
+- [ ] TUI-en på tty1 (startet manuelt 26.10 som `knxscada tui` uten `-c`) bruker fortsatt den gamle sokkelen
+      `var/knxscada.sock`, som er borte. Avslutt den på tty1 og start `knx-glommensgate1`.
 
 ## WAGO Edge (github.com/espenbo/wagoEdgeStart)
 
@@ -88,7 +90,8 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 - [x] Rettet: første skriving fra en ekstern klient til egen server (Modbus-slave, OPC UA-server) ble tolket som
       status og ikke sendt videre. Etter at en tilkobling er klar, er alle verdier endringer (unntak: Modbus-master,
       der en tagg som ikke kunne leses ved første polling, gir status når den leses).
-- [ ] De tre site-konfigurasjonene og `config.yaml` har `read_on_start: false` – endres til `status` (venter på ok)
+- [x] De tre site-konfigurasjonene har fått `read_on_start: status` (2026-10-31; `config.yaml` i rotmappen er
+      flyttet til `sites/glommensgate1`). Gjelder fra neste omstart av hver tjeneste.
 - [ ] Oversiktsskjermen (romkort med temperatur) viser ennå ikke gamle verdier i egen farge – bare
       funksjonskortene og gruppeadresselisten
 
@@ -104,7 +107,6 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 ## Neste steg (venter på avklaring)
 
 - Enhetsmaler (WAGO-måler, SolarLog) – format og navn
-- Migrere Glommensgate 1 (sudo)
 
 ## Runde 2
 
