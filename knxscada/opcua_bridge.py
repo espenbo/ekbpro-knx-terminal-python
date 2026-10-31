@@ -119,6 +119,39 @@ async def make_client(cfg: Config, p: dict[str, Any] | None = None):
     return client
 
 
+async def operation_limits(client, default: int = 100) -> tuple[int, int]:
+    """How many nodes the server takes per Read and per CreateMonitoredItems call.
+
+    Servers reject bigger requests with ``BadTooManyOperations`` (WAGO PFC: 100). The limits are read from
+    ``ServerCapabilities/OperationLimits``; 0 there means no limit, and *default* is used when they cannot be read.
+    """
+    from asyncua import ua
+
+    limits = []
+    for oid in (ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead,
+                ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxMonitoredItemsPerCall):
+        try:
+            n = int(await client.get_node(oid).read_value() or 0)
+        except Exception:  # noqa: BLE001 - not published by the server
+            n = default
+        limits.append(n if n > 0 else 1000)
+    return limits[0], limits[1]
+
+
+async def read_values(client, nodes: list, per_request: int) -> list:
+    """``read_attributes`` (DataValues) in batches of at most *per_request* nodes."""
+    values: list = []
+    for i in range(0, len(nodes), per_request):
+        values += await client.read_attributes(nodes[i:i + per_request])
+    return values
+
+
+async def subscribe(sub, nodes: list, per_call: int) -> None:
+    """``subscribe_data_change`` in batches of at most *per_call* monitored items."""
+    for i in range(0, len(nodes), per_call):
+        await sub.subscribe_data_change(nodes[i:i + per_call])
+
+
 async def ensure_certificate(cert: Path, key: Path) -> None:
     """Create a self-signed client certificate (valid for years) if it does not exist yet."""
     if cert.exists() and key.exists():
@@ -273,7 +306,7 @@ class PlcBridge:
         sub = await self.client.create_subscription(int(self.p.get("publish_interval_ms", 200)), handler)
         watch = [self.nodes[e.var] for e in self.entries if e.dir in ("to_knx", "both") and e.var in self.nodes]
         if watch:
-            await sub.subscribe_data_change(watch)
+            await subscribe(sub, watch, (await operation_limits(self.client))[1])
         self._set_connected(True)
         self.server.event("info", "plc", _("PLC (OPC UA) connected: {n} variables").format(n=len(self.nodes)) + self._tag)
         recheck = float(self.p.get("missing_recheck_s", 60))

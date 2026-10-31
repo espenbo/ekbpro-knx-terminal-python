@@ -605,6 +605,75 @@ def test_opcua_server_and_client_through_gateways(tmp_path):
     asyncio.run(run())
 
 
+def test_opcua_requests_split_at_the_server_limits():
+    """WAGO PFC servers take at most 100 nodes per Read / CreateMonitoredItems (BadTooManyOperations)."""
+    pytest.importorskip("asyncua")
+    from asyncua import ua
+
+    from knxscada.opcua_bridge import operation_limits, read_values, subscribe
+
+    class Node:
+        def __init__(self, value):
+            self.value = value
+
+        async def read_value(self):
+            if isinstance(self.value, Exception):
+                raise self.value
+            return self.value
+
+    class Client:
+        def __init__(self, limits):
+            self.limits, self.reads = limits, []
+
+        def get_node(self, oid):
+            return Node(self.limits.get(oid, RuntimeError("no such node")))
+
+        async def read_attributes(self, nodes):
+            self.reads.append(len(nodes))
+            return [f"dv{n}" for n in nodes]
+
+    class Sub:
+        def __init__(self):
+            self.calls = []
+
+        async def subscribe_data_change(self, nodes):
+            self.calls.append(len(nodes))
+
+    async def run():
+        ids = ua.ObjectIds
+        wago = Client({ids.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead: 100,
+                       ids.Server_ServerCapabilities_OperationLimits_MaxMonitoredItemsPerCall: 100})
+        assert await operation_limits(wago) == (100, 100)
+        assert await operation_limits(Client({})) == (100, 100)                       # not published → default
+        assert await operation_limits(Client({ids.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead: 0}),
+                                      ) == (1000, 100)                                 # 0 = no limit
+        nodes = list(range(250))
+        assert await read_values(wago, nodes, 100) == [f"dv{n}" for n in nodes]
+        assert wago.reads == [100, 100, 50]
+        sub = Sub()
+        await subscribe(sub, nodes, 100)
+        assert sub.calls == [100, 100, 50]
+
+    asyncio.run(run())
+
+
+def test_opcua_client_rounds_float32(tmp_path):
+    """A REAL in the PLC is shown as 16.6, not 16.600000381469727 (as the BACnet client does)."""
+    pytest.importorskip("asyncua")
+    from asyncua import ua
+
+    from knxscada.protocols.opcua import Driver as UaDriver
+
+    hub = Hub(FakeServer(tmp_path))
+    drv = UaDriver("ua", {"protocol": "opcua", "role": "client", "tags": {"T": {"node": "ns=4;s=T"},
+                                                                          "D": {"node": "ns=4;s=D"}}}, hub)
+    drv.vtypes = {"T": ua.VariantType.Float, "D": ua.VariantType.Double}
+    drv.publish(drv.tags["T"], 16.600000381469727)
+    drv.publish(drv.tags["D"], 16.600000381469727)
+    assert hub.values["ua/T"]["v"] == 16.6
+    assert hub.values["ua/D"]["v"] == 16.600000381469727
+
+
 # -- KNX as a protocol: the real server (demo bus), a Modbus slave and a master on the other side ------------
 @pytest.fixture
 def knx_server(tmp_path):

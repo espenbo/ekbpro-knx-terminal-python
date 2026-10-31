@@ -125,6 +125,12 @@ class Driver(BaseDriver):
             tag.address = name
         return tag
 
+    def publish(self, tag: Tag, raw: Any, quality: str = "good") -> None:
+        vt = self.vtypes.get(tag.name)
+        if isinstance(raw, float) and vt is not None and vt.name == "Float":   # float32: 16.6, not 16.600000381469727
+            raw = float(f"{raw:.7g}")
+        super().publish(tag, raw, quality)
+
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         if self.role != "server":
             return super().create_tag(name, spec)
@@ -157,7 +163,7 @@ class Driver(BaseDriver):
 
     # -- client -----------------------------------------------------------------------------------
     async def _client_session(self) -> None:
-        from ..opcua_bridge import make_client
+        from ..opcua_bridge import make_client, operation_limits, read_values, subscribe
 
         self.client = await make_client(self.hub.server.cfg, self.settings)
         await self.client.connect()
@@ -182,14 +188,15 @@ class Driver(BaseDriver):
         if self.nodes:
             # Read every node once, so the statuses are known before gateways may write here.
             names = list(self.nodes)
-            for name, dv in zip(names, await self.client.read_attributes([self.nodes[n] for n in names])):
+            per_read, per_call = await operation_limits(self.client)
+            for name, dv in zip(names, await read_values(self.client, [self.nodes[n] for n in names], per_read)):
                 tag = self.tags[name]
                 if dv.StatusCode is not None and not dv.StatusCode.is_good():
                     self.hub.update(self.name, name, None, "bad")
                 else:
                     self.publish(tag, dv.Value.Value if dv.Value is not None else None)
             sub = await self.client.create_subscription(int(self.settings.get("publish_interval_ms") or 500), _Handler(self))
-            await sub.subscribe_data_change(list(self.nodes.values()))
+            await subscribe(sub, list(self.nodes.values()), per_call)
         self.set_ready()
         while not self._stop and not self.lost.is_set():
             with contextlib.suppress(asyncio.TimeoutError):

@@ -162,3 +162,55 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 - [ ] `./scada plan-wizard`: plantegningsveiviseren som egen kommando. Pillow blir en valgfri modul
       (`./scada modules install plan-image`).
 - [ ] `install.sh` i repoet: én kommando på en ny maskin (apt-pakker, git clone, venv, `./scada setup`)
+
+## Lerkeveien 2 fra Ignition-backup (startet 2026-10-31)
+
+Kilde: `tmp/Ignition/…-1919.gwbk` er avkortet (197 MB, mangler zip-katalog). Brukeren kopierer inn `…-19191.gwbk` (22:43). Utpakker: `scratchpad/scripts/stream_unzip.py` (leser lokale headere). Pakkes ut i scratchpad, ikke i repoet.
+Mål: oppdatere `sites/lerkeveien2` (romnavn, plan, ventilasjon, anleggsoversikt) med det Ignition vet.
+
+- [x] Pakket ut den avkortede `…-1919.gwbk` (8726 filer, `projects/Lerkeveien_2` er hel) til
+      `scratchpad/gwbk`; kopi av prosjekt, tagger (provider `Lerkeveien2`) og UDT-er i `scratchpad/lv2/`.
+      Scratchpad forsvinner med økten – det viktige skrives inn her.
+- [ ] Kartlegge (pågår). Funnet:
+  - OPC UA `360_001` = opc.tcp://192.168.138.80:4840 (WAGO 750-8202 PFC200, `PFC200-42B366`): ventilasjon 1. etg
+    OG `GVL_KNX` med romtaggene `BY_564_00x_RT6xxx_{T_PV,T_SP,T_CSP,V_OP,HVAC,T_AL}`, DALI OS101/OS201, XG101
+  - OPC UA `LV2_360_002_OS001` = opc.tcp://192.168.138.87:4840 (`LV2-360-002-OS001`): ventilasjon 2. etg
+  - Modbus TCP `LV2_360_003` 192.168.138.250:502: OJ Electronics-aggregat sidebygg
+  - Modbus TCP `LV2_Modbus_EnergyMeters` 192.168.138.88:502 (reverseWordOrder): WAGO-målere unit 4 = 360_001,
+    3 = 360_002, 2 = Storm Elektro stigeledning fra HF. `LV2_Modbus_Nettanalysator` .88:502 (CVM-C10)
+  - Modbus TCP `LV2_542_001_OS001` 192.168.138.90:**501**
+  - Zaptec (API), AirThings (API), strømpris NO1
+  - Ignition-prosjektet har egen `site-config.json`, Funksjonsbeskrivelse (md), KNX-GA-lister hovedbygg/sidebygg (csv)
+  - `plc.endpoint: 192.168.1.247` i `sites/lerkeveien2/config.yaml` er PLS-en i Glommensgate 1, men broen er tilkoblet
+    346 variabler der (GVL_KNX_Lerkeveien er lastet ned i den PLS-en) – med vilje, ikke rør. Spør brukeren.
+  - Alle PLS-ene svarer herfra (Tailscale): .80:4840, .87:4840, .250:502, .88:502 (ikke .90:501).
+    Innlogging admin + passordet fra `plc:` i config.yaml virker på .80 og .87. 428 av 430 OPC-noder lest OK
+    (feil: `BY_564_001_KalenderOutput`, `BY_360_001_SD_Kal`). Node: `ns=4;s=|var|<PLS-type>.Application.GVL_Ventilasjon.<navn>`
+    (.80 = `WAGO 750-8202 PFC200 2ETH RS`, .87 = `WAGO 750-8212 PFC200 G2 2ETH RS`).
+- [x] `sites/lerkeveien2/var/protocols.yaml` laget (2026-10-31 23:00), bare lesing, ingen gatewayer. Prøvd med en
+      egen Hub mot anlegget (ikke tjenesten) – alle verdier Good:
+  - `vent_360_001` (112 tagger) og `vent_360_002` (107): GVL_Ventilasjon + skalare kalendertagger. Ikke med:
+    tabeller (ukedager), DateTime, de to nodene som mangler.
+  - `vent_360_003` (96): OJ fra UDT-ene, Ignition-adresse − 1, `int16`, skala 0,01 der Ignition har Linear 1000→10.
+    Enhetene på trykk-/mengdesettpunktene er rotete i Ignition (m3/h på trykk) – kontroller mot OJ-dokumentasjon.
+  - `energi_360_001` (unit 4, 879-3020), `energi_360_002` (unit 3, 879-3020), `energi_storm` (unit 2, 879-3040):
+    malen passer nøyaktig (0x5002 big = spenning). RS485 bak gatewayen er 9600 8N1. Spenning L-N ~145 V på 360-målerne,
+    249 V på Storm – IT-nett? kontroller.
+  - CVM-C10 (`LV2_Modbus_Nettanalysator`, .88 unit 1): unntak 4 på både IR og HR – ikke med (avklar).
+  - Generator: `scratchpad/scripts/make_protocols.py` (forsvinner med økten).
+- [x] Rettet i koden: OPC UA-klienten leste/abonnerte alle noder i ett kall → `BadTooManyOperations` på WAGO
+      (grense 100). Nå i bolker etter `OperationLimits` (`opcua_bridge.operation_limits/read_values/subscribe`),
+      også i PLS-broen. float32 fra OPC UA rundes til 7 siffer. 2 nye tester.
+- [ ] Tjenesten `knxscada-lerkeveien2` laster filen ved omstart / «last inn på nytt» i F11 – spør brukeren først.
+- [x] Romnavnene i `config.yaml` = UDT-parameteren `Rom` i Ignition (RT61xx/62xx) – ingen endring. Ignition-feil:
+      TFM-parameteren er `=564.002-RT6101` på RT6104/05/07/08/10 (står i Avklaringsliste A07). RT6209 «Gang» er med i
+      taggene, men utelatt i Ignitions romanalyse – avklar om det er en ekte regulator. AirThings-føleren står i RT6205.
+- [x] `config.yaml` (Lerkeveien): kommentar øverst om ventilasjon, målere og hva som ikke er med.
+- [x] Grunnlaget lagret i `sites/lerkeveien2/ignition/` (README, tagger, live-lesing, UDT-er, funksjonsbeskrivelse,
+      csv-er, generatorskript) – overlever økten, ikke i git.
+- [ ] Neste: alarmer for ventilasjon (28 Ignition-tagger har alarmer, se `Alarmoversikt_WAGO.csv`) – `alarms:` gjelder
+      i dag bare KNX. Skriving (settpunkt, systemvender) når brukeren vil. Plantegning: ikke endret.
+- [ ] Spørsmål til brukeren: omstart av `knxscada-lerkeveien2`? Skal PLS-broen fortsatt gå mot 192.168.1.247?
+      CVM-C10 – er den frakoblet? Spenning ~145 V L-N på 360-målerne (IT-nett?).
+- [ ] Finne Lerkeveien 2: tagger, ventilasjonsanlegg (360.xxx), rom, popup-er
+- [ ] Oppdatere `sites/lerkeveien2` og notere hva som ble endret her
