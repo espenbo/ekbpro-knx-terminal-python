@@ -64,6 +64,7 @@ the program folder. Without a command, `tui` starts.
 | `modules` | `install NAME …` | Lists the protocol modules, or installs them |
 | `gateway` | | Checks `protocols.yaml`, with live status when the server runs |
 | `simulate [MODEL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Plays a device template as a Modbus slave, for tests without equipment; without a model it lists the templates |
+| `bacnet-scan [ADDRESS]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Without an address: the BACnet devices on the network (Who-Is); with one: the objects of the device, `--yaml` as a connection for `protocols.yaml` |
 
 `./setup.sh [modbus mqtt opcua]` creates `venv/`, installs the packages (and the named protocol modules) and runs
 `./scada import` when `config.yaml` exists.
@@ -422,7 +423,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 ```yaml
 connections:
   meter1:                             # name: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" is reserved
-    protocol: modbus                  # modbus | mqtt | opcua
+    protocol: modbus                  # modbus | mqtt | opcua | bacnet
     role: client                      # client (master) | server (slave)
     model: WAGO 879-3000              # optional device template (list: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
@@ -475,6 +476,27 @@ connections:
     endpoint: opc.tcp://0.0.0.0:4841  # left out = only this machine (127.0.0.1)
     namespace: urn:ekbpro:gateway
 
+  ahu1:
+    protocol: bacnet
+    role: client
+    address: 192.168.1.40             # or device_id: 40 (Who-Is); 2:5 = MS/TP 5 behind a router on network 2
+    local_address: 192.168.1.10/24    # empty = this machine
+    poll_ms: 5000
+    timeout_s: 3
+    cov: true                         # also COV subscriptions
+    priority: 8                       # empty = the device's default (16)
+    tags:
+      Supply air: {object: ai:1, unit: °C}
+      Fan on: {object: bo:1, priority: 12}
+
+  bms:
+    protocol: bacnet
+    role: server
+    device_instance: 1001             # required, unique on the network
+    device_name: Gateway building A
+    local_address: 192.168.1.10/24    # port 47808
+    # bbmd: 10.0.0.1:47808             # register as a foreign device
+
 gateways:
   - name: Meter to SCADA              # unique
     from: meter1                      # connection names (knx exists when KNX is on)
@@ -494,7 +516,7 @@ gateways:
 
 ### Keys of `protocols.yaml`
 
-Connection settings for **Modbus**, **MQTT** and **OPC UA**: see the tables in
+Connection settings for **Modbus**, **MQTT**, **OPC UA** and **BACnet**: see the tables in
 [Protocols and gateways](11-protocols-gateways.md#2-connections) – they are complete there. In short:
 
 | Tag key | Protocols | Default | Valid values |
@@ -507,6 +529,9 @@ Connection settings for **Modbus**, **MQTT** and **OPC UA**: see the tables in
 | `heartbeat_s` | Modbus master | – (off) | seconds; writes 1, 2, 3 … to the tag (device watchdog) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefix + name, –, the topic itself | |
 | `node` | OPC UA | the tag name | node id |
+| `object`, `property` | BACnet | client: required, `present-value`; server: the next free number | `av:3`, `bi:1`, `analog-value,3`; a property name |
+| `priority` | BACnet client | the connection's | 1–16 |
+| `states`, `cov_increment` | BACnet server | `16`, `0.1` | for `msv`/`msi` and analog objects |
 | `scale`, `offset` | all | – | value = raw × scale + offset |
 | `unit`, `description` | all | – | |
 | `writable` | all | `true` (Modbus `ir`/`di` read-only unless `write_address`) | |

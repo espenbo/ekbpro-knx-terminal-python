@@ -1,6 +1,6 @@
-# Protocols and gateways (Modbus, MQTT, OPC UA)
+# Protocols and gateways (Modbus, MQTT, OPC UA, BACnet)
 
-Besides KNX the server can talk Modbus, MQTT and OPC UA, and move values between them. All protocols are equal:
+Besides KNX the server can talk Modbus, MQTT, OPC UA and BACnet/IP, and move values between them. All protocols are equal:
 KNX is one module among the others, and the server also runs **without KNX**, e.g. as a plain Modbus → OPC UA
 gateway on a WAGO Edge computer.
 
@@ -26,7 +26,7 @@ Each protocol is a module with its own Python packages. They are only installed 
 
 ```bash
 ./scada modules                       # which modules exist, are installed and are used
-./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua
+./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua · bacnet: bacpypes3
 ```
 
 Restart the server afterwards. A connection whose module is missing is shown in F11 and in `./scada gateway`
@@ -38,8 +38,9 @@ with the command that installs it; the other connections run anyway.
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | subscribe and publish to a broker      | –                                           |
 | `opcua`  | client of a PLC or another server      | our own OPC UA server for SCADA systems     |
+| `bacnet` | BACnet/IP client of a device (read, write, COV) | our own BACnet device for BMS/SCADA systems |
 
-BACnet/IP, MQTT Sparkplug B and Matter are planned.
+MQTT Sparkplug B and Matter are planned.
 
 ## 2. Connections
 
@@ -227,6 +228,73 @@ Client tags name a node id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`); `.
 As a server, every gateway target becomes a variable, and dots or slashes in the name make folders:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. The node id is the name, so it stays
 the same when the server restarts. Targets with `direction: both` are writable.
+
+### BACnet/IP
+
+| Setting | Default | |
+|---|---|---|
+| `role` | `client` | `client` of one BACnet device, or `server`: our own BACnet device for BMS/SCADA systems |
+| `address` | | Client: the device – `192.168.1.20`, `192.168.1.20:47809`, or `2:5` (MS/TP device 5 behind a router on network 2) |
+| `device_id` | | Client: the device's instance; with an empty `address` the device is found with Who-Is |
+| `device_instance` | required | Server: our device's instance, 0–4194302, unique on the BACnet network |
+| `device_name` | `knxscada <connection>` | Server |
+| `local_address` | this machine | Our IP address with prefix, e.g. `192.168.1.10/24` (the prefix gives the broadcast address) |
+| `local_port` | server `47808`, client any free port | Our UDP port. Two BACnet connections must not share one |
+| `poll_ms` | `5000` | Client |
+| `timeout_s` | `3` | Client: one retry, so a device that is off is noticed after about 6 s |
+| `cov` | `false` | Client: also subscribe to changes of the present values (COV); polling goes on as a fallback |
+| `cov_lifetime_s` | `300` | Client: renewed by itself |
+| `max_per_request` | `20` | Client: properties in one ReadPropertyMultiple (one by one when the device does not support it) |
+| `priority` | device default (16) | Client: write priority 1–16 |
+| `bbmd`, `bbmd_ttl` | –, `300` | Register as a foreign device with a BBMD (`ip:port`) to reach another subnet |
+
+Tags name an object: `object: av:3` (short names `ai ao av bi bo bv msi mso msv csv iv piv lav acc`; the long
+`analog-value,3` works too) and, when it is not the present value, a `property:` (`status-flags`,
+`out-of-service` …). On/off objects give `true`/`false`, multi-state objects 1, 2, 3 …. A tag can have its own
+write `priority`. Inputs (`ai`, `bi`, `msi`) are read-only unless the tag says `writable: true`.
+
+```yaml
+  ahu1:
+    protocol: bacnet
+    address: 192.168.1.40
+    cov: true
+    priority: 8
+    tags:
+      Supply air: {object: ai:1, unit: °C}
+      Setpoint: {object: av:10, unit: °C}
+      Fan on: {object: bo:1}
+      Mode: {object: msv:2}
+```
+
+#### Find devices and objects (`./scada bacnet-scan`)
+
+```sh
+./scada bacnet-scan                          # Who-Is: instance, address, name and vendor of every device
+./scada bacnet-scan 192.168.1.40             # the objects of one device: name, present value, unit, description
+./scada bacnet-scan --device 40              # the same, found by its instance
+./scada bacnet-scan 192.168.1.40 --yaml      # a connection for protocols.yaml with every object as a tag
+```
+
+Who-Is uses UDP port 47808, because devices answer with a broadcast to that port. It can share the port with our
+own BACnet device when the server runs as the same user; otherwise stop the server or the scan finds nothing.
+Reading one device uses any free port. `--local 192.168.1.10/24` chooses the network card, `--bbmd` reaches another
+subnet. The `--yaml` tags are named after the object names – rename them in the gateway.
+
+As a **server**, every gateway target becomes an object named after the target: numbers → `analog-value`,
+on/off → `binary-value`, text → `characterstring-value`, with the unit from the source (°C, %, W, kWh …). Its
+instance number is saved in `var/bacnet/<connection>.json` and kept when the server restarts or gateways change;
+a number is never given to another target. Give it yourself in the gateway line when the BMS has a list:
+`{from: 1/1/1, to: Rom101.Lys, object: bv:101}` – also `ai`/`bi` for values the BMS may not write, and `msv` with
+`states: 4`. Targets with `direction: both` are writable (the present value only); the BMS's value goes back to the
+source. COV subscribers are told about changes (`cov_increment`, default 0.1, for analog objects).
+
+```yaml
+  bms:
+    protocol: bacnet
+    role: server
+    device_instance: 1001
+    local_address: 192.168.1.10/24
+```
 
 ### KNX
 

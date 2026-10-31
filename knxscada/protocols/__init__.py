@@ -24,6 +24,7 @@ Overview of the package::
       modbus.py     Modbus TCP and RTU (RS485), master and slave       – pymodbus
       mqtt.py       MQTT client (subscribe and publish)                – aiomqtt
       opcua.py      OPC UA client and server                           – asyncua
+      bacnet.py     BACnet/IP client and device                        – bacpypes3
 
 Guide: ``docs/en/11-protocols-gateways.md``.
 """
@@ -204,7 +205,53 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             _TYPE, _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION,
         ),
     ),
-    Protocol("bacnet", "BACnet/IP", None, planned=True, description=N_("Planned")),
+    Protocol(
+        "bacnet", "BACnet/IP", "knxscada.protocols.bacnet",
+        packages=("bacpypes3>=0.0.100",), imports=("bacpypes3",),
+        roles=("client", "server"),
+        description=N_("BACnet/IP – client of a BACnet device, or our own BACnet device for BMS/SCADA systems"),
+        settings=(
+            _ROLE,
+            Field("address", N_("Device address"), "str", "",
+                  help=N_("192.168.1.20, 192.168.1.20:47809, or 2:5 (MS/TP device 5 behind a router on network 2). "
+                          "Empty = find device_id with Who-Is"), show={"role": ("client",)}),
+            Field("device_id", N_("Device instance"), "int", None,
+                  help=N_("The device's instance number – needed when the address is empty"),
+                  show={"role": ("client",)}),
+            Field("device_instance", N_("Our device instance"), "int", None, required=True,
+                  help=N_("0–4194302, unique on the BACnet network"), show={"role": ("server",)}),
+            Field("device_name", N_("Our device name"), "str", "", help=N_("Empty = knxscada <connection>"),
+                  show={"role": ("server",)}),
+            Field("local_address", N_("Local address"), "str", "",
+                  help=N_("Our IP address with prefix, e.g. 192.168.1.10/24. Empty = the address of this machine")),
+            Field("local_port", N_("Local UDP port"), "int", None,
+                  help=N_("Empty = 47808 for our device, any free port for a client")),
+            Field("poll_ms", N_("Poll interval (ms)"), "int", 5000, show={"role": ("client",)}),
+            Field("timeout_s", N_("Timeout (s)"), "float", 3, show={"role": ("client",)}),
+            Field("cov", N_("Subscribe to changes (COV)"), "bool", False,
+                  help=N_("Changes arrive at once; polling goes on as a fallback"), show={"role": ("client",)}),
+            Field("cov_lifetime_s", N_("COV lifetime (s)"), "int", 300, show={"role": ("client",)}),
+            Field("max_per_request", N_("Properties per request"), "int", 20,
+                  help=N_("At most this many in one ReadPropertyMultiple"), show={"role": ("client",)}),
+            Field("priority", N_("Write priority"), "choice", "", ("", *(str(n) for n in range(1, 17))),
+                  N_("1 highest – 16 lowest; empty = the device's default (16)"), show={"role": ("client",)},
+                  blank=N_("default")),
+            Field("bbmd", N_("BBMD"), "str", "",
+                  help=N_("Register as a foreign device with this BBMD (ip:port) to reach another subnet")),
+            Field("bbmd_ttl", N_("BBMD registration (s)"), "int", 300),
+        ),
+        tag_fields=(
+            Field("object", N_("Object"), "str", "",
+                  help=N_("av:3, bi:1, msv:2, analog-value,3 … · our device: empty = the next free number")),
+            Field("property", N_("Property"), "str", "", help=N_("Empty = present-value")),
+            _TYPE, _SCALE, _OFFSET, _UNIT,
+            Field("priority", N_("Write priority"), "int", None, help=N_("Empty = the connection's")),
+            Field("states", N_("Number of states"), "int", None, help=N_("Our multi-state objects (msv/msi), default 16")),
+            Field("cov_increment", N_("COV increment"), "float", None,
+                  help=N_("Our analog objects: the change that is sent to COV subscribers, default 0.1")),
+            _WRITABLE, _DESCRIPTION,
+        ),
+    ),
     Protocol("sparkplug", "MQTT Sparkplug B", None, planned=True, description=N_("Planned")),
     Protocol("matter", "Matter", None, planned=True, description=N_("Planned")),
 )}

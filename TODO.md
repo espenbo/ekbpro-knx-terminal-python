@@ -125,7 +125,22 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
 
 ## Runde 2
 
-- [ ] BACnet/IP (klient og enhet)
+- [x] BACnet/IP (2026-10-31, `knxscada/protocols/bacnet.py`, bacpypes3): klient mot én enhet (adresse, eller
+      `device_id` med Who-Is; ReadPropertyMultiple med reserve én og én; COV med `cov: true`; skriveprioritet) og
+      vår egen BACnet-enhet (gatewaymål → av/bv/csv, også ai/bi/msv med `object:`; instansnumre lagres i
+      `var/bacnet/<tilkobling>.json` og gjenbrukes aldri; BMS kan bare skrive nåverdien til mål med
+      `direction: both`). Klienten bruker en ledig UDP-port, enheten 47808. 21 tester i `tests/test_bacnet.py`.
+      Ikke prøvd mot ekte utstyr ennå.
+  - [x] `./scada bacnet-scan` (2026-10-31): Who-Is på nettet (port 47808), objektlisten til én enhet med navn,
+        nåverdi, enhet og beskrivelse (`ADRESSE` eller `--device N`), `--yaml` gir en tilkobling for
+        `protocols.yaml`. Prøvd mot WAGO-PLS-en i Glommensgate 1 (enhet 188126, 192.168.1.5): 2 av + 8 filobjekter.
+        float32-verdier rundes til 7 siffer (1.688, ikke 1.687999963760376) – også i klienten.
+  - [ ] Prøve mot et ekte SD-anlegg/aggregat (WAGO BACnet, Schneider, Siemens …)
+    - [x] Lesing mot WAGO 750-8212 i Glommensgate 1 (2026-10-31): identifisering, ReadPropertyMultiple, andre
+          egenskaper (`status-flags` → tom tekst = ingen flagg, ellers `in-alarm;overridden`; `model-name`) og
+          COV (`poll_ms: 60000`, fire endringer på 40 s kom med COV). Ingen feil.
+    - [ ] Skriving med prioritet mot ekte utstyr – trenger et testobjekt (av/bv) i PLS-en som det er trygt å skrive til
+    - [ ] Vår BACnet-enhet lest av et ekte SD-anlegg (Who-Is, objektliste, COV, skriving tilbake)
 - [ ] MQTT Sparkplug B
 - [ ] Matter
 - [ ] Trender og logging for tagger fra andre protokoller enn KNX
@@ -140,6 +155,7 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
       (fil på maskinen, opplasting med scp/SFTP eller URL), tilkoblingstype og IP-grensesnitt, prøver
       passordet på nytt ved feil, og spør hvilke protokollmoduler som skal installeres. Den skal også fungere
       uten KNX.
+- [ ] Utvid installasjons skriptet til og spørre om modbus enheter, bacnet enheter, opc/ua osv. Også mulighet til og søke etter dem
 - [ ] `./scada init --keyring FIL --keyring-password …` i stedet for at skriptet erstatter tekst i `config.yaml`
 - [ ] `./scada service install|remove|status`: lager systemd-tjenesten fra `deploy/knxscada.service`
       (bruker, gruppe og katalog fylles inn), starter den og viser loggen

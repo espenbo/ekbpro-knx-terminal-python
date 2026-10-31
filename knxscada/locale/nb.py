@@ -755,4 +755,70 @@ CATALOGUE: dict[str, str] = {
     "write_address {address}: a coil is written as a bool, a register as a number":
         "write_address {address}: en coil skrives som av/på, et register som et tall",
     "{connection}: heartbeat {tag}: {error}": "{connection}: livstegn {tag}: {error}",
+    "BACnet/IP – client of a BACnet device, or our own BACnet device for BMS/SCADA systems":
+        "BACnet/IP – klient mot en BACnet-enhet, eller vår egen BACnet-enhet for SD-anlegg og SCADA",
+    "Device address": "Enhetsadresse",
+    "Device instance": "Enhetsinstans",
+    "Our device instance": "Vår enhetsinstans",
+    "Our device name": "Vårt enhetsnavn",
+    "Local address": "Lokal adresse",
+    "Local UDP port": "Lokal UDP-port",
+    "Subscribe to changes (COV)": "Abonner på endringer (COV)",
+    "COV lifetime (s)": "COV-levetid (s)",
+    "Properties per request": "Egenskaper per forespørsel",
+    "Write priority": "Skriveprioritet",
+    "1 highest – 16 lowest; empty = the device's default (16)": "1 høyest – 16 lavest; tom = enhetens standard (16)",
+    "BBMD": "BBMD",
+    "BBMD registration (s)": "BBMD-registrering (s)",
+    "Object": "Objekt",
+    "Property": "Egenskap",
+    "Number of states": "Antall tilstander",
+    "COV increment": "COV-endring",
+    "192.168.1.20, 192.168.1.20:47809, or 2:5 (MS/TP device 5 behind a router on network 2). "
+    "Empty = find device_id with Who-Is":
+        "192.168.1.20, 192.168.1.20:47809, eller 2:5 (MS/TP-enhet 5 bak en ruter på nett 2). "
+        "Tom = finn device_id med Who-Is",
+    "The device's instance number – needed when the address is empty":
+        "Enhetens instansnummer – trengs når adressen er tom",
+    "0–4194302, unique on the BACnet network": "0–4194302, unikt på BACnet-nettet",
+    "Empty = knxscada <connection>": "Tom = knxscada <tilkobling>",
+    "Our IP address with prefix, e.g. 192.168.1.10/24. Empty = the address of this machine":
+        "Vår IP-adresse med prefiks, f.eks. 192.168.1.10/24. Tom = adressen til denne maskinen",
+    "Empty = 47808 for our device, any free port for a client": "Tom = 47808 for vår enhet, en ledig port for en klient",
+    "Changes arrive at once; polling goes on as a fallback": "Endringer kommer straks; avlesningen fortsetter som reserve",
+    "At most this many in one ReadPropertyMultiple": "Høyst så mange i én ReadPropertyMultiple",
+    "default": "standard",
+    "Register as a foreign device with this BBMD (ip:port) to reach another subnet":
+        "Registrer som «foreign device» hos denne BBMD-en (ip:port) for å nå et annet subnett",
+    "av:3, bi:1, msv:2, analog-value,3 … · our device: empty = the next free number":
+        "av:3, bi:1, msv:2, analog-value,3 … · vår enhet: tom = neste ledige nummer",
+    "Empty = present-value": "Tom = present-value",
+    "Empty = the connection's": "Tom = tilkoblingens",
+    "Our multi-state objects (msv/msi), default 16": "Våre multi-state-objekter (msv/msi), standard 16",
+    "Our analog objects: the change that is sent to COV subscribers, default 0.1":
+        "Våre analoge objekter: endringen som sendes til COV-abonnenter, standard 0,1",
+    "BACnet object {object}: write e.g. av:3, bi:1 or analog-value,3":
+        "BACnet-objekt {object}: skriv f.eks. av:3, bi:1 eller analog-value,3",
+    "BACnet object {object}: the instance must be 0–{max}": "BACnet-objekt {object}: instansen må være 0–{max}",
+    "device {n}": "enhet {n}",
+    "{connection}: our BACnet device can have {types}, not {object}":
+        "{connection}: vår BACnet-enhet kan ha {types}, ikke {object}",
+    "{connection}: device_instance is missing": "{connection}: device_instance mangler",
+    "{tag}: the device refused the write ({error})": "{tag}: enheten avviste skrivingen ({error})",
+    "{connection}: set address or device_id": "{connection}: sett address eller device_id",
+    "{connection}: no COV for {tag} ({error}) – it is polled":
+        "{connection}: ingen COV for {tag} ({error}) – den leses jevnlig i stedet",
+    "{connection}: object {object} for {tag}: {error}": "{connection}: objekt {object} for {tag}: {error}",
+    "device {n} does not answer Who-Is": "enhet {n} svarer ikke på Who-Is",
+    "no answer from {where}": "ingen svar fra {where}",
+    "{value} is not a state 1–{n}": "{value} er ikke en tilstand 1–{n}",
+    "The BACnet module is not installed. Install it with: ./scada modules install bacnet":
+        "BACnet-modulen er ikke installert. Installer den med: ./scada modules install bacnet",
+    "{n} BACnet devices": "{n} BACnet-enheter",
+    "Objects of one device: ./scada bacnet-scan ADDRESS (or --device N), --yaml for protocols.yaml":
+        "Objektene i én enhet: ./scada bacnet-scan ADRESSE (eller --device N), --yaml for protocols.yaml",
+    "{n} objects in device {device} at {address}": "{n} objekter i enhet {device} på {address}",
+    "No answer: is UDP port {local} free and the address right?":
+        "Ingen svar: er UDP-port {local} ledig, og er adressen riktig?",
+    "give an address or --device": "oppgi en adresse eller --device",
 }

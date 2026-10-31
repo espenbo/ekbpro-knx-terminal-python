@@ -1,8 +1,8 @@
 [English](../en/11-protocols-gateways.md) · **Norsk**
 
-# Protokoller og gatewayer (Modbus, MQTT, OPC UA)
+# Protokoller og gatewayer (Modbus, MQTT, OPC UA, BACnet)
 
-I tillegg til KNX kan serveren snakke Modbus, MQTT og OPC UA, og flytte verdier mellom dem. Alle protokollene er likestilte:
+I tillegg til KNX kan serveren snakke Modbus, MQTT, OPC UA og BACnet/IP, og flytte verdier mellom dem. Alle protokollene er likestilte:
 KNX er én modul blant de andre, og serveren kjører også **uten KNX**, f.eks. som en ren Modbus → OPC UA-gateway
 på en WAGO Edge-datamaskin.
 
@@ -28,7 +28,7 @@ Hver protokoll er en modul med sine egne Python-pakker. De installeres bare når
 
 ```bash
 ./scada modules                       # hvilke moduler som finnes, er installert og er i bruk
-./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua
+./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua · bacnet: bacpypes3
 ```
 
 Start serveren på nytt etterpå. En tilkobling der modulen mangler, vises i F11 og i `./scada gateway`
@@ -40,8 +40,9 @@ med kommandoen som installerer den; de andre tilkoblingene kjører likevel.
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | abonnere og publisere mot en broker    | –                                           |
 | `opcua`  | klient mot en PLS eller en annen server | vår egen OPC UA-server for SCADA-systemer  |
+| `bacnet` | BACnet/IP-klient mot en enhet (lese, skrive, COV) | vår egen BACnet-enhet for SD-anlegg og SCADA |
 
-BACnet/IP, MQTT Sparkplug B og Matter er planlagt.
+MQTT Sparkplug B og Matter er planlagt.
 
 ## 2. Tilkoblinger
 
@@ -229,6 +230,73 @@ Klienttagger angir en node-id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`);
 Som server blir hvert gateway-mål en variabel, og punktum eller skråstrek i navnet lager mapper:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. Node-id-en er navnet, så den blir
 den samme når serveren starter på nytt. Mål med `direction: both` er skrivbare.
+
+### BACnet/IP
+
+| Innstilling | Standard | |
+|---|---|---|
+| `role` | `client` | `client` mot én BACnet-enhet, eller `server`: vår egen BACnet-enhet for SD-anlegg og SCADA |
+| `address` | | Klient: enheten – `192.168.1.20`, `192.168.1.20:47809`, eller `2:5` (MS/TP-enhet 5 bak en ruter på nett 2) |
+| `device_id` | | Klient: enhetens instans; med tom `address` blir enheten funnet med Who-Is |
+| `device_instance` | påkrevd | Server: instansen til vår enhet, 0–4194302, unik på BACnet-nettet |
+| `device_name` | `knxscada <tilkobling>` | Server |
+| `local_address` | denne maskinen | Vår IP-adresse med prefiks, f.eks. `192.168.1.10/24` (prefikset gir kringkastingsadressen) |
+| `local_port` | server `47808`, klient en ledig port | Vår UDP-port. To BACnet-tilkoblinger kan ikke dele én |
+| `poll_ms` | `5000` | Klient |
+| `timeout_s` | `3` | Klient: ett nytt forsøk, så en enhet som er av, merkes etter rundt 6 s |
+| `cov` | `false` | Klient: abonner også på endringer i nåverdiene (COV); avlesningen fortsetter som reserve |
+| `cov_lifetime_s` | `300` | Klient: fornyes av seg selv |
+| `max_per_request` | `20` | Klient: egenskaper i én ReadPropertyMultiple (én og én når enheten ikke støtter det) |
+| `priority` | enhetens standard (16) | Klient: skriveprioritet 1–16 |
+| `bbmd`, `bbmd_ttl` | –, `300` | Registrer som «foreign device» hos en BBMD (`ip:port`) for å nå et annet subnett |
+
+Taggene peker på et objekt: `object: av:3` (kortnavn `ai ao av bi bo bv msi mso msv csv iv piv lav acc`; den lange
+formen `analog-value,3` virker også) og, når det ikke er nåverdien, en `property:` (`status-flags`,
+`out-of-service` …). Av/på-objekter gir `true`/`false`, multi-state-objekter 1, 2, 3 …. En tagg kan ha sin egen
+skrive`priority`. Innganger (`ai`, `bi`, `msi`) er skrivebeskyttet hvis ikke taggen sier `writable: true`.
+
+```yaml
+  aggregat1:
+    protocol: bacnet
+    address: 192.168.1.40
+    cov: true
+    priority: 8
+    tags:
+      Tilluft: {object: ai:1, unit: °C}
+      Settpunkt: {object: av:10, unit: °C}
+      Vifte på: {object: bo:1}
+      Modus: {object: msv:2}
+```
+
+#### Finn enheter og objekter (`./scada bacnet-scan`)
+
+```sh
+./scada bacnet-scan                          # Who-Is: instans, adresse, navn og leverandør for hver enhet
+./scada bacnet-scan 192.168.1.40             # objektene i én enhet: navn, nåverdi, enhet, beskrivelse
+./scada bacnet-scan --device 40              # det samme, funnet med instansnummeret
+./scada bacnet-scan 192.168.1.40 --yaml      # en tilkobling for protocols.yaml med hvert objekt som tagg
+```
+
+Who-Is bruker UDP-port 47808, fordi enhetene svarer med en kringkasting til den porten. Porten kan deles med vår
+egen BACnet-enhet når serveren kjører som samme bruker; ellers må serveren stoppes, eller skanningen finner ingenting.
+Lesing av én enhet bruker en ledig port. `--local 192.168.1.10/24` velger nettverkskort, `--bbmd` når et annet
+subnett. Taggene fra `--yaml` får objektnavnene – gi dem nye navn i gatewayen.
+
+Som **server** blir hvert gatewaymål et objekt med samme navn som målet: tall → `analog-value`,
+av/på → `binary-value`, tekst → `characterstring-value`, med enheten fra kilden (°C, %, W, kWh …).
+Instansnummeret lagres i `var/bacnet/<tilkobling>.json` og beholdes når serveren starter på nytt eller gatewayene
+endres; et nummer gis aldri til et annet mål. Gi det selv i gatewaylinjen når SD-anlegget har en liste:
+`{from: 1/1/1, to: Rom101.Lys, object: bv:101}` – også `ai`/`bi` for verdier SD-anlegget ikke skal skrive, og `msv`
+med `states: 4`. Mål med `direction: both` er skrivbare (bare nåverdien); verdien fra SD-anlegget går tilbake til
+kilden. COV-abonnenter får beskjed om endringer (`cov_increment`, standard 0,1, for analoge objekter).
+
+```yaml
+  sd:
+    protocol: bacnet
+    role: server
+    device_instance: 1001
+    local_address: 192.168.1.10/24
+```
 
 ### KNX
 

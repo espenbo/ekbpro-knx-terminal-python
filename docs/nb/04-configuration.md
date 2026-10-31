@@ -229,7 +229,7 @@ Etasjene får navn som "<label>: <etasje>", og adressetreet (F3) har én toppnod
 | `retention_days` | `90` | Hvor lenge telegrammer og hendelser tas vare på. Gamle data slettes hver time. Alarmer beholdes. |
 | `read_on_start` | `status` | Lese verdier fra bussen når serveren starter: `status` (bare tilbakemeldings-, føler- og alarmadresser), `false` (send ingen telegrammer; de siste verdiene fra databasen vises, merket som gamle) eller `all` (se advarselen under). `true` betyr `status`, og `off`, `no`, `0` betyr `false`. Alle andre verdier tolkes som `status`. Verdier fra databasen sendes aldri videre til gatewayer. |
 | `read_interval_ms` | `80` | Pause mellom lesingene, så bussen ikke blir overbelastet |
-| `protocols` | `protocols.yaml` | Tilkoblinger og gatewayer (Modbus, MQTT, OPC UA): se [Protokoller og gatewayer](11-protocols-gateways.md). Bruk `var/protocols.yaml`, slik `config.example.yaml` gjør: systemd-tjenesten får bare skrive i `var/`, så F11 kan bare lagre filen der. |
+| `protocols` | `protocols.yaml` | Tilkoblinger og gatewayer (Modbus, MQTT, OPC UA, BACnet): se [Protokoller og gatewayer](11-protocols-gateways.md). Bruk `var/protocols.yaml`, slik `config.example.yaml` gjør: systemd-tjenesten får bare skrive i `var/`, så F11 kan bare lagre filen der. |
 
 **Hvorfor `status` er standard, og `all` ikke anbefales.** En GroupValueRead på en *styreadresse*
 (f.eks. "Lys gang kobling") besvares av alle enheter som har leseflagget (R) på den adressen – også av en

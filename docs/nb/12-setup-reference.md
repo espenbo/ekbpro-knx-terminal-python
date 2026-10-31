@@ -66,6 +66,7 @@ programmappen. Uten kommando starter `tui`.
 | `modules` | `install NAME …` | Lister protokollmodulene, eller installerer dem |
 | `gateway` | | Sjekker `protocols.yaml`, med direktestatus når serveren kjører |
 | `simulate [MODELL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Spiller en utstyrsmal som Modbus-slave, for test uten utstyr; uten modell lister den malene |
+| `bacnet-scan [ADRESSE]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Uten adresse: BACnet-enhetene på nettet (Who-Is); med adresse: objektene i enheten, `--yaml` som en tilkobling for `protocols.yaml` |
 
 `./setup.sh [modbus mqtt opcua]` lager `venv/`, installerer pakkene (og protokollmodulene du nevner) og kjører
 `./scada import` når `config.yaml` finnes.
@@ -424,7 +425,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 ```yaml
 connections:
   meter1:                             # navn: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" er reservert
-    protocol: modbus                  # modbus | mqtt | opcua
+    protocol: modbus                  # modbus | mqtt | opcua | bacnet
     role: client                      # client (master) | server (slave)
     model: WAGO 879-3000              # valgfri utstyrsmal (liste: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
@@ -477,6 +478,27 @@ connections:
     endpoint: opc.tcp://0.0.0.0:4841  # utelatt = bare denne maskinen (127.0.0.1)
     namespace: urn:ekbpro:gateway
 
+  aggregat1:
+    protocol: bacnet
+    role: client
+    address: 192.168.1.40             # eller device_id: 40 (Who-Is); 2:5 = MS/TP 5 bak en ruter på nett 2
+    local_address: 192.168.1.10/24    # tom = denne maskinen
+    poll_ms: 5000
+    timeout_s: 3
+    cov: true                         # også COV-abonnement
+    priority: 8                       # tom = enhetens standard (16)
+    tags:
+      Tilluft: {object: ai:1, unit: °C}
+      Vifte på: {object: bo:1, priority: 12}
+
+  sd:
+    protocol: bacnet
+    role: server
+    device_instance: 1001             # påkrevd, unik på nettet
+    device_name: Gateway bygg A
+    local_address: 192.168.1.10/24    # port 47808
+    # bbmd: 10.0.0.1:47808             # registrer som «foreign device»
+
 gateways:
   - name: Meter to SCADA              # unik
     from: meter1                      # tilkoblingsnavn (knx finnes når KNX er på)
@@ -496,7 +518,7 @@ gateways:
 
 ### Nøkler i `protocols.yaml`
 
-Tilkoblingsinnstillinger for **Modbus**, **MQTT** og **OPC UA**: se tabellene i
+Tilkoblingsinnstillinger for **Modbus**, **MQTT**, **OPC UA** og **BACnet**: se tabellene i
 [Protokoller og gatewayer](11-protocols-gateways.md#2-tilkoblinger) – der er de komplette. Kort fortalt:
 
 | Taggnøkkel | Protokoller | Standard | Gyldige verdier |
@@ -509,6 +531,9 @@ Tilkoblingsinnstillinger for **Modbus**, **MQTT** og **OPC UA**: se tabellene i
 | `heartbeat_s` | Modbus-master | – (av) | sekunder; skriver 1, 2, 3 … til taggen (watchdog i utstyret) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefiks + navn, –, selve topicen | |
 | `node` | OPC UA | taggnavnet | node id |
+| `object`, `property` | BACnet | klient: påkrevd, `present-value`; server: neste ledige nummer | `av:3`, `bi:1`, `analog-value,3`; et egenskapsnavn |
+| `priority` | BACnet-klient | tilkoblingens | 1–16 |
+| `states`, `cov_increment` | BACnet-server | `16`, `0.1` | for `msv`/`msi` og analoge objekter |
 | `scale`, `offset` | alle | – | verdi = råverdi × scale + offset |
 | `unit`, `description` | alle | – | |
 | `writable` | alle | `true` (Modbus `ir`/`di` skrivebeskyttet uten `write_address`) | |

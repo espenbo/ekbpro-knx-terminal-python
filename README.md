@@ -76,7 +76,7 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | [Troubleshooting](docs/en/07-troubleshooting.md) | [Feilsøking](docs/nb/07-troubleshooting.md) | Common problems and solutions |
 | [Docker](docs/en/09-docker.md) | [Docker](docs/nb/09-docker.md) | Running in a container, e.g. on a WAGO PFC200/PFC300 |
 | [PLC bridge (OPC UA)](docs/en/10-plc-opcua.md) | [PLS-bro (OPC UA)](docs/nb/10-plc-opcua.md) | Let a PLC read and write KNX: mapping, CODESYS GVL, security |
-| [Protocols and gateways](docs/en/11-protocols-gateways.md) | [Protokoller og gatewayer](docs/nb/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT and OPC UA as modules, gateways between them and KNX, running without KNX |
+| [Protocols and gateways](docs/en/11-protocols-gateways.md) | [Protokoller og gatewayer](docs/nb/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT, OPC UA and BACnet/IP as modules, gateways between them and KNX, running without KNX |
 | [Setup reference](docs/en/12-setup-reference.md) | [Oppsettsreferanse](docs/nb/12-setup-reference.md) | Everything to set the program up – also for AI assistants: complete examples, every key with type, default and valid values, tasks step by step, checks |
 | [Architecture](docs/en/08-architecture.md) | [Arkitektur](docs/nb/08-architecture.md) | For developers: components, protocol, database, translations, tests, extensions |
 
@@ -93,9 +93,10 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | `./scada plan-dxf [file.dxf]` | Exports the floor plan to DXF |
 | `./scada plc-map [--all\|--marked] [--rename] [--plc NAME]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL, for every PLC or one |
 | `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
-| `./scada modules [install NAME …]` | Lists the protocol modules (Modbus, MQTT, OPC UA), or installs their packages |
+| `./scada modules [install NAME …]` | Lists the protocol modules (Modbus, MQTT, OPC UA, BACnet), or installs their packages |
 | `./scada gateway` | Checks `protocols.yaml` and shows connections and gateways (live when the server runs) |
 | `./scada simulate [MODEL] [--port 5020] [--device TTY]` | Plays a device template (WAGO, Carlo Gavazzi …) as a Modbus slave, for tests without equipment |
+| `./scada bacnet-scan [ADDRESS] [--yaml]` | Finds BACnet devices (Who-Is), or lists the objects of one device – as tags for `protocols.yaml` with `--yaml` |
 
 All commands accept `-c path/to/config.yaml` (before the command). You can also set the environment variable
 `KNXSCADA_CONFIG`.

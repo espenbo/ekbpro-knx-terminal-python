@@ -240,6 +240,13 @@ def validate(data: dict[str, Any], knx: bool = False) -> list[str]:
                         write_point(str(spec["write_address"]), point)
                 except ValueError as exc:
                     errors.append(f"{where}, tag {tname}: {exc}")
+            if pname == "bacnet" and spec and spec.get("object"):
+                from .bacnet import parse_object
+
+                try:
+                    parse_object(str(spec["object"]))
+                except ValueError as exc:
+                    errors.append(f"{where}, tag {tname}: {exc}")
     gws = data.get("gateways") or []
     if not isinstance(gws, list):
         return [*errors, _("gateways: must be a list")]

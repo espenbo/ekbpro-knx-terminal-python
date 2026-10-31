@@ -14,6 +14,8 @@ Commands
 ``plc-browse``     list the variables of the PLC's OPC UA server
 ``modules``        list the protocol modules; ``modules install modbus mqtt`` installs their packages
 ``gateway``        check ``protocols.yaml`` and show the connections and gateways (live when the server runs)
+``simulate``       play a device template as a Modbus slave, for tests without equipment
+``bacnet-scan``    find BACnet devices (Who-Is), or list the objects of one device
 
 The argparse help texts are English on purpose: they are printed before the
 configuration (and therefore the UI language) is known. Everything printed
@@ -80,6 +82,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=5020, help="Modbus TCP port")
     p.add_argument("--unit", type=int, default=1, help="unit id (slave address)")
     p.add_argument("--device", help="serial port (RS485) instead of TCP, with the template's serial settings")
+    p = sub.add_parser("bacnet-scan", help="find BACnet devices (Who-Is), or list the objects of one device")
+    p.add_argument("address", nargs="?", default="", help="device address, e.g. 192.168.1.40 or 2:5; empty = Who-Is")
+    p.add_argument("--device", type=int, help="device instance (found with Who-Is when there is no address)")
+    p.add_argument("--local", default="", help="our address with mask, e.g. 192.168.1.10/24 (empty = this machine)")
+    p.add_argument("--port", type=int, default=None,
+                   help="our UDP port (default 47808 for Who-Is, which is answered by broadcast; "
+                        "any free port when an address is given)")
+    p.add_argument("--bbmd", default="", help="register as a foreign device at this BBMD, e.g. 10.0.0.1:47808")
+    p.add_argument("--timeout", type=float, default=3, help="seconds to wait for answers")
+    p.add_argument("--yaml", action="store_true", help="print a connection for protocols.yaml with the objects as tags")
 
     args = ap.parse_args(argv)
     cmd = args.cmd or "tui"
@@ -88,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = load_config(args.config)
     except FileNotFoundError:
-        if cmd not in ("modules", "simulate"):
+        if cmd not in ("modules", "simulate", "bacnet-scan"):
             raise
         # A fresh installation (setup.sh, Dockerfile) installs modules before there is a config.yaml.
         import os
@@ -140,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd == "simulate":
         return simulate(args)
+
+    if cmd == "bacnet-scan":
+        return bacnet_scan(args)
 
     if cmd == "plc-browse":
         from .opcua_bridge import browse, endpoints
@@ -270,6 +285,69 @@ def simulate(args) -> int:
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def bacnet_scan(args) -> int:
+    """``bacnet-scan``: the devices on the network, or the objects of one device (``--yaml``: as tags)."""
+    from .protocols import installed
+
+    if not installed("bacnet"):
+        print(_("The BACnet module is not installed. Install it with: ./scada modules install bacnet"))
+        return 1
+    import yaml
+
+    from .protocols import bacnet
+
+    port = args.port if args.port is not None else (0 if args.address else 47808)
+    local = args.local or "host"
+    local = local if ":" in local.rsplit("/", 1)[-1] else f"{local}:{port}"
+    # bacpypes3 tries to open the UDP port until it succeeds: give up when it never does.
+    wait = args.timeout + 5
+
+    async def run() -> int:
+        app = bacnet.make_app(local, bacnet.MAX_INSTANCE, "knxscada scan", args.timeout, args.bbmd)
+        try:
+            await asyncio.sleep(0)   # let the UDP endpoint open
+            if args.bbmd:
+                await asyncio.sleep(1)   # the registration at the BBMD
+            if not args.address and args.device is None:
+                devices = await asyncio.wait_for(bacnet.scan_devices(app, args.timeout), wait)
+                for d in devices:
+                    print(f"{d['instance']:>8}  {d['address']:<22} {d['name']:<32} {d['vendor']}")
+                print(_("{n} BACnet devices").format(n=len(devices)))
+                if devices:
+                    print(_("Objects of one device: ./scada bacnet-scan ADDRESS (or --device N), "
+                            "--yaml for protocols.yaml"))
+                return 0
+            target, device_id = await asyncio.wait_for(
+                bacnet.find_device(app, args.address, args.device, args.timeout), wait)
+            rows = await bacnet.scan_objects(app, target, device_id)
+            if args.yaml:
+                conn = {"protocol": "bacnet", "address": str(target), "device_id": device_id,
+                        "tags": bacnet.tags_yaml(rows)}
+                print(yaml.safe_dump({"connections": {f"device{device_id}": conn}}, allow_unicode=True,
+                                     sort_keys=False, default_flow_style=None, width=120), end="")
+                return 0
+            for r in rows:
+                value = "" if r["value"] is None else str(r["value"])
+                print(f"{r['object']:<14} {r['name']:<32} {value:>12} {r['unit']:<6} {r['description']}")
+            print(_("{n} objects in device {device} at {address}").format(n=len(rows), device=device_id,
+                                                                        address=target))
+            return 0
+        finally:
+            app.close()
+
+    logging.basicConfig(level=logging.ERROR)  # bacpypes3 logs harmless notes
+    try:
+        return asyncio.run(run())
+    except TimeoutError:
+        print(_("No answer: is UDP port {local} free and the address right?").format(local=local))
+        return 1
+    except (ConnectionError, ValueError, OSError) as exc:
+        print(exc)
+        return 1
+    except KeyboardInterrupt:
+        return 1
 
 
 def modules(cfg, args) -> int:

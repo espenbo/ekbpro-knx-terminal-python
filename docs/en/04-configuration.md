@@ -227,7 +227,7 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 | `retention_days` | `90` | How long telegrams and events are kept. Old data is deleted every hour. Alarms are kept. |
 | `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`, and `off`, `no`, `0` mean `false`. Any other value is taken as `status`. Values from the database are never passed on to gateways. |
 | `read_interval_ms` | `80` | Pause between the reads, so the bus is not overloaded |
-| `protocols` | `protocols.yaml` | Connections and gateways (Modbus, MQTT, OPC UA): see [Protocols and gateways](11-protocols-gateways.md). Use `var/protocols.yaml`, as `config.example.yaml` does: the systemd service may only write in `var/`, so F11 can only save the file there. |
+| `protocols` | `protocols.yaml` | Connections and gateways (Modbus, MQTT, OPC UA, BACnet): see [Protocols and gateways](11-protocols-gateways.md). Use `var/protocols.yaml`, as `config.example.yaml` does: the systemd service may only write in `var/`, so F11 can only save the file there. |
 
 **Why `status` is the default, and `all` is not recommended.** A GroupValueRead on a *control*
 address (e.g. "Hall light switching") is answered by every device that has the read flag (R) on that address –

@@ -45,7 +45,7 @@ docker build -t ekbpro-knx .
 
 Dette laster ned Python-grunnbildet og avhengighetene – noen minutter på en PFC.
 
-For Modbus (RS485 eller TCP), MQTT eller OPC UA-serveren legger du til protokollmodulene
+For Modbus (RS485 eller TCP), MQTT, OPC UA-serveren eller BACnet/IP legger du til protokollmodulene
 ([Protokoller og gatewayer](11-protocols-gateways.md)):
 
 ```sh
@@ -53,6 +53,8 @@ docker build --build-arg MODULES="modbus mqtt" -t ekbpro-knx .
 ```
 
 En Modbus RTU-linje trenger serieporten i containeren, f.eks. `--device /dev/ttyUSB0` på `docker run`.
+BACnet/IP bruker UDP-kringkasting (Who-Is, I-Am), som ikke går gjennom Dockers eget nett – behold `--network host`
+(steg 4).
 
 ## 3. Lag konfigurasjonen
 
