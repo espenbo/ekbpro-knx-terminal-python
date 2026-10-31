@@ -23,7 +23,7 @@ settings:
 
 # Read once after connecting: which meter answers and how it is set up (compared with the settings).
 identify:
-  meter_code: {address: 'hr:0x4002', type: uint16,
+  meter_code: {address: 'hr:0x4002', type: uint16, hex_digits: true,
                values: {0x1111: 879-3000, 0x1112: 879-3020, 0x1113: 879-3040}}
   unit_id: {address: 'hr:0x4003', type: uint16}
   baudrate: {address: 'hr:0x4004', type: uint16,

@@ -73,6 +73,8 @@ Innstillinger alle tagger kan ha: `type`, `scale` og `offset` (verdi = rå × sc
 | `device`, `baudrate`, `parity`, `stopbits` | `/dev/ttyUSB0`, `9600`, `N`, `1` | Bare RTU |
 | `unit_id` | `1` | Master: standardadressen til utstyret. Slave: vår adresse, `0` svarer på alle adresser |
 | `poll_ms`, `timeout_s` | `1000`, `3` | Bare master (`poll_ms` minst 50) |
+| `max_registers` | `100` | Master: høyst så mange registre i én lesing (noe utstyr tar 50 eller færre) |
+| `max_gap` | `8` | Master: ubrukte registre som leses over for å slå sammen to lesinger; `0` = bare registre som ligger inntil hverandre (for utstyr som svarer med feil på ukjente adresser) |
 | `word_order` | `big` | `big`: høyeste ord først (de fleste enheter) · `little`: laveste ord først |
 
 Tagadresser: `hr:100` holding register, `ir:5` input register, `co:3` coil, `di:7` discrete input,
@@ -93,8 +95,15 @@ navn som en tag i malen endrer den, f.eks. en `description`). I F11 velger du ut
 | `WAGO 879-3000` | MID-energimåler 4PU, direkte, 65 A | `knxscada/protocols/devices/wago-879-30xx.yaml` |
 | `WAGO 879-3020` | MID-energimåler 4PS, direkte, 40 A | samme |
 | `WAGO 879-3040` | MID-energimåler 2PU CT, strømtransformator | samme |
+| `Carlo Gavazzi EM111` | 1-fase energimåler, direkte eller via 5 A strømtrafo | `carlo-gavazzi-em100.yaml` |
+| `Carlo Gavazzi EM112` | 1-fase energimåler, direkte, 100 A | samme |
+| `Carlo Gavazzi ET112` | 1-fase energimåler med timeteller, direkte, 100 A | samme |
+| `Carlo Gavazzi EM270` | dobbel 3-fase energimåler, TCD-strømsensorer opptil 630 A | `carlo-gavazzi-em270.yaml` |
+| `Carlo Gavazzi EM280` | dobbel 3-fase energimåler, TCD06-strømsensorer, 32 A | samme |
+| `Carlo Gavazzi EM580` | 3-fase MID-energimåler for elbillading, direkte, 65 A | `carlo-gavazzi-em580.yaml` |
+| `Carlo Gavazzi WM15` | 3-fase nettanalysator, 5 A strømtrafo | `carlo-gavazzi-wm15.yaml` |
 
-Produktnummeret alene virker også (`model: 879-3000`).
+Produktnummeret alene virker også (`model: 879-3000`, `model: EM111`).
 
 **WAGO 879-30xx:** RS485, Modbus RTU, 9600 baud, **even paritet** (8E1), unit id 1, lest hvert 5. s. De 35 taggene
 er hovedverdiene med navnene fra manualen (vedlegg A3.2): `Voltage`, `L1 voltage` … `L2-L3 voltage`,
@@ -108,6 +117,15 @@ Etter tilkobling leser masteren identifikasjonen til måleren én gang – måle
 tre det er), unit id, baudrate, paritet (`0x4011`) og serienummer – og melder den i hendelsesloggen og i
 F11, f.eks. `meter1: fant WAGO 879-3000 (4PU – direct connection, 65 A)  adresse 1  9600 E  serienr. 0012AB34`.
 Er måleren en annen modell, eller avviker innstillingene fra tilkoblingens, gir en feilmelding beskjed om det.
+
+**Carlo Gavazzi:** RS485, Modbus RTU, 9600 baud, **ingen paritet** (8N1, fabrikkinnstillingen), adresse 1, lest hvert
+5. s. Verdiene er heltall med vekt (V × 10, A × 1000, W × 10, kWh × 10) og laveste ord først – malen skalerer
+dem, så taggene har den riktige enheten (V, A, W, kWh). Taggnavnene er de fra Carlo Gavazzis manualer: `V L1-N`,
+`A L1`, `W sys`, `PF sys`, `Hz`, `kWh (+) TOT`, `kWh (-) TOT` …; på EM270/EM280 har hvert av de to sensorsettene
+egne tagger (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). Målerne svarer på høyst 50 (EM100-serien) eller 18
+(EM270/EM280) registre per forespørsel; malen setter `max_registers`. «Utenfor område» (EEE) og «ikke målt» vises
+som dårlig kvalitet, ikke som et tall. Identifikasjonskoden (`0x000B`) forteller modellen, `0x2000`–`0x2002`
+adresse, baudrate og paritet. EM271 er ikke med i malen: protokollen er ikke dokumentert sammen med EM270/EM280.
 
 Gi taggene navn fra merkesystemet ditt i gatewayen når de skal videre til OPC UA eller BACnet:
 

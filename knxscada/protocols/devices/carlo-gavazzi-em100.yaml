@@ -1,0 +1,56 @@
+# Carlo Gavazzi EM100/ET100 series: 1-phase energy meters EM111, EM112 and ET112 – Modbus RTU on RS485.
+# Source: "EM100 Series and ET100 Series Communication Protocol", version 2 revision 12, tables 2.4-1, 2.5-2.7.
+# Values are integers with a value weight (V×10, A×1000, W×10, kWh×10); INT32 has the low word first.
+# Tag names are written as in the manual; give them names from your tagging system in the gateway.
+manufacturer: Carlo Gavazzi
+protocol: modbus
+models:
+  EM111: 1-phase energy meter, direct (AV7, AV8) or through a 5 A CT (AV5)
+  EM112: 1-phase energy meter, direct, 100 A (AV0, AV1)
+  ET112: 1-phase energy meter with hour counter, direct, 100 A (AV0, AV1)
+manual: EM100 Series and ET100 Series Communication Protocol, version 2 revision 12
+links:
+  - https://www.gavazzi.no/produktkategori/energi-forbruksmalere/
+  - https://www.gavazzi.no/produktutvelgelse/em111dinav51xs1x-energimaler/
+
+# Factory setting: 9600 baud, no parity, 1 stop bit (8N1), address 1. At most 50 registers per request.
+settings:
+  transport: rtu
+  baudrate: '9600'
+  parity: N
+  stopbits: '1'
+  unit_id: 1
+  poll_ms: 5000
+  word_order: little
+  max_registers: 50
+
+identify:
+  meter_code: {address: 'hr:0x000B', type: uint16,
+               values: {101: EM111, 103: EM111, 114: EM111, 102: EM112, 104: EM112, 120: ET112, 121: ET112,
+                        100: EM110, 110: EM110}}
+  unit_id: {address: 'hr:0x2000', type: uint16}
+  baudrate: {address: 'hr:0x2001', type: uint16, values: {1: '9600', 2: '19200', 3: '38400', 4: '57600', 5: '115200'}}
+  parity: {address: 'hr:0x2002', type: uint16, values: {1: N, 2: E}}
+
+# "EEE" (overflow): 7FFFFFFFh.
+invalid: [2147483647, 32767]
+
+tags:
+  V L-N: {address: 'hr:0x0000', type: int32, scale: 0.1, unit: V, writable: false}
+  A: {address: 'hr:0x0002', type: int32, scale: 0.001, unit: A, writable: false}
+  W: {address: 'hr:0x0004', type: int32, scale: 0.1, unit: W, writable: false}
+  VA: {address: 'hr:0x0006', type: int32, scale: 0.1, unit: VA, writable: false}
+  var: {address: 'hr:0x0008', type: int32, scale: 0.1, unit: var, writable: false}
+  W dmd: {address: 'hr:0x000A', type: int32, scale: 0.1, unit: W, writable: false}
+  W dmd peak: {address: 'hr:0x000C', type: int32, scale: 0.1, unit: W, writable: false}
+  PF: {address: 'hr:0x000E', type: int16, scale: 0.001, writable: false}
+  Hz: {address: 'hr:0x000F', type: int16, scale: 0.1, unit: Hz, writable: false}
+  kWh (+) TOT: {address: 'hr:0x0010', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (+) TOT: {address: 'hr:0x0012', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kWh (+) PARTIAL: {address: 'hr:0x0014', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (+) PARTIAL: {address: 'hr:0x0016', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kWh (+) t1: {address: 'hr:0x0018', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (+) t2: {address: 'hr:0x001A', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (-) TOT: {address: 'hr:0x0020', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (-) TOT: {address: 'hr:0x0022', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  Hour counter: {address: 'hr:0x002C', type: int32, scale: 0.01, unit: h, writable: false, only: [ET112]}

@@ -423,7 +423,7 @@ connections:
   meter1:                             # name: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" is reserved
     protocol: modbus                  # modbus | mqtt | opcua
     role: client                      # client (master) | server (slave)
-    model: WAGO 879-3000              # optional device template
+    model: WAGO 879-3000              # optional device template (list: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
     host: 192.168.1.20                # tcp: the device (client) / listen address (server)
     port: 502
@@ -435,6 +435,8 @@ connections:
     poll_ms: 5000                     # client; at least 50
     timeout_s: 3                      # client
     word_order: big                   # big | little
+    max_registers: 100                # master; at most this many registers per read
+    max_gap: 8                        # master; 0 = only neighbouring registers
     tags:                             # added to the template's tags
       Day register: {address: 'hr:0x6049', type: float32, unit: kWh, writable: false}
 

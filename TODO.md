@@ -66,6 +66,12 @@ Gren: `feature/modulaer-protokoller`
       får nytt navn etter merkesystemet i gatewayen. Paritet Even (håndboken sier None, WAGO-biblioteket Even).
       Identifisering etter tilkobling: meter code 0x4002, adresse, baud, paritet 0x4011, serienr. – vises i
       hendelsesloggen og F11, med feil når modell eller innstillinger ikke stemmer. Valg i F11-skjemaet (Utstyr).
+- [x] Carlo Gavazzi-maler (2026-10-31, fra protokolldokumentene i `tmp/CarloGavazzie`): EM111, EM112, ET112
+      (`carlo-gavazzi-em100.yaml`), EM270, EM280 (`…-em270.yaml`, to sensorsett TCDA1/TCDA2), EM580 (elbillading),
+      WM15. 8N1 (fabrikk), heltall med vekt og laveste ord først, skalert i malen. Nye Modbus-innstillinger
+      `max_registers` (EM100: 50, EM270: 18) og `max_gap` (EM580: 0), `invalid` (EEE-koder → dårlig kvalitet),
+      `only:` for tagger som bare finnes på én modell (timeteller ET112).
+- [ ] EM271 mangler protokolldokument (ikke med i EM270/EM280-dokumentet)
 - [ ] Flere maler: SolarLog (venter på dokumentasjon/modellnavn)
 - [ ] `./scada modules simulate wago-879-30xx` (eller tilsvarende): Modbus-slave fra en mal, til test uten utstyr
 
@@ -105,8 +111,8 @@ Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Sta
       `protocols.yaml`, alle nøkler med type, standardverdi og gyldige verdier, oppgaver steg for steg, sjekker.
 - [x] Avvik mellom koden og dokumentasjonen rettet (04, 06, 08, 10, 11; MQTT `set_topic`-hjelpeteksten var feil).
 - [ ] Når en engelsk side endres, må den norske endres likt.
-- [ ] Tjenestene (`ProtectHome=read-only`, `ReadWritePaths=…/var`) kan ikke lagre `protocols.yaml` fra F11 –
-      venter på beslutning (se under).
+- [x] `server.protocols: var/protocols.yaml` (besluttet 2026-10-31): satt på de tre anleggene og i
+      `config.example.yaml`, standard i dokumentasjonen – systemd-tjenesten får bare skrive i `var/`.
 
 ## Neste steg (venter på avklaring)
 

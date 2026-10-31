@@ -71,6 +71,8 @@ Settings every tag can have: `type`, `scale` and `offset` (value = raw × scale 
 | `device`, `baudrate`, `parity`, `stopbits` | `/dev/ttyUSB0`, `9600`, `N`, `1` | RTU only |
 | `unit_id` | `1` | Master: default address of the device. Slave: our address, `0` answers every address |
 | `poll_ms`, `timeout_s` | `1000`, `3` | Master only (`poll_ms` at least 50) |
+| `max_registers` | `100` | Master: at most this many registers in one read (some devices take 50 or less) |
+| `max_gap` | `8` | Master: unused registers read across to join two reads; `0` = only neighbouring registers (for devices that answer unknown addresses with an error) |
 | `word_order` | `big` | `big`: high word first (most devices) · `little`: low word first |
 
 Tag addresses: `hr:100` holding register, `ir:5` input register, `co:3` coil, `di:7` discrete input,
@@ -91,8 +93,15 @@ name as a template tag changes it, e.g. a `description`). In F11, choose the dev
 | `WAGO 879-3000` | MID energy meter 4PU, direct, 65 A | `knxscada/protocols/devices/wago-879-30xx.yaml` |
 | `WAGO 879-3020` | MID energy meter 4PS, direct, 40 A | same |
 | `WAGO 879-3040` | MID energy meter 2PU CT, current transformer | same |
+| `Carlo Gavazzi EM111` | 1-phase energy meter, direct or 5 A CT | `carlo-gavazzi-em100.yaml` |
+| `Carlo Gavazzi EM112` | 1-phase energy meter, direct, 100 A | same |
+| `Carlo Gavazzi ET112` | 1-phase energy meter with hour counter, direct, 100 A | same |
+| `Carlo Gavazzi EM270` | dual 3-phase energy meter, TCD current sensors up to 630 A | `carlo-gavazzi-em270.yaml` |
+| `Carlo Gavazzi EM280` | dual 3-phase energy meter, TCD06 current sensors, 32 A | same |
+| `Carlo Gavazzi EM580` | 3-phase MID energy meter for EV charging, direct, 65 A | `carlo-gavazzi-em580.yaml` |
+| `Carlo Gavazzi WM15` | 3-phase power analyzer, 5 A CT | `carlo-gavazzi-wm15.yaml` |
 
-The product number alone works too (`model: 879-3000`).
+The product number alone works too (`model: 879-3000`, `model: EM111`).
 
 **WAGO 879-30xx:** RS485, Modbus RTU, 9600 baud, **even parity** (8E1), unit id 1, read every 5 s. The 35 tags
 are the main values with the names from the manual (appendix A3.2): `Voltage`, `L1 voltage` … `L2-L3 voltage`,
@@ -106,6 +115,16 @@ After connecting, the master reads the meter's identification once – meter cod
 three it is), unit id, baud rate, parity (`0x4011`) and serial number – and reports it in the event log and in
 F11, e.g. `meter1: found WAGO 879-3000 (4PU – direct connection, 65 A)  unit 1  9600 E  serial 0012AB34`.
 When the meter is another model, or its settings differ from the connection's, an error says so.
+
+**Carlo Gavazzi:** RS485, Modbus RTU, 9600 baud, **no parity** (8N1, the factory setting), unit id 1, read every
+5 s. The values are integers with a value weight (V × 10, A × 1000, W × 10, kWh × 10) and the low word first –
+the template scales them, so the tags have the real unit (V, A, W, kWh). The tag names are those of the
+Carlo Gavazzi manuals: `V L1-N`, `A L1`, `W sys`, `PF sys`, `Hz`, `kWh (+) TOT`, `kWh (-) TOT` …; on the
+EM270/EM280 each of the two sensor sets has its own tags (`W TOT TCDA1`, `kWh (+) TOT TCDA2` …). The meters
+answer at most 50 (EM100 series) or 18 (EM270/EM280) registers per request; the template sets `max_registers`.
+"Out of range" (EEE) and "not measured" are shown as bad quality, not as a number. The identification code
+(`0x000B`) tells the model, `0x2000`–`0x2002` the address, baud rate and parity. EM271 is not in the
+template: its protocol is not documented with the EM270/EM280.
 
 Give the tags names from your tagging system in the gateway, when they go on to OPC UA or BACnet:
 

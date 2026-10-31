@@ -425,7 +425,7 @@ connections:
   meter1:                             # navn: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" er reservert
     protocol: modbus                  # modbus | mqtt | opcua
     role: client                      # client (master) | server (slave)
-    model: WAGO 879-3000              # valgfri utstyrsmal
+    model: WAGO 879-3000              # valgfri utstyrsmal (liste: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
     host: 192.168.1.20                # tcp: utstyret (client) / lytteadresse (server)
     port: 502
@@ -437,6 +437,8 @@ connections:
     poll_ms: 5000                     # client; minst 50
     timeout_s: 3                      # client
     word_order: big                   # big | little
+    max_registers: 100                # master; høyst så mange registre per lesing
+    max_gap: 8                        # master; 0 = bare registre inntil hverandre
     tags:                             # kommer i tillegg til taggene i malen
       Day register: {address: 'hr:0x6049', type: float32, unit: kWh, writable: false}
 

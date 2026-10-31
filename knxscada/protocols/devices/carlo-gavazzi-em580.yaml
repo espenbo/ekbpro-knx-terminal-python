@@ -1,0 +1,71 @@
+# Carlo Gavazzi EM580: 3-phase MID energy meter for EV charging (direct, max 65 A, signed data) – Modbus RTU on RS485.
+# Source: "EM580 Modbus Communication Protocol", public version 1.11 (2025-04-08), tables 3.4, 4.1 and 4.2.
+# Values are integers with a value weight (V×10, A×1000, W×10, kWh×10); INT32 has the low word first.
+# Phase sequence: -1 = L1-L3-L2, 1 = L1-L2-L3. Reading an address that is not in the manual gives an error, so
+# only neighbouring registers are read together (max_gap: 0). The signed values for EV charging (0800h …) are
+# not in the template. Tag names are written as in the manual; give them names from your tagging system.
+manufacturer: Carlo Gavazzi
+protocol: modbus
+models:
+  EM580: 3-phase MID energy meter for EV charging, direct, max 65 A
+manual: EM580 Modbus Communication Protocol, public version 1.11
+links:
+  - https://www.gavazzi.no/produktkategori/energi-forbruksmalere/3-fase-for-elbillading/
+
+# Factory setting: 9600 baud, no parity, 1 stop bit (8N1), address 1. At most 125 registers per request.
+settings:
+  transport: rtu
+  baudrate: '9600'
+  parity: N
+  stopbits: '1'
+  unit_id: 1
+  poll_ms: 5000
+  word_order: little
+  max_registers: 125
+  max_gap: 0
+
+identify:
+  meter_code: {address: 'hr:0x000B', type: uint16,
+               values: {1840: EM580, 1841: EM580, 1842: EM580, 1843: EM580, 1844: EM580, 1845: EM580}}
+  unit_id: {address: 'hr:0x2000', type: uint16}
+  baudrate: {address: 'hr:0x2001', type: uint16, values: {1: '9600', 2: '19200', 3: '38400', 4: '57600', 5: '115200'}}
+  parity: {address: 'hr:0x2002', type: uint16, values: {1: N, 2: E}}
+
+# "EEE" (overflow): MSW 7FFFh.
+invalid: [2147483647, 32767]
+
+tags:
+  V L1-N: {address: 'hr:0x0000', type: int32, scale: 0.1, unit: V, writable: false}
+  V L2-N: {address: 'hr:0x0002', type: int32, scale: 0.1, unit: V, writable: false}
+  V L3-N: {address: 'hr:0x0004', type: int32, scale: 0.1, unit: V, writable: false}
+  V L1-L2: {address: 'hr:0x0006', type: int32, scale: 0.1, unit: V, writable: false}
+  V L2-L3: {address: 'hr:0x0008', type: int32, scale: 0.1, unit: V, writable: false}
+  V L3-L1: {address: 'hr:0x000A', type: int32, scale: 0.1, unit: V, writable: false}
+  A L1: {address: 'hr:0x000C', type: int32, scale: 0.001, unit: A, writable: false}
+  A L2: {address: 'hr:0x000E', type: int32, scale: 0.001, unit: A, writable: false}
+  A L3: {address: 'hr:0x0010', type: int32, scale: 0.001, unit: A, writable: false}
+  W L1: {address: 'hr:0x0012', type: int32, scale: 0.1, unit: W, writable: false}
+  W L2: {address: 'hr:0x0014', type: int32, scale: 0.1, unit: W, writable: false}
+  W L3: {address: 'hr:0x0016', type: int32, scale: 0.1, unit: W, writable: false}
+  VA L1: {address: 'hr:0x0018', type: int32, scale: 0.1, unit: VA, writable: false}
+  VA L2: {address: 'hr:0x001A', type: int32, scale: 0.1, unit: VA, writable: false}
+  VA L3: {address: 'hr:0x001C', type: int32, scale: 0.1, unit: VA, writable: false}
+  var L1: {address: 'hr:0x001E', type: int32, scale: 0.1, unit: var, writable: false}
+  var L2: {address: 'hr:0x0020', type: int32, scale: 0.1, unit: var, writable: false}
+  var L3: {address: 'hr:0x0022', type: int32, scale: 0.1, unit: var, writable: false}
+  V L-N sys: {address: 'hr:0x0024', type: int32, scale: 0.1, unit: V, writable: false}
+  V L-L sys: {address: 'hr:0x0026', type: int32, scale: 0.1, unit: V, writable: false}
+  W sys: {address: 'hr:0x0028', type: int32, scale: 0.1, unit: W, writable: false}
+  VA sys: {address: 'hr:0x002A', type: int32, scale: 0.1, unit: VA, writable: false}
+  var sys: {address: 'hr:0x002C', type: int32, scale: 0.1, unit: var, writable: false}
+  PF L1: {address: 'hr:0x002E', type: int16, scale: 0.001, writable: false}
+  PF L2: {address: 'hr:0x002F', type: int16, scale: 0.001, writable: false}
+  PF L3: {address: 'hr:0x0030', type: int16, scale: 0.001, writable: false}
+  PF sys: {address: 'hr:0x0031', type: int16, scale: 0.001, writable: false}
+  Phase sequence: {address: 'hr:0x0032', type: int16, writable: false}
+  Hz: {address: 'hr:0x0033', type: int16, scale: 0.1, unit: Hz, writable: false}
+  kWh (+) TOT: {address: 'hr:0x0034', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (+) TOT: {address: 'hr:0x0036', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kWh (-) TOT: {address: 'hr:0x004E', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (-) TOT: {address: 'hr:0x0050', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kVAh TOT: {address: 'hr:0x0056', type: int32, scale: 0.1, unit: kVAh, writable: false}

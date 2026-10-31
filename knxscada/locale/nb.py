@@ -662,6 +662,12 @@ CATALOGUE: dict[str, str] = {
     "yes, also to devices (not KNX)": "ja, også til utstyr (ikke KNX)",
     "reading …": "leser …",
     "Device": "Utstyr",
+    "Registers per request": "Registre per lesing",
+    "At most this many registers in one read (some devices: 50 or less)":
+        "Høyst så mange registre i én lesing (noe utstyr: 50 eller færre)",
+    "Gap read across": "Hull som leses over",
+    "Unused registers read across to join two reads; 0 = only neighbouring registers":
+        "Ubrukte registre som leses over for å slå sammen to lesinger; 0 = bare registre som ligger inntil hverandre",
     "Known equipment: its tags and serial settings come with it, and the device is identified after connecting. "
     "Empty = list the tags yourself":
         "Kjent utstyr: taggene og serieinnstillingene følger med, og utstyret identifiseres etter tilkobling. "

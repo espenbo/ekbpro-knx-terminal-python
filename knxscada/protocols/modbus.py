@@ -25,7 +25,8 @@ registers; ``word_order: big`` (default) puts the high word first.
 Master
 ------
 Tags are read every ``poll_ms``. Neighbouring addresses are read in one
-request (up to 100 registers or 1000 bits). When a device refuses such a
+request (up to ``max_registers`` registers – default 100 – or 1000 bits, across
+gaps of up to ``max_gap`` unused registers). When a device refuses such a
 block, its tags are read one by one from then on.
 
 Device templates
@@ -34,7 +35,9 @@ Device templates
 from :mod:`.devices`. After connecting, the master reads the template's
 ``identify`` registers once and reports which device answers and how it is set
 up (model, unit id, baud rate, parity, serial number) – with a warning when that
-does not fit the settings. The text is also shown in F11 (``where``).
+does not fit the settings. The text is also shown in F11 (``where``). Raw values
+listed under the template's ``invalid`` (a meter's "out of range" codes) are
+reported as bad quality instead of as a value.
 
 Slave
 -----
@@ -177,6 +180,7 @@ class Driver(BaseDriver):
         self.points: dict[str, Point] = {}
         self.template = devices.find(settings.get("model"))   # ValueError for an unknown model
         self.identity = ""   # what the device said it is (templates with identify)
+        self.invalid = set((self.template or {}).get("invalid") or ())   # raw "out of range" codes
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the next poll reads a written value back
         self.reads_first = self.role == "client"   # ready after the first poll
@@ -281,9 +285,12 @@ class Driver(BaseDriver):
             p = self.points[tag.name]
             groups.setdefault((p.unit, p.table), []).append((p, tag))
         self.blocks = []
+        s = self.settings
+        max_regs = max(1, int(s.get("max_registers") or MAX_REGS))
+        max_gap = GAP_REGS if s.get("max_gap") in (None, "") else max(0, int(s["max_gap"]))
         for (unit, table), items in groups.items():
             bits = table in ("co", "di")
-            limit, gap = (MAX_BITS, GAP_BITS) if bits else (MAX_REGS, GAP_REGS)
+            limit, gap = (MAX_BITS, GAP_BITS) if bits else (max_regs, max_gap)
             items.sort(key=lambda it: it[0].index)
             cur: Block | None = None
             for p, tag in items:
@@ -331,9 +338,10 @@ class Driver(BaseDriver):
             raw = from_registers(data, dtype, "big")
             values = spec.get("values") or {}
             if values:
-                # A HEX register (meter code 0x1111) may also hold the digits as a decimal number (1111).
-                found[key] = values[raw] if raw in values else next(
-                    (v for k, v in values.items() if isinstance(k, int) and f"{k:x}" == str(raw)), f"? ({raw})")
+                # hex_digits: a HEX register (meter code 0x1111) may also hold the digits as a decimal number (1111).
+                digits = [v for k, v in values.items()
+                          if spec.get("hex_digits") and isinstance(k, int) and f"{k:x}" == str(raw)]
+                found[key] = values[raw] if raw in values else (digits[0] if digits else f"? ({raw})")
             else:
                 found[key] = f"{raw:08X}" if spec.get("hex") else raw
         if not found:
@@ -384,6 +392,10 @@ class Driver(BaseDriver):
                 raw = bool((data[off] >> p.bit) & 1)
             else:
                 raw = from_registers(data[off:off + p.count], p.dtype, self._order(tag))
+                if raw in self.invalid and not isinstance(raw, float):
+                    rec = self.hub.values.get(f"{self.name}/{tag.name}")
+                    self.hub.update(self.name, tag.name, rec["v"] if rec else None, "bad")
+                    continue
             self.publish(tag, raw)
 
     def _order(self, tag: Tag) -> str:

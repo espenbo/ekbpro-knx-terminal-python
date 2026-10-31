@@ -97,3 +97,73 @@ def test_master_identifies_the_meter(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+# -- Carlo Gavazzi ---------------------------------------------------------------------------------------
+@pytest.mark.parametrize(("model", "n_tags", "max_regs", "max_gap"), [
+    ("Carlo Gavazzi EM111", 17, 50, 8), ("Carlo Gavazzi EM112", 17, 50, 8), ("Carlo Gavazzi ET112", 18, 50, 8),
+    ("Carlo Gavazzi EM270", 36, 18, 8), ("Carlo Gavazzi EM280", 36, 18, 8),
+    ("Carlo Gavazzi EM580", 34, 125, 0), ("Carlo Gavazzi WM15", 40, 125, 8),
+])
+def test_carlo_gavazzi_templates(model, n_tags, max_regs, max_gap):
+    s = settings_of({"protocol": "modbus", "model": model})
+    assert len(s["tags"]) == n_tags
+    assert (s["parity"], s["word_order"], s["max_registers"]) == ("N", "little", max_regs)
+    assert s.get("max_gap", 8) == max_gap
+    assert ("Hour counter" in s["tags"]) == model.endswith("ET112")   # only: [ET112]
+    assert all("only" not in t for t in s["tags"].values())
+    assert validate({"connections": {"m": {"protocol": "modbus", "model": model}}, "gateways": []}) == []
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_blocks_respect_max_registers_and_gaps():
+    from types import SimpleNamespace
+
+    from knxscada.protocols.modbus import Driver
+
+    hub = SimpleNamespace(values={})
+    for model, limit in (("Carlo Gavazzi EM270", 18), ("Carlo Gavazzi EM111", 50), ("Carlo Gavazzi EM580", 125)):
+        drv = Driver("m", settings_of({"protocol": "modbus", "model": model}), hub)
+        drv._build_blocks()
+        assert all(b.end - b.start <= limit for b in drv.blocks), model
+    # EM580: unknown addresses answer with an error – only neighbouring registers are read together.
+    em580 = Driver("m", settings_of({"protocol": "modbus", "model": "Carlo Gavazzi EM580"}), hub)
+    em580._build_blocks()
+    assert [(b.start, b.end) for b in em580.blocks] == [(0x00, 0x38), (0x4E, 0x52), (0x56, 0x58)]
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_master_reads_a_carlo_gavazzi_meter(tmp_path):
+    """Low word first, value weights, identification code 114 = EM111, and the overflow code shown as bad."""
+    port = free_port()
+
+    async def run():
+        meter = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port, "word_order": "little",
+                 "tags": {"code": {"address": "hr:0x000B"}, "id": {"address": "hr:0x2000"},
+                          "baud": {"address": "hr:0x2001"}, "parity": {"address": "hr:0x2002"},
+                          "v": {"address": "hr:0x0000", "type": "int32"}, "a": {"address": "hr:0x0002", "type": "int32"},
+                          "w": {"address": "hr:0x0004", "type": "int32"}, "pf": {"address": "hr:0x000E", "type": "int16"},
+                          "kwh": {"address": "hr:0x0010", "type": "int32"}}}
+        hub = await make_hub(tmp_path, {"connections": {"meter": meter}, "gateways": []})
+        try:
+            await until(lambda: hub.drivers["meter"].connected)
+            for tag, value in (("code", 114), ("id", 1), ("baud", 1), ("parity", 1), ("v", 2301), ("a", 5250),
+                               ("w", 2147483647), ("pf", -950), ("kwh", 1234567)):
+                await hub.write("meter", tag, value)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "transport": "tcp",
+                                 "model": "Carlo Gavazzi EM111", "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.identity.startswith("Carlo Gavazzi EM111 (1-phase energy meter")
+            assert master.identity.endswith("unit 1  9600 N")
+            assert not [t for level, t in hub.server.events if level == "error"]
+            v = hub.values
+            assert v["master/V L-N"]["v"] == pytest.approx(230.1)
+            assert v["master/A"]["v"] == pytest.approx(5.25)
+            assert v["master/PF"]["v"] == pytest.approx(-0.95)
+            assert v["master/kWh (+) TOT"]["v"] == pytest.approx(123456.7)
+            assert v["master/W"]["q"] == "bad"            # 7FFFFFFFh = "EEE"
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

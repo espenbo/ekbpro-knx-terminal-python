@@ -22,11 +22,16 @@ register map:
     Defaults for the connection (baud rate, parity …). The connection's own settings win.
 ``identify``
     Registers read once after connecting to tell which device answers and how it
-    is set up (``values`` turns a register value into text). The driver reports it
+    is set up (``values`` turns a register value into text; ``hex_digits: true`` also
+    accepts 0x1111 written as the decimal number 1111). The driver reports it
     and warns when it does not match the settings.
 ``tags``
     The tags, written like ``tags:`` in ``protocols.yaml``. The connection's own
     ``tags:`` are added to them and override a template tag with the same name.
+    ``only: [ET112]`` limits a tag to some of the family's models.
+``invalid``
+    Raw register values that mean "no value" (overflow, not measured); they are
+    shown as bad quality. ``links`` and ``manual`` are for people only.
 """
 
 from __future__ import annotations
@@ -90,7 +95,12 @@ def apply(conn: dict[str, Any]) -> dict[str, Any]:
     if tpl is None:
         return conn
     out = {**(tpl.get("settings") or {}), **{k: v for k, v in conn.items() if v is not None}}
-    tags = {str(n): dict(spec or {}) for n, spec in (tpl.get("tags") or {}).items()}
+    tags = {}
+    for name, spec in (tpl.get("tags") or {}).items():
+        spec = dict(spec or {})
+        only = spec.pop("only", None)
+        if only is None or tpl["number"] in [str(m) for m in only]:
+            tags[str(name)] = spec
     for name, spec in (conn.get("tags") or {}).items():
         tags[str(name)] = {**tags.get(str(name), {}), **(spec or {})}
     out["tags"] = tags
