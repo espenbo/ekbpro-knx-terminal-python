@@ -83,6 +83,9 @@ MAX_HOURS = 24 * 400
 #: What may appear in a user name in the audit log (no markup, no control characters).
 USER_RE = re.compile(r"[^\w@.:\-]+")
 
+#: Client commands handled by the protocol hub (connections and gateways, see knxscada/protocols/hub.py).
+HUB_COMMANDS = ("protocols", "points", "point_write", "protocols_save", "protocols_reload")
+
 #: Telegrams older than the retention time are deleted in batches of this size, with a
 #: pause for the event loop in between, so a large purge never blocks the server.
 PURGE_BATCH = 5000
@@ -153,8 +156,10 @@ class ScadaServer:
         self.started = time.time()
         self.tel_count = 0
         self.tel_times: deque[float] = deque(maxlen=100_000)  # timestamps of the last minute's telegrams (rate)
+        # Without KNX (no knx:/project: in config.yaml) only the protocols of protocols.yaml run.
+        self.knx_enabled = cfg.knx_enabled
         # One entry per KNX IP interface; validated here so a typo stops the server at once.
-        self.ifaces: list[dict[str, Any]] = [] if demo else interface_configs(
+        self.ifaces: list[dict[str, Any]] = [] if demo or not self.knx_enabled else interface_configs(
             cfg.knx, {p["name"]: p["prefix"] for p in cfg.projects})
         self.router = Router(self.ifaces) if self.ifaces else None
         self._prefix = {c["name"]: c["prefix"] for c in self.ifaces}
@@ -162,7 +167,7 @@ class ScadaServer:
         self.xknx: dict[str, Any] = {}  # interface name → XKNX
         self.status: dict[str, Any] = {
             "connected": False,
-            "connection": N_("demo") if demo else N_("disconnected"),
+            "connection": N_("demo") if demo else N_("disconnected") if self.knx_enabled else N_("off"),
             "gateway": "simulator" if demo else ", ".join(describe(c) for c in self.ifaces),
             "interfaces": [{"name": c["name"], "gateway": describe(c), "project": c["project"], "connected": False,
                             "connection": N_("disconnected")} for c in self.ifaces],
@@ -171,6 +176,9 @@ class ScadaServer:
         self.sim: Simulator | None = None
         self._stop = asyncio.Event()
         self.plcs = self._make_plc_bridges()
+        from .protocols.hub import Hub
+
+        self.hub = Hub(self)   # connections and gateways of protocols.yaml (see knxscada/protocols)
 
         # Start with the last known values from the database so clients see
         # something immediately, before the bus has answered our read requests.
@@ -199,13 +207,14 @@ class ScadaServer:
 
         tasks = [asyncio.create_task(self._housekeeping())]
         tasks += [asyncio.create_task(b.run()) for b in self.plcs]
-        if self.demo:
+        if self.demo and self.knx_enabled:
             self.sim = Simulator(self)
             tasks.append(asyncio.create_task(self.sim.run()))
             self._set_status(True, N_("demo"))
-        else:
+        elif self.ifaces:
             tasks += [asyncio.create_task(self._knx_connect(c)) for c in self.ifaces]
             tasks.append(asyncio.create_task(self._read_on_start()))
+        await self.hub.start()
 
         await self._stop.wait()
         log.info(_("Stopping …"))
@@ -221,6 +230,8 @@ class ScadaServer:
         for b in self.plcs:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(b.stop(), 5)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.hub.stop(), 10)
         for t in tasks:
             t.cancel()
         for xknx in self.xknx.values():
@@ -336,6 +347,9 @@ class ScadaServer:
     def _set_status(self, connected: bool, code: str) -> None:
         self.status.update(connected=connected, connection=code)
         self._broadcast({"type": "status", "status": self.status})
+        knx = self.hub.drivers.get("knx") if hasattr(self, "hub") else None
+        if knx is not None:
+            knx.set_state(connected)
 
     def _on_telegram(self, name: str, telegram) -> None:
         """xknx callback for every telegram (incoming and outgoing) of interface *name*."""
@@ -372,6 +386,8 @@ class ScadaServer:
 
     async def _send(self, ga: str, kind: str, payload: DPTArray | DPTBinary | None) -> None:
         """Send a GroupValueWrite (*kind* "write") or GroupValueRead (*kind* "read")."""
+        if not self.knx_enabled:
+            raise RuntimeError(_("KNX is not set up in config.yaml"))
         if self.demo:
             assert self.sim is not None
             self.ingest(src="0.0.0", dst=ga, kind=kind, value=payload, direction="out")
@@ -456,6 +472,8 @@ class ScadaServer:
         if kind != "read":
             for b in self.plcs:
                 b.on_knx(dst, decoded)
+            if self.hub.started and dst in self.gas:
+                self.hub.update("knx", dst, decoded)
 
     def _make_plc_bridges(self) -> list:
         """One OPC UA bridge per enabled PLC in ``plc:`` (see :mod:`knxscada.opcua_bridge`)."""
@@ -560,6 +578,8 @@ class ScadaServer:
             "state": self.state,
             "alarms": list(self.alarms.values()),
             "demo": self.demo,
+            "knx": self.knx_enabled,
+            "protocols": self.hub.status(),
         }
         writer.write((json.dumps(hello, ensure_ascii=False, default=str) + "\n").encode())
         self.clients.add(writer)
@@ -639,6 +659,8 @@ class ScadaServer:
             return self.store.alarm_history(_bounded(req.get("limit", 200), MAX_LIMIT))
         if cmd == "traffic":
             return self.store.traffic(_bounded(req.get("minutes", 60), MAX_MINUTES))
+        if cmd in HUB_COMMANDS:
+            return await self.hub.command(req, user)
         if cmd == "history":
             # In a worker thread: a 30-day trend of a busy address must not stop the telegram handling.
             return await asyncio.to_thread(

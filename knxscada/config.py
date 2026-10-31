@@ -50,6 +50,16 @@ class Config:
         return p if p.is_absolute() else self.base / p
 
     @property
+    def knx_enabled(self) -> bool:
+        """KNX is set up (a ``knx:`` or ``project:`` section, and not ``knx: {enabled: false}``).
+
+        Without KNX the server only runs the protocol connections and gateways of ``protocols.yaml``.
+        """
+        if self.knx.get("enabled") is False:
+            return False
+        return bool(self.knx) or bool(self.project)
+
+    @property
     def language(self) -> str:
         """UI language (``en`` or ``nb``); English when not configured."""
         return str(self.ui.get("language") or "en")

@@ -74,6 +74,7 @@ Taken from a real installation, with the user interface in Norwegian (English is
 | [Troubleshooting](docs/07-troubleshooting.md) | Common problems and solutions |
 | [Docker](docs/09-docker.md) | Running in a container, e.g. on a WAGO PFC200/PFC300 |
 | [PLC bridge (OPC UA)](docs/10-plc-opcua.md) | Let a PLC read and write KNX: mapping, CODESYS GVL, security |
+| [Protocols and gateways](docs/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT and OPC UA as modules, gateways between them and KNX, running without KNX |
 | [Architecture](docs/08-architecture.md) | For developers: components, protocol, database, translations, tests, extensions |
 
 ## Commands
@@ -89,6 +90,8 @@ Taken from a real installation, with the user interface in Norwegian (English is
 | `./scada plan-dxf [file.dxf]` | Exports the floor plan to DXF |
 | `./scada plc-map [--all\|--marked] [--rename] [--plc NAME]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL, for every PLC or one |
 | `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
+| `./scada modules [install NAME …]` | Lists the protocol modules (Modbus, MQTT, OPC UA), or installs their packages |
+| `./scada gateway` | Checks `protocols.yaml` and shows connections and gateways (live when the server runs) |
 
 All commands accept `-c path/to/config.yaml` (before the command). You can also set the environment variable
 `KNXSCADA_CONFIG`.
@@ -96,7 +99,7 @@ All commands accept `-c path/to/config.yaml` (before the command). You can also 
 ## Keys at a glance
 
 `F1` Overview · `F2` Rooms · `F3` Addresses · `F4` Monitor · `F5` Alarms · `F6` Log · `F7` Trends ·
-`F8` Plan · `F9` Screensaver · `F10` Quit · `F12` About · `Ctrl+T` Colour theme · `Ctrl+L` Language · `/` Search
+`F8` Plan · `F9` Screensaver · `F10` Quit · `F11` Gateways · `F12` About · `Ctrl+T` Colour theme · `Ctrl+L` Language · `/` Search
 
 More in the [user guide](docs/03-user-guide.md).
 

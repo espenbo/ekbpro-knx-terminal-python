@@ -512,3 +512,71 @@ SplashScreen {
 #tiles.big .tile {
     height: 5;
 }
+
+/* ---------- F11 gateways ---------- */
+#gw-conns {
+    height: 10;
+}
+
+#gw-bottom {
+    height: 1fr;
+}
+
+#gw-tags {
+    width: 3fr;
+}
+
+#gw-links {
+    width: 2fr;
+}
+
+#gw-problems {
+    height: auto;
+    max-height: 6;
+    color: $warning;
+}
+
+.dialog.form {
+    width: 100;
+    max-width: 100%;
+    max-height: 90%;
+}
+
+.form-body {
+    height: auto;
+    max-height: 30;
+}
+
+.form-row {
+    height: auto;
+}
+
+.form-field {
+    height: auto;
+}
+
+.form-label {
+    width: 24;
+    padding-top: 1;
+}
+
+.form-label.wide {
+    width: 100%;
+}
+
+.form-row Input, .form-row Select {
+    width: 1fr;
+}
+
+.form-help {
+    color: $text-muted;
+    padding-left: 24;
+}
+
+.form-text {
+    height: 10;
+}
+
+.warning {
+    color: $warning;
+}

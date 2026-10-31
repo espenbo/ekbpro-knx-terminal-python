@@ -54,6 +54,7 @@ from .dialogs import ConfirmDialog, GADialog, LanguageDialog, ThemeDialog, Value
 from .home import HomeModel
 from .plan_view import PlanView
 from .screensaver import DAYS, ScreenSaver
+from .gateways import GatewayView
 from .splash import AboutDialog, SplashScreen
 from .themes import THEMES, resolve_theme
 from .views import AlarmView, EventView, GroupAddressView, MonitorView, OverviewView, RoomView, TrendView, View
@@ -69,6 +70,7 @@ MENU = [
     ("events", "✎", N_("Event log"), "f6"),
     ("trends", "∿", N_("Trends"), "f7"),
     ("plan", "▦", N_("Floor plan"), "f8"),
+    ("gateways", "⇌", N_("Gateways"), "f11"),
     ("theme", "◐", N_("Colour theme"), "ctrl+t"),
     ("language", "⚑", N_("Language"), "ctrl+l"),
     ("about", "?", N_("About"), "f12"),
@@ -81,7 +83,7 @@ ACTIONS = ("quit", "theme", "language", "about")
 #: Short labels for the key bar at the bottom (the full labels do not fit).
 KEYBAR_LABELS = {
     "overview": N_("Overview"), "rooms": N_("Rooms"), "gas": N_("Addresses"), "monitor": N_("Monitor"),
-    "alarms": N_("Alarms"), "events": N_("Log"), "trends": N_("Trends"), "plan": N_("Plan"),
+    "alarms": N_("Alarms"), "events": N_("Log"), "trends": N_("Trends"), "plan": N_("Plan"), "gateways": N_("Gateways"),
     "theme": N_("Colours"), "language": N_("Lang."), "about": N_("About"), "quit": N_("Quit"),
 }
 
@@ -95,6 +97,7 @@ VIEW_HINTS = {
     "events": N_("/: filter"),
     "trends": N_("/: search  Enter: add/remove  Del: remove all"),
     "plan": N_("←→/PgUp/PgDn/1–9: floor  ↑↓: room  Enter: open"),
+    "gateways": N_("a: connection  g: gateway  w: write  r: re-read"),
 }
 
 
@@ -168,6 +171,7 @@ class ScadaApp(App):
                 yield EventView(id="events")
                 yield TrendView(id="trends")
                 yield PlanView(id="plan")
+                yield GatewayView(id="gateways")
         yield KeyBar(id="keybar")
 
     def on_mount(self) -> None:
@@ -302,6 +306,9 @@ class ScadaApp(App):
             for ga in list(self._watchers):
                 self._notify_watchers(ga)
             self.main.query_one("#gas", GroupAddressView).rebuild()
+            # Without KNX the overview is empty: start on the gateways (F11) instead.
+            if msg.get("knx") is False and self.main.query_one("#views", ContentSwitcher).current == "overview":
+                self._show("gateways")
         elif kind == "telegram":
             t = msg["t"]
             self.telegrams.append(t)
@@ -319,6 +326,10 @@ class ScadaApp(App):
         elif kind == "status":
             self.status = msg["status"]
             self._update_topbar()
+        elif kind == "points":
+            self.main.query_one("#gateways", GatewayView).on_points(msg["values"])
+        elif kind == "protocols":
+            self.main.query_one("#gateways", GatewayView).on_protocols(msg["status"])
         elif kind == "stats":
             self.stats = msg["stats"]
         elif kind == "alarms":

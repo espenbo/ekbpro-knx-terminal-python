@@ -43,6 +43,15 @@ docker build -t ekbpro-knx .
 
 This downloads the Python base image and the dependencies – a few minutes on a PFC.
 
+For Modbus (RS485 or TCP), MQTT or the OPC UA server, add the protocol modules
+([Protocols and gateways](11-protocols-gateways.md)):
+
+```sh
+docker build --build-arg MODULES="modbus mqtt" -t ekbpro-knx .
+```
+
+A Modbus RTU line needs the serial port in the container, e.g. `--device /dev/ttyUSB0` on `docker run`.
+
 ## 3. Create the configuration
 
 Copy your ETS project to the data directory (for example with `scp` from your PC), then let `init` write

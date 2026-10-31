@@ -119,7 +119,10 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     """Return the project model, from cache when it is up to date.
 
     *force* ignores the cache (used by ``./scada import`` and ``init``).
+    Without KNX (see :attr:`Config.knx_enabled`) the model is empty.
     """
+    if not cfg.knx_enabled:
+        return empty_model()
     projects = cfg.projects
     cache = cfg.cache_path
     sources = [[p["name"], str(p["file"]), p["prefix"], p["label"], p.get("rooms")] for p in projects]
@@ -149,6 +152,12 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     cache.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
     add_extra_rooms(model, cfg.project.get("extra_rooms"))  # not cached: read from config.yaml every time
     return model
+
+
+def empty_model() -> dict[str, Any]:
+    """The model of an installation without KNX: no addresses, no rooms."""
+    return {"cache_version": CACHE_VERSION, "info": {"name": ""}, "gas": {}, "ranges": [], "floors": [],
+            "functions": {}, "source": "none", "sources": []}
 
 
 #: ``usage`` of an extra card → the ETS usage text the views look for.

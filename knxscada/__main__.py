@@ -12,6 +12,8 @@ Commands
 ``plan-dxf``       export the floor plan to DXF for CAD programs
 ``plc-map``        create/update the PLC mapping (plc_map.yaml) and the CODESYS GVL
 ``plc-browse``     list the variables of the PLC's OPC UA server
+``modules``        list the protocol modules; ``modules install modbus mqtt`` installs their packages
+``gateway``        check ``protocols.yaml`` and show the connections and gateways (live when the server runs)
 
 The argparse help texts are English on purpose: they are printed before the
 configuration (and therefore the UI language) is known. Everything printed
@@ -27,7 +29,7 @@ import logging
 import sys
 
 from . import PRODUCT
-from .config import load_config
+from .config import Config, load_config
 from .i18n import LANGUAGES, _, set_language
 
 
@@ -68,11 +70,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--endpoints", action="store_true", help="only show the security modes and login types the PLC offers")
     p.add_argument("--plc", help="which PLC (name from plc.controllers); default: the first")
 
+    p = sub.add_parser("modules", help="list the protocol modules (Modbus, MQTT, OPC UA …) or install them")
+    p.add_argument("action", nargs="?", choices=("list", "install"), default="list")
+    p.add_argument("names", nargs="*", help="modules to install, e.g. modbus mqtt")
+    sub.add_parser("gateway", help="check protocols.yaml and show connections and gateways (live when the server runs)")
+
     args = ap.parse_args(argv)
     cmd = args.cmd or "tui"
     if cmd == "init":
         return init_config(args)
-    cfg = load_config(args.config)
+    try:
+        cfg = load_config(args.config)
+    except FileNotFoundError:
+        if cmd != "modules":
+            raise
+        # A fresh installation (setup.sh, Dockerfile) installs modules before there is a config.yaml.
+        import os
+        from pathlib import Path
+
+        cfg = Config(path=Path(args.config or os.environ.get("KNXSCADA_CONFIG") or "config.yaml").resolve())
     set_language(cfg.language)
 
     if cmd == "server":
@@ -138,6 +154,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{typ:<10} {nodeid}")
         print(_("{n} variables").format(n=len(found)))
         return 0
+
+    if cmd == "modules":
+        return modules(cfg, args)
+
+    if cmd == "gateway":
+        return gateway(cfg)
 
     # Default: the terminal user interface (imported lazily – Textual is heavy).
     # The language must be chosen before the import: some texts (key binding
@@ -214,6 +236,121 @@ def plc_map(cfg, args) -> int:
         if not active:
             print(_("Mark addresses with use: true in {path} (or use --all) and run plc-map again.").format(path=path.name))
     return 0
+
+
+def modules(cfg, args) -> int:
+    """``modules``: which protocol modules exist, are installed and are used; ``modules install …``."""
+    from .protocols import PROTOCOLS, install, installed
+    from .protocols.config import load_data, protocols_path
+
+    if args.action == "install":
+        if not args.names:
+            print(_("Name the modules to install, e.g.: ./scada modules install modbus mqtt"))
+            return 1
+        try:
+            code = install(args.names)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        if code == 0:
+            print(_("Installed: {names}. Restart the server to use them.").format(names=", ".join(args.names)))
+        return code
+    used: dict[str, list[str]] = {}
+    try:
+        data = load_data(protocols_path(cfg))
+    except Exception:  # noqa: BLE001 - a broken file is reported by ./scada gateway
+        data = {"connections": {}}
+    for name, conn in (data.get("connections") or {}).items():
+        if isinstance(conn, dict):
+            used.setdefault(str(conn.get("protocol")), []).append(str(name))
+    if cfg.knx_enabled:
+        used.setdefault("knx", []).insert(0, "knx")
+    for p in PROTOCOLS.values():
+        if p.planned:
+            state = _("planned")
+        elif p.module is None or installed(p.name):
+            state = _("installed")
+        else:
+            state = _("not installed")
+        names = ", ".join(used.get(p.name, []))
+        print(f"{p.name:<10} {p.title:<18} {state:<15} {names}")
+        if names and state == _("not installed"):
+            print("           " + _("Install it with: ./scada modules install {name}").format(name=p.name))
+    return 0
+
+
+def gateway(cfg) -> int:
+    """``gateway``: check ``protocols.yaml``; with a running server also show its live status."""
+    from .protocols.config import load_data, parse_link, protocols_path, validate
+
+    path = protocols_path(cfg)
+    if not path.exists():
+        print(_("{path} does not exist yet – create it in the TUI (F11) or from protocols.example.yaml").format(path=path))
+        return 0
+    try:
+        data = load_data(path)
+    except Exception as exc:  # noqa: BLE001 - YAML error
+        print(_("{path} cannot be read: {error}").format(path=path, error=exc))
+        return 1
+    errors = validate(data, cfg.knx_enabled)
+    live = _server_snapshot(cfg)
+    status = {s["name"]: s for s in (live or {}).get("status", [])}
+    print(_("Connections ({path}):").format(path=path))
+    names = (["knx"] if cfg.knx_enabled else []) + [n for n in data["connections"] if n != "knx"]
+    for name in names:
+        conn = data["connections"].get(name) or {"protocol": "knx"}
+        line = f"  {name:<16} {conn.get('protocol', ''):<8} {conn.get('role', 'client'):<7}"
+        st = status.get(name)
+        if st is not None:
+            state = _("connected") if st["connected"] else (st["error"] or _("disconnected"))
+            line += f" {st['where']:<28} {st['tags']:>5} tags  {state}"
+        print(line)
+    print(_("Gateways:"))
+    links = {}
+    for link in (live or {}).get("links", []):
+        links.setdefault(link["gateway"], []).append(link)
+    for gw in data["gateways"]:
+        if not isinstance(gw, dict):
+            continue
+        name = str(gw.get("name") or "")
+        off = "  " + _("(off)") if gw.get("enabled") is False else ""
+        print(f"  {name}: {gw.get('from')} → {gw.get('to')}  ({len(gw.get('map') or [])} {_('lines')}){off}")
+        for item in gw.get("map") or []:
+            try:
+                ln = parse_link(item)
+            except ValueError:
+                continue
+            arrow = "↔" if (ln.get("direction") or gw.get("direction")) == "both" else "→"
+            print(f"      {ln['from']} {arrow} {ln['to'] or ln['from']}")
+        for link in links.get(name, []):
+            if link["error"]:
+                print("      ! " + f"{link['from']} → {link['to']}: {link['error']}")
+    if live is None:
+        print(_("No live status: the server is not running, or it is older than this version."))
+    else:
+        for problem in live.get("problems", []):
+            print("! " + problem)
+    for err in errors:
+        print("! " + err)
+    return 1 if errors else 0
+
+
+def _server_snapshot(cfg) -> dict | None:
+    """The hub's snapshot from the running server, or None when it does not answer."""
+    from .client import ScadaClient
+
+    async def ask():
+        c = ScadaClient(cfg.socket_path, lambda _m: None)
+        await asyncio.wait_for(c.connect(), 3)
+        try:
+            return await c.request("protocols")
+        finally:
+            c.close_nowait()
+
+    try:
+        return asyncio.run(ask())
+    except Exception:  # noqa: BLE001 - not running, no access, old server without protocols
+        return None
 
 
 def _yaml_str(value: str) -> str:

@@ -8,6 +8,7 @@
 # (a volume): config.yaml, the .knxproj, plan.yaml, the database and the socket.
 #
 #   docker build -t ekbpro-knx .
+#   docker build --build-arg MODULES="modbus mqtt" -t ekbpro-knx .                 # with protocol modules
 #   docker run -d --name knx --network host -v /home/knx:/data ekbpro-knx          # server
 #   docker exec -it knx knx                                                         # visualisation
 
@@ -33,7 +34,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore --prefer-binary -r requirements.txt
 
 COPY knxscada/ knxscada/
-COPY config.example.yaml plan.example.yaml LICENSE ./
+# Protocol modules (docs/11-protocols-gateways.md): only their packages are installed, e.g. MODULES="modbus mqtt".
+ARG MODULES=""
+RUN if [ -n "$MODULES" ]; then PIP_NO_CACHE_DIR=1 PIP_ROOT_USER_ACTION=ignore python -m knxscada modules install $MODULES; fi
+COPY config.example.yaml plan.example.yaml protocols.example.yaml LICENSE ./
 COPY docker/knx /usr/local/bin/knx
 RUN chmod 755 /usr/local/bin/knx
 

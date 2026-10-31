@@ -4,6 +4,7 @@
 !knxscada/
 !config.example.yaml
 !plan.example.yaml
+!protocols.example.yaml
 !LICENSE
 !docker/knx
 **/__pycache__

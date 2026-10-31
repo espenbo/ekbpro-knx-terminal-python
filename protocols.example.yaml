@@ -1,0 +1,75 @@
+# Connections and gateways – EKBPRO KNX Terminal Python
+#
+# Copy this file to protocols.yaml next to config.yaml (for a site: sites/<site>/protocols.yaml),
+# or build it in the user interface (F11 Gateways). Guide: docs/11-protocols-gateways.md
+#
+# Each protocol is a module; install the ones you use:  ./scada modules install modbus mqtt
+# Check the file:  ./scada gateway
+#
+# Mapping lines:  "source"  ·  "source -> new name"  ·  {from: …, to: …, direction: both, scale: 0.1}
+
+connections:
+  # The connection "knx" exists by itself when KNX is set up in config.yaml.
+  # Its tags are the group addresses (1/2/3) or their unique ETS names.
+
+  # WAGO 879-30xx energy meter (4PU / 4PS / 2PU) on RS485, Modbus RTU. Factory setting: 9600 baud,
+  # 8 data bits, even parity, 1 stop bit (8E1), unit id 1. Values are float32, high word first (Float ABCD),
+  # read with function code 3. Register map: wagoEdgeStart/modbus_slaves/wago meter/wago_modbus_registers.csv.
+  meter1:
+    protocol: modbus
+    transport: rtu
+    device: /dev/ttyUSB0
+    baudrate: '9600'
+    parity: E
+    unit_id: 1
+    poll_ms: 5000
+    tags:
+      Spenning_L1: {address: 'hr:0x5002', type: float32, unit: V}
+      Spenning_L2: {address: 'hr:0x5004', type: float32, unit: V}
+      Spenning_L3: {address: 'hr:0x5006', type: float32, unit: V}
+      Frekvens: {address: 'hr:0x5008', type: float32, unit: Hz}
+      Strom_L1: {address: 'hr:0x500C', type: float32, unit: A}
+      Effekt_total: {address: 'hr:0x5012', type: float32, unit: kW}
+      Energi_total: {address: 'hr:0x6000', type: float32, unit: kWh}
+
+  # A PLC or a heat pump over Modbus TCP.
+  plc1:
+    protocol: modbus
+    host: 192.168.1.20
+    tags:
+      Temp_ute: {address: 'ir:0', type: int16, scale: 0.1, unit: °C}
+      Pumpe_start: {address: 'co:0'}
+
+  # Our own OPC UA server for a SCADA system (Ignition, WinCC …).
+  scada:
+    protocol: opcua
+    role: server
+    endpoint: opc.tcp://0.0.0.0:4841
+
+  # An MQTT broker (Home Assistant, Node-RED …).
+  broker:
+    protocol: mqtt
+    host: 127.0.0.1
+    topic_prefix: bygg/
+
+gateways:
+  - name: Energimåler til SCADA
+    from: meter1
+    to: scada
+    map:
+      - '*  -> Energi.Hovedtavle.{name}'           # every tag of the meter, under one folder
+
+  - name: Anlegg til SCADA
+    from: plc1
+    to: scada
+    map:
+      - Temp_ute -> Ute.Temperatur
+      - {from: Pumpe_start, to: Pumper.P1.Start, direction: both}
+
+  - name: KNX til MQTT
+    from: knx
+    to: broker
+    deadband: 0.2
+    map:
+      - 3/0/1 -> stue/temperatur
+      - {from: 1/1/1, to: stue/lys, direction: both}
