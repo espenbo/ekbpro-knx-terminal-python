@@ -334,11 +334,15 @@ class PlcBridge:
 
     # -- KNX → PLC -------------------------------------------------------------------------
     async def _sync_to_plc(self) -> None:
-        """Give the PLC the last known KNX values (no bus traffic) before subscribing."""
+        """Give the PLC the KNX values known since the start (no bus traffic) before subscribing.
+
+        Old values from the database of the last run are never sent: the PLC gets them when
+        the bus has sent them (read_on_start or the next telegram).
+        """
         for e in self.entries:
             if e.dir in ("to_plc", "both") and e.var in self.nodes:
                 st = self.server.state.get(e.ga)
-                if st and st.get("value") is not None:
+                if st and st.get("value") is not None and not st.get("old"):
                     await self._write_plc(e, st["value"])
 
     def on_knx(self, ga: str, value: Any) -> None:

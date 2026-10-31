@@ -151,8 +151,10 @@ the server. On the WAGO PFC, the policies offered are set under *OPC UA Server S
 
 ## How values are exchanged
 
-- **No telegrams at start-up.** When the bridge connects, the PLC variables (`to_plc`, `both`) get the last
-  known KNX values from the server – that writes to the PLC, not to the bus. The current values of the PLC
+- **No telegrams at start-up.** When the bridge connects, the PLC variables (`to_plc`, `both`) get the KNX
+  values the server has received since it started – that writes to the PLC, not to the bus. Old values from the
+  database of the last run are never sent; the PLC gets those addresses when the bus has sent them
+  (`read_on_start: status` or the next telegram). The current values of the PLC
   variables are only *noted*; nothing is sent to KNX until a variable **changes** after that. The same applies
   after a reconnect: changes the PLC made while the connection was down are not sent.
 - **No telegrams when the PLC restarts.** A download, reset or online change with re-initialisation sets the
