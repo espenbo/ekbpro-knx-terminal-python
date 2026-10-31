@@ -261,6 +261,21 @@ def test_rooms_setpoint_and_read_only():
     assert k["Er-Verdi"] == ("value", None)
 
 
+def test_rooms_exclude():
+    gas = {a: _ga(a, n, "9.001") for a, n in [
+        ("2/1/46", "Set Temp - rom H1025 - Dusj"),
+        ("2/1/48", "Set Temp - rom H1025/H1026 - Dusj"),
+    ]}
+    ranges = [{"address": "2", "name": "1. Etg Varme", "gas": [], "children": [
+        {"address": "2/1", "name": "Set Temp", "gas": ["2/1/46", "2/1/48"], "children": []}]}]
+    rule = {"pattern": r"(?:\brom\s+)?\b(H1\d{3})\b.*", "floors": {2: "1. etg"}, "setpoint": "(?i)set temp",
+            "exclude": ["2/*/46"]}
+    floors, functions = project.build_from_names(ranges, gas, rule)
+    shown = [d["ga"] for f in functions.values() for d in f["datapoints"]]
+    assert shown == ["2/1/48"]                       # not in the room, and not under the group address structure
+    assert [f["name"] for f in floors] == ["1. etg"]
+
+
 def test_rooms_rule_is_used_only_without_ets_functions():
     raw = raw_project()
     with_functions = project.build_model(raw, rooms={"pattern": "(?i)kitchen"})

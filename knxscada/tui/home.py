@@ -92,6 +92,13 @@ class HomeModel:
                             )
                         if not room.heat_ga:
                             room.heat_ga = next((d["status"] for d in f["datapoints"] if d["role"] == "ValvePosition"), None)
+                        # Cards built from names have no ETS roles: the setpoint row and the valve position (%).
+                        if not room.sp_ga:
+                            room.sp_ga = next((d["ga"] for d in f["datapoints"] if d["kind"] == "setpoint"), None)
+                        if not room.heat_ga:
+                            room.heat_ga = next(
+                                (d["status"] for d in f["datapoints"] if d["kind"] == "value" and d["dpt"] == "5.001"), None
+                            )
                 self.rooms.append(room)
 
         # Building-wide points: configured explicitly, or found by name.
@@ -140,11 +147,13 @@ class HomeModel:
                 elif severity is None:
                     severity = "warning"
         temp = self.value(state, room.temp_ga)
+        heat = self.value(state, room.heat_ga)
         return {
             "temp": temp if isinstance(temp, (int, float)) and not isinstance(temp, bool) else None,
             "sp": self.value(state, room.sp_ga),
             "mode": self.text(state, room.mode_ga) if room.mode_ga else "",
-            "heating": self.value(state, room.heat_ga) is True,
+            # On/off output, or a valve position above 0 %.
+            "heating": heat is True or (isinstance(heat, (int, float)) and not isinstance(heat, bool) and heat > 0),
             "lights_on": lights_on,
             "lights_total": len(room.lights),
             "alarm": severity,

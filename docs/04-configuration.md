@@ -119,6 +119,8 @@ project:
     setpoint: "(?i)set temp"
     # Names that are only shown, never written from a card, even with the write flag in ETS (optional).
     read_only: "(?i)desired temp|valve position"
+    # Addresses left out of the cards, e.g. an unused thermostat channel (optional; * matches anything).
+    exclude: ["2/*/46"]
 ```
 
 - The text *before* the room is the row label ("Actual temp", "Switching status"); a name that starts with the room
@@ -131,6 +133,8 @@ project:
 - Every address with the write flag in ETS can be written from its card. When a thermostat's object has the flag but
   should only be read (the desired temperature it calculates, the valve position), add the name to `read_only`;
   `read_only` wins over `setpoint` and the built-in setpoint words.
+- The overview (F1) takes the room's setpoint from the setpoint row of its heating card and shows heating
+  when a valve position (5.001, read-only) is above 0 %.
 - Ignored when the project has ETS functions. With several projects, `rooms` applies to all of them; an entry
   in `files` can have its own `rooms`.
 

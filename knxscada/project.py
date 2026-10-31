@@ -50,6 +50,7 @@ again when it talks to the bus (each KNX interface belongs to one project).
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import re
@@ -478,6 +479,7 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
         names: {"2. etg/Kontor 6": "Office 6 · RT6206"}              # room names shown (optional)
         setpoint: "(?i)set temp"                                      # more setpoint names (optional)
         read_only: "(?i)onsket temp|varmepaadrag"                     # never written from a card (optional)
+        exclude: ["2/*/46"]                                           # addresses left out of the cards (optional)
 
     The first group of *pattern* (or the whole match) is the room. The text
     before it is the row label ("Er Verdi", "av/pa Status"), the text after it
@@ -495,11 +497,12 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
     names = {_fold(str(k)): str(v) for k, v in (rule.get("names") or {}).items()}
     setpoint = re.compile(rule["setpoint"]) if rule.get("setpoint") else None
     read_only = re.compile(rule["read_only"]) if rule.get("read_only") else None
+    excluded = {a for a in gas if any(fnmatch.fnmatchcase(a, p) for p in rule.get("exclude") or [])}
     main_name = {r["address"]: r["name"] or r["address"] for r in ranges}
 
     def usable(addr: str) -> bool:
         g = gas[addr]
-        return bool(g["used"] and not g["placeholder"] and g["dpt"])
+        return bool(g["used"] and not g["placeholder"] and g["dpt"] and addr not in excluded)
 
     # (floor, room key) → {"name", fixture key → [(address, label)]}, in address order
     found: dict[tuple[str, str], dict] = {}
@@ -560,7 +563,7 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
     for fl in floors.values():
         fl["rooms"].sort(key=lambda r: [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", r["name"])])
     # Everything without a room in its name: as before, from the group address structure.
-    rest = {a: g for a, g in gas.items() if a not in matched}
+    rest = {a: g for a, g in gas.items() if a not in matched and a not in excluded}
     rest_floors, rest_functions = build_from_ranges(ranges, rest)
     functions.update(rest_functions)
     return list(floors.values()) + rest_floors, functions
