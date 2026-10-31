@@ -185,9 +185,12 @@ class Driver:
 
     #: Protocol name (key in the registry).
     protocol = ""
-    #: False: gateways never send *initial* values here (the first value of a source after it
-    #: connected). KNX uses this – a start-up or a reconnect must never put telegrams on the bus.
-    initial_writes = True
+    #: True: the driver reads every tag after connecting and calls :meth:`set_ready` when done.
+    #: Until then its values are *initial* (statuses, not changes) and gateways wait with writes to it.
+    reads_first = False
+    #: False: gateways never send initial values here, not even with ``initial: true``.
+    #: KNX uses this – a start-up or a reconnect must never put telegrams on the bus.
+    initial_allowed = True
     #: True when the device reports a written value back by itself (polling, subscription, bus echo).
     #: Otherwise the hub records a written value as the tag's new value.
     echoes = False
@@ -198,6 +201,7 @@ class Driver:
         self.hub = hub
         self.role = str(settings.get("role") or "client")
         self.connected = False
+        self.ready = False      # connected, and the first read is done
         self.error = ""
         self.tags: dict[str, Tag] = {}
         self._stop = False
@@ -215,6 +219,14 @@ class Driver:
         if tag is not None:
             return tag
         return next((t for t in self.tags.values() if t.address and t.address == ref), None)
+
+    def initial_default(self, tag: Tag) -> bool:
+        """Do gateways send initial values to *tag* when the gateway does not say (``initial``)?
+
+        Only to our own servers: filling our address space sends nothing to a device. A client
+        tag is a device, which keeps its own value until something really changes.
+        """
+        return self.role == "server"
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """Add a tag that a gateway writes to. Clients can only use tags they have (ValueError)."""
@@ -285,8 +297,18 @@ class Driver:
         changed = connected != self.connected or error != self.error
         self.connected = connected
         self.error = "" if connected else error
+        if not connected:
+            self.ready = False
         if changed:
             self.hub.connection_state(self.name, connected)
+        if connected and not self.reads_first:
+            self.set_ready()
+
+    def set_ready(self) -> None:
+        """The first read after connecting is done: from now on values are changes."""
+        if self.connected and not self.ready:
+            self.ready = True
+            self.hub.connection_ready(self.name)
 
     def describe(self) -> str:
         """Short text for the TUI: where the connection goes."""

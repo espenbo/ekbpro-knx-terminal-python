@@ -160,7 +160,9 @@ class Hub:
     def update(self, conn: str, tag: str, value: Any, quality: str = "good") -> None:
         """A driver got a value for one of its tags."""
         key = f"{conn}/{tag}"
-        initial = key not in self._seen
+        # Until its connection has read everything once, a value is a status, not a change.
+        drv = self.drivers.get(conn)
+        initial = key not in self._seen or drv is None or not drv.ready
         self._seen.add(key)
         old = self.values.get(key)
         if old is not None and old["q"] == quality and same_value(old["v"], value):
@@ -174,12 +176,18 @@ class Hub:
     def connection_state(self, conn: str, connected: bool) -> None:
         """A driver connected or lost its connection."""
         if not connected:
+            self.engine.disconnected(conn)
             prefix = conn + "/"
             self._seen = {k for k in self._seen if not k.startswith(prefix)}
             for key, rec in self.values.items():
                 if key.startswith(prefix) and rec["q"] == "good":
                     rec["q"] = "old"
                     self._dirty[key] = rec
+        self._broadcast_status()
+
+    def connection_ready(self, conn: str) -> None:
+        """A driver has read all its tags after connecting: gateways may write to it now."""
+        self.engine.on_ready(conn)
         self._broadcast_status()
 
     async def write(self, conn: str, tag: str, value: Any, user: str = "") -> None:
@@ -231,6 +239,7 @@ class Hub:
                 "title": PROTOCOLS[protocol].title if protocol in PROTOCOLS else protocol,
                 "role": drv.role if drv else str(conn.get("role") or "client"),
                 "connected": bool(drv and drv.connected),
+                "ready": bool(drv and drv.ready),
                 "error": (drv.error if drv else self.failed.get(name, "")) or "",
                 "where": drv.describe() if drv else "",
                 "tags": len(drv.tags) if drv else 0,

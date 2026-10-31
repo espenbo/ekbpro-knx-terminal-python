@@ -91,6 +91,10 @@ HUB_COMMANDS = ("protocols", "points", "point_write", "protocols_save", "protoco
 PURGE_BATCH = 5000
 
 
+#: After the start-up read: how long to wait for the last answers before KNX values count as changes (s).
+START_READ_SETTLE_S = 2.0
+
+
 def read_mode(value: Any) -> str:
     """``server.read_on_start`` → ``"off"`` (default), ``"status"`` or ``"all"``.
 
@@ -162,6 +166,9 @@ class ScadaServer:
         self.ifaces: list[dict[str, Any]] = [] if demo or not self.knx_enabled else interface_configs(
             cfg.knx, {p["name"]: p["prefix"] for p in cfg.projects})
         self.router = Router(self.ifaces) if self.ifaces else None
+        # False until read_on_start has read the bus: until then KNX values are statuses, not changes
+        # (the gateways do not pass them on as changes, see knxscada/protocols/knx.py).
+        self.start_read_done = not self.ifaces or read_mode(cfg.server.get("read_on_start")) == "off"
         self._prefix = {c["name"]: c["prefix"] for c in self.ifaces}
         self.dedup = Deduplicator(int(cfg.knx.get("dedup_ms", DEDUP_MS))) if len(self.ifaces) > 1 else None
         self.xknx: dict[str, Any] = {}  # interface name → XKNX
@@ -416,7 +423,14 @@ class ScadaServer:
             await asyncio.sleep(0.1)
         while not self.status["connected"]:
             await asyncio.sleep(1)
-        await self._read_all()
+        try:
+            await self._read_all()
+            await asyncio.sleep(START_READ_SETTLE_S)   # the last answers
+        finally:
+            self.start_read_done = True
+            knx = self.hub.drivers.get("knx")
+            if knx is not None:
+                knx.set_ready()
 
     async def _read_all(self) -> None:
         """Ask the bus for the current value of the addresses chosen by :func:`read_targets`.

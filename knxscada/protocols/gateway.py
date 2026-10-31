@@ -18,11 +18,18 @@ Rules that keep the plant safe and quiet (the same as for the PLC bridge):
 * **No echoes.** The last value exchanged is remembered on both sides of every
   link; a value equal to it is not passed on, so a value written to the target
   and read back does not travel back to the source.
-* **Initial values** (the first value of a tag after its connection came up)
-  are passed on, so a fresh OPC UA server or MQTT broker gets every value at
-  once – but never to KNX: a start-up or reconnect must not put telegrams on
-  the bus (:attr:`Driver.initial_writes`). ``initial: false`` turns them off
-  for a gateway or a line.
+* **Read first, send afterwards.** After a start-up or a reconnect a
+  connection reads the statuses of its tags first (:attr:`Driver.ready`).
+  These *initial* values are remembered on both sides of a link, but not sent:
+  devices keep their own values until something really changes. Only our own
+  address space is filled at once – OPC UA server, Modbus slave, MQTT state
+  topics made by a gateway (:meth:`Driver.initial_default`). ``initial: true``
+  sends them to devices too, ``initial: false`` to nothing; KNX never gets
+  them (:attr:`Driver.initial_allowed`).
+* **The target is read before it is written.** A change for a target that is
+  still reading waits until it is done, and is dropped if the target already
+  has that value. The value a target reports is remembered, so a change is
+  not sent when the target has it already.
 * **Deadband** (``deadband``): numbers that changed less than this are not sent.
 * **Rate limit** (``min_interval_ms``): at most one write per link and direction in
   that time; the latest value is sent when the interval is over.
@@ -54,6 +61,11 @@ ENGINE_KEYS = ("from", "to", "direction", "scale", "offset", "invert", "deadband
 HVAC_CODES = {"AUTO": 0, "COMFORT": 1, "STANDBY": 2, "ECONOMY": 3, "BUILDING_PROTECTION": 4}
 
 
+def _flag(value: Any) -> bool | None:
+    """``initial``: None when not given, otherwise yes or no."""
+    return None if value is None or value == "" else bool(value)
+
+
 def _num(value: Any, default: float | None = None) -> float | None:
     if value is None or value == "":
         return default
@@ -75,13 +87,14 @@ class Link:
     invert: bool = False
     deadband: float = 0.0
     min_interval: float = 0.0      # seconds
-    initial: bool = True
+    initial: bool | None = None    # None: as the target driver says (Driver.initial_default)
     last_a: Any = MISSING
     last_b: Any = MISSING
     count: int = 0
     last_ts: float = 0.0
     error: str = ""
     pending: dict[bool, asyncio.TimerHandle] = field(default_factory=dict)
+    held: dict[bool, Any] = field(default_factory=dict)    # changes waiting for the target to finish reading
     sent_at: dict[bool, float] = field(default_factory=dict)
 
     @property
@@ -146,6 +159,7 @@ class GatewayEngine:
         self.gateways = [g for g in gateways if isinstance(g, dict) and g.get("enabled", True) is not False]
         self.links: list[Link] = []
         self.by_tag: dict[tuple[str, str], list[tuple[Link, bool]]] = {}   # (conn, tag) → [(link, forward)]
+        self.targets: dict[tuple[str, str], list[Link]] = {}               # targets of one-way links
         self._patterns: list[tuple[dict[str, Any], dict[str, Any]]] = []   # (gateway, line) with * or ?
         self._checked: set[tuple[str, str]] = set()                        # tags already matched with the patterns
         self._made: set[str] = set()                                       # link keys, so a tag is linked once
@@ -206,7 +220,7 @@ class GatewayEngine:
             scale=_num(line.get("scale")), offset=_num(line.get("offset")), invert=bool(line.get("invert")),
             deadband=_num(line.get("deadband", gw.get("deadband")), 0.0) or 0.0,
             min_interval=(_num(line.get("min_interval_ms", gw.get("min_interval_ms")), 0.0) or 0.0) / 1000,
-            initial=bool(line.get("initial", gw.get("initial", True))),
+            initial=_flag(line.get("initial", gw.get("initial"))),
         )
         if link.key in self._made:
             return None
@@ -215,6 +229,15 @@ class GatewayEngine:
         self.by_tag.setdefault((link.a_conn, link.a_tag), []).append((link, True))
         if both:
             self.by_tag.setdefault((link.b_conn, link.b_tag), []).append((link, False))
+        else:
+            self.targets.setdefault((link.b_conn, link.b_tag), []).append(link)
+        # What the target has already, so a source value equal to it is not sent.
+        known_b = self.hub.values.get(f"{link.b_conn}/{link.b_tag}")
+        if known_b is not None and known_b.get("q") == "good":
+            if both:
+                self._deliver(link, False, known_b["v"], initial=True)
+            else:
+                link.last_b = known_b["v"]
         # A value that is already known goes out at once (e.g. KNX state when the gateway is added).
         known = self.hub.values.get(f"{link.a_conn}/{link.a_tag}")
         if known is not None and known.get("q") == "good":
@@ -244,6 +267,8 @@ class GatewayEngine:
             self._expand(conn, tag)
         for link, forward in self.by_tag.get(key, ()):
             self._deliver(link, forward, value, initial)
+        for link in self.targets.get(key, ()):
+            link.last_b = value   # what the target has now
 
     def _deliver(self, link: Link, forward: bool, value: Any, initial: bool) -> None:
         last_in = link.last_a if forward else link.last_b
@@ -267,17 +292,66 @@ class GatewayEngine:
             self._link_error(link, _("{value} cannot be converted for {tag}: {error}").format(
                 value=repr(value), tag=f"{dst_conn}/{dst_tag}", error=exc))
             return
-        last_out = link.last_b if forward else link.last_a
-        if initial and (not link.initial or not drv.initial_writes):
-            # Remember it as the value the target has, so it is not sent later as a "change".
-            self._set_last(link, not forward, out)
+        if initial and not self._sends_initial(link, drv, tag):
+            # Remember it as the value the target has (unless it has told us), so it is not sent later
+            # as a "change".
+            if (link.last_b if forward else link.last_a) is MISSING:
+                self._set_last(link, not forward, out)
             return
+        if drv.connected and not drv.ready:
+            link.held[forward] = out   # the target is still reading its values: wait for them
+            return
+        self._send(link, forward, dst_conn, dst_tag, out)
+
+    @staticmethod
+    def _sends_initial(link: Link, drv, tag) -> bool:
+        if not drv.initial_allowed:
+            return False
+        return drv.initial_default(tag) if link.initial is None else link.initial
+
+    def _send(self, link: Link, forward: bool, dst_conn: str, dst_tag: str, out: Any) -> None:
+        last_out = link.last_b if forward else link.last_a
+        if last_out is not MISSING and same_value(out, last_out):
+            return  # the target has it already
         if (link.deadband and last_out is not MISSING and isinstance(out, (int, float))
                 and isinstance(last_out, (int, float)) and not isinstance(out, bool)
                 and abs(out - last_out) < link.deadband):
             return
         self._set_last(link, not forward, out)
         self._schedule(link, forward, dst_conn, dst_tag, out)
+
+    def on_ready(self, conn: str) -> None:
+        """*conn* has read its values: send the changes that waited for it (unless it has them already).
+
+        Targets that take initial values (our own servers) also get the current source values again,
+        e.g. an MQTT broker that was restarted.
+        """
+        for link in self.links:
+            for forward in (True, False):
+                dst_conn, dst_tag = (link.b_conn, link.b_tag) if forward else (link.a_conn, link.a_tag)
+                if dst_conn != conn or (not forward and not link.both):
+                    continue
+                if forward in link.held:
+                    self._send(link, forward, dst_conn, dst_tag, link.held.pop(forward))
+                    continue
+                drv = self.hub.drivers.get(dst_conn)
+                tag = drv.tags.get(dst_tag) if drv else None
+                src = self.hub.values.get(f"{link.a_conn}/{link.a_tag}" if forward else f"{link.b_conn}/{link.b_tag}")
+                if tag is not None and src is not None and src.get("q") == "good" and self._sends_initial(link, drv, tag):
+                    self._set_last(link, forward, MISSING)
+                    self._deliver(link, forward, src["v"], initial=True)
+
+    def disconnected(self, conn: str) -> None:
+        """*conn* lost its connection: waiting changes for it are dropped (it is read again first),
+        and what it had is forgotten until it tells us again."""
+        for link in self.links:
+            if link.b_conn == conn:
+                link.last_b = MISSING
+            if link.a_conn == conn:
+                link.last_a = MISSING
+            for forward in list(link.held):
+                if (link.b_conn if forward else link.a_conn) == conn:
+                    del link.held[forward]
 
     @staticmethod
     def _set_last(link: Link, a_side: bool, value: Any) -> None:

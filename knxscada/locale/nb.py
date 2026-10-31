@@ -656,6 +656,10 @@ CATALOGUE: dict[str, str] = {
     "Min. interval (ms)": "Min. intervall (ms)",
     "e.g. 1000 – at most one value per second": "f.eks. 1000 – høyst én verdi i sekundet",
     "Send values at start": "Send verdier ved oppstart",
+    "only to own servers": "bare til egne servere",
+    "yes, also to devices (not KNX)": "ja, også til utstyr (ikke KNX)",
+    "reading …": "leser …",
+    "no": "nei",
     "Never to KNX: a start-up or reconnect does not put telegrams on the bus.":
         "Aldri til KNX: oppstart eller ny tilkobling legger ikke telegrammer på bussen.",
     "Mapping – one line each:": "Kobling – én linje hver:",

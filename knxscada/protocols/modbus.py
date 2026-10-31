@@ -169,6 +169,7 @@ class Driver(BaseDriver):
         self.points: dict[str, Point] = {}
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the next poll reads a written value back
+        self.reads_first = self.role == "client"   # ready after the first poll
         self.client = None
         self.server = None
         self.blocks: list[Block] = []
@@ -296,6 +297,7 @@ class Driver(BaseDriver):
                         await self._read_block(Block(p.table, p.unit, p.index, p.end, [tag]), alone=True)
                 else:
                     await self._read_block(block)
+            self.set_ready()
             await asyncio.sleep(max(0.0, interval - (asyncio.get_running_loop().time() - started)))
 
     async def _read(self, table: str, unit: int, start: int, count: int):

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .app import ScadaApp
 
 #: Colours of the connection state.
-STATE_STYLE = {"connected": "bold green", "error": "bold red", "off": "dim"}
+STATE_STYLE = {"connected": "bold green", "reading": "bold yellow", "error": "bold red", "off": "dim"}
 
 
 def show_value(value: Any) -> str:
@@ -283,8 +283,11 @@ class GatewayDialog(ModalScreen[dict | None]):
                     ("min_interval_ms", N_("Min. interval (ms)"),
                      Input(str(gw.get("min_interval_ms") or ""), id="g-min_interval_ms",
                            placeholder=_("e.g. 1000 – at most one value per second"))),
-                    ("initial", N_("Send values at start"), Checkbox("", gw.get("initial", True) is not False,
-                                                                     id="g-initial")),
+                    ("initial", N_("Send values at start"),
+                     Select([(_("only to own servers"), "auto"), (_("yes, also to devices (not KNX)"), "yes"),
+                             (_("no"), "no")],
+                            value={None: "auto", True: "yes", False: "no"}.get(gw.get("initial"), "auto"),
+                            allow_blank=False, id="g-initial")),
                     ("enabled", N_("On"), Checkbox("", gw.get("enabled", True) is not False, id="g-enabled")),
                 ):
                     del key
@@ -336,8 +339,9 @@ class GatewayDialog(ModalScreen[dict | None]):
                     gw[key] = float(text) if key == "deadband" else int(float(text))
                 except ValueError:
                     gw[key] = text   # the server reports it
-        if not self.query_one("#g-initial", Checkbox).value:
-            gw["initial"] = False
+        initial = self.query_one("#g-initial", Select).value
+        if initial in ("yes", "no"):
+            gw["initial"] = initial == "yes"
         if not self.query_one("#g-enabled", Checkbox).value:
             gw["enabled"] = False
         gw["map"] = lines
@@ -472,7 +476,9 @@ class GatewayView(View):
         row = t.cursor_row
         t.clear()
         for s in status:
-            if s["connected"]:
+            if s["connected"] and not s.get("ready", True):
+                state = Text(_("reading …"), style=STATE_STYLE["reading"])
+            elif s["connected"]:
                 state = Text(_("connected"), style=STATE_STYLE["connected"])
             elif not s.get("running"):
                 state = Text(s.get("error") or _("off"), style=STATE_STYLE["error"])

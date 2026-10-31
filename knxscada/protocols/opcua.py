@@ -109,6 +109,7 @@ class Driver(BaseDriver):
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the subscription reports a written value
+        self.reads_first = self.role == "client"   # ready when every node has been read once
         self.client = None
         self.server = None
         self.idx = 2
@@ -177,10 +178,19 @@ class Driver(BaseDriver):
             self.hub.event("error", _("{connection}: {n} nodes not found: {names}").format(
                 connection=self.name, n=len(missing), names=", ".join(missing[:5]) + (" …" if len(missing) > 5 else "")))
         self.lost.clear()
+        self.set_state(True)
         if self.nodes:
+            # Read every node once, so the statuses are known before gateways may write here.
+            names = list(self.nodes)
+            for name, dv in zip(names, await self.client.read_attributes([self.nodes[n] for n in names])):
+                tag = self.tags[name]
+                if dv.StatusCode is not None and not dv.StatusCode.is_good():
+                    self.hub.update(self.name, name, None, "bad")
+                else:
+                    self.publish(tag, dv.Value.Value if dv.Value is not None else None)
             sub = await self.client.create_subscription(int(self.settings.get("publish_interval_ms") or 500), _Handler(self))
             await sub.subscribe_data_change(list(self.nodes.values()))
-        self.set_state(True)
+        self.set_ready()
         while not self._stop and not self.lost.is_set():
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.lost.wait(), 5)

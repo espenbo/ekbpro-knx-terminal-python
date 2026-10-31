@@ -21,6 +21,7 @@ format; ``json_key`` picks the value out of a larger JSON object.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -78,8 +79,13 @@ def topic_matches(pattern: str, topic: str) -> bool:
     return len(p) == len(t)
 
 
+#: After subscribing: how long the retained messages (the statuses) may take before values count as changes (s).
+RETAINED_S = 1.0
+
+
 class Driver(BaseDriver):
     protocol = "mqtt"
+    reads_first = True   # ready RETAINED_S after subscribing
 
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
         self.prefix = str(settings.get("topic_prefix") or "")
@@ -101,6 +107,10 @@ class Driver(BaseDriver):
                   scale=as_float(spec.get("scale")), offset=as_float(spec.get("offset")), extra=dict(spec))
         self.by_topic.setdefault(topic, []).append(tag)
         return tag
+
+    def initial_default(self, tag: Tag) -> bool:
+        # The state topics a gateway made are ours; other topics belong to devices.
+        return bool(tag.extra.get("target"))
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """A gateway target: published under the prefix; with ``direction: both`` also listening to ``/set``."""
@@ -141,10 +151,15 @@ class Driver(BaseDriver):
             for topic in sorted(topics):
                 await client.subscribe(topic, qos=self.qos)
             self.set_state(True)
-            async for msg in client.messages:
-                self._message(str(msg.topic), msg.payload)
-                if self._stop:
-                    break
+            ready = asyncio.get_running_loop().call_later(RETAINED_S, self.set_ready)
+            try:
+                async for msg in client.messages:
+                    self._message(str(msg.topic), msg.payload)
+                    if self._stop:
+                        break
+            finally:
+                ready.cancel()
+
 
     async def close(self) -> None:
         self.client = None

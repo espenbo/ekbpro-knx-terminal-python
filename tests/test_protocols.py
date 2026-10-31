@@ -45,9 +45,10 @@ class Mem(Driver):
 
     protocol = "mem"
 
-    def __init__(self, name, settings, hub, initial_writes=True, server=True):
+    def __init__(self, name, settings, hub, initial_allowed=True, server=True, reads_first=False):
         super().__init__(name, {"role": "server" if server else "client", **settings}, hub)
-        self.initial_writes = initial_writes
+        self.initial_allowed = initial_allowed
+        self.reads_first = reads_first
         self.writes: list[tuple[str, Any]] = []
 
     def create_tag(self, name, spec):
@@ -293,10 +294,10 @@ def test_gateway_forward_rename_scale_and_no_echo(tmp_path):
 
 
 def test_initial_values_never_reach_a_quiet_target(tmp_path):
-    """Like KNX: a source that (re)connects must not cause writes to a target with initial_writes = False."""
+    """Like KNX: a source that (re)connects must not cause writes to a target with initial_allowed = False."""
     async def run():
         src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
-        quiet = Mem("quiet", {"tags": {"x": {}, "y": {}}}, None, initial_writes=False, server=False)
+        quiet = Mem("quiet", {"tags": {"x": {}, "y": {}}}, None, initial_allowed=False, server=False)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "quiet", "map": ["a -> x", "b -> y"]}]},
                              {"src": src, "quiet": quiet})
         try:
@@ -312,6 +313,106 @@ def test_initial_values_never_reach_a_quiet_target(tmp_path):
             hub.update("src", "a", 3)
             await asyncio.sleep(0.1)
             assert quiet.writes == [("x", 2)]
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_start_up_sends_nothing_to_devices(tmp_path):
+    """Read first, send afterwards: initial values reach our own servers, never a device (client) by default."""
+    async def run():
+        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"x": {}}}, None, server=False)
+        srv = Mem("srv", {}, None)
+        hub = await make_hub(tmp_path, {"gateways": [
+            {"name": "g1", "from": "src", "to": "dev", "map": ["a -> x"]},
+            {"name": "g2", "from": "src", "to": "srv", "map": ["b"]},
+            {"name": "g3", "from": "src", "to": "dev", "initial": True, "map": ["b -> x"]}]},
+            {"src": src, "dev": dev, "srv": srv})
+        try:
+            hub.update("src", "a", 1)
+            hub.update("src", "b", 5)
+            await until(lambda: srv.writes)
+            await asyncio.sleep(0.1)
+            assert srv.writes == [("b", 5)]          # our own server is filled at once
+            assert dev.writes == [("x", 5)]          # the device only with initial: true
+            hub.update("src", "a", 2)                # the first change after the start goes out
+            await until(lambda: len(dev.writes) == 2)
+            assert dev.writes[-1] == ("x", 2)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_values_before_ready_are_statuses(tmp_path):
+    """Until a connection has read everything once, its values are not passed on as changes."""
+    async def run():
+        src = Mem("src", {"tags": {"a": {}}}, None, server=False, reads_first=True)
+        dev = Mem("dev", {"tags": {"x": {}}}, None, server=False)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["a -> x"]}]},
+                             {"src": src, "dev": dev})
+        try:
+            hub.update("src", "a", 1)
+            hub.update("src", "a", 2)                # still reading: a status, not a change
+            await asyncio.sleep(0.1)
+            assert dev.writes == []
+            assert src.connected and not src.ready
+            src.set_ready()
+            hub.update("src", "a", 3)
+            await until(lambda: dev.writes)
+            assert dev.writes == [("x", 3)]
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_target_is_read_before_it_is_written(tmp_path):
+    """A change waits while the target is reading, and is dropped when the target has that value already."""
+    async def run():
+        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"x": {}, "y": {}}}, None, server=False, reads_first=True)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev",
+                                                     "map": ["a -> x", "b -> y"]}]}, {"src": src, "dev": dev})
+        try:
+            hub.update("src", "a", 1)                # statuses
+            hub.update("src", "b", 1)
+            hub.update("src", "a", 7)                # changes while dev is still reading
+            hub.update("src", "b", 8)
+            hub.update("dev", "x", 7)                # dev has x = 7 already, y = 0
+            hub.update("dev", "y", 0)
+            await asyncio.sleep(0.1)
+            assert dev.writes == []
+            dev.set_ready()
+            await until(lambda: dev.writes)
+            await asyncio.sleep(0.05)
+            assert dev.writes == [("y", 8)]
+            # A change equal to what the device reports is not sent either.
+            hub.update("dev", "x", 9)
+            hub.update("src", "a", 9)
+            await asyncio.sleep(0.1)
+            assert dev.writes == [("y", 8)]
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_own_server_is_filled_again_when_it_comes_back(tmp_path):
+    async def run():
+        src = Mem("src", {"tags": {"a": {}}}, None, server=False)
+        srv = Mem("srv", {}, None)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "srv", "map": ["a"]}]},
+                             {"src": src, "srv": srv})
+        try:
+            hub.update("src", "a", 4)
+            await until(lambda: srv.writes)
+            srv.set_state(False)
+            srv.set_state(True)                      # e.g. a restarted MQTT broker
+            await until(lambda: len(srv.writes) == 2)
+            assert srv.writes == [("a", 4), ("a", 4)]
         finally:
             await hub.stop()
 

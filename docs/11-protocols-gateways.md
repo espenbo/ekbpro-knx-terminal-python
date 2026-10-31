@@ -148,9 +148,26 @@ Settings of the whole gateway: `direction`, `deadband`, `min_interval_ms`, `init
 Rules that keep the plant safe and quiet:
 
 - **No echoes.** A value that was just written and is read back does not travel back to the source.
-- **Initial values** are passed on when a connection comes up, so a fresh OPC UA server or broker has every value
-  at once – but **never to KNX**: a start-up or reconnect never puts telegrams on the bus. `initial: false` turns
-  them off for a gateway or a line.
+- **Read first, send afterwards.** After a start-up or a reconnect every connection first reads the status of its
+  tags; the F11 view shows `reading …` until it is done. These start-up values are remembered on both sides of
+  every line, but **not sent to devices**: a device keeps its own value until something really changes, and only
+  changes that happen *after* both sides have been read are passed on.
+  - Modbus master: ready after the first poll of all registers.
+  - OPC UA client: ready when every node has been read once.
+  - MQTT: ready 1 s after subscribing (the retained messages are the statuses).
+  - KNX: ready at once, or with `server.read_on_start` (in `config.yaml`) when the bus has been read
+    (+2 s for the last answers). Values from the database are statuses too.
+  - Our own servers (OPC UA server, Modbus slave) are ready as soon as they run.
+- **Start-up values fill our own address space only.** The OPC UA server, the Modbus slave and the MQTT state
+  topics a gateway creates get every value at once (and again when they come back, e.g. after a broker restart),
+  so clients reading them do not see empty values. `initial` on a gateway or a line changes this:
+  - not set (default): only to our own servers;
+  - `initial: true`: also to devices (Modbus master, OPC UA client, MQTT topics of devices) – **never to KNX**,
+    a start-up or reconnect never puts telegrams on the bus;
+  - `initial: false`: to nothing.
+- **The target is read before it is written.** A change for a target that is still reading waits until it is
+  done, and is not sent when the target already has that value. If the target is not connected, the change is
+  reported as an error and dropped.
 - **Deadband**: numbers that changed less than this are not sent.
 - **Rate limit** (`min_interval_ms`): at most one write per line and direction in that time; the latest value is
   sent when the time is up.

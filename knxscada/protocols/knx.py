@@ -13,7 +13,9 @@ connects it to the gateways:
 * writes are encoded with the address's DPT and sent like writes from the TUI,
   and logged in the event log with the gateway as the user.
 
-KNX never gets *initial* values from a gateway (see :attr:`Driver.initial_writes`).
+KNX never gets *initial* values from a gateway (see :attr:`Driver.initial_allowed`).
+With ``server.read_on_start`` the connection is *ready* only when the server has
+read the statuses of the bus, so the answers are statuses, not changes.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ def tag_type(dpt: str | None) -> str:
 
 class Driver(BaseDriver):
     protocol = "knx"
-    initial_writes = False
+    initial_allowed = False
     echoes = True   # every write comes back through the server's telegram handling
 
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
@@ -75,16 +77,26 @@ class Driver(BaseDriver):
     def describe(self) -> str:
         return str(self.server.status.get("gateway") or "")
 
+    @property
+    def reads_first(self) -> bool:  # type: ignore[override]
+        # Only the first time: after a reconnect the bus is not read again, so telegrams are changes at once.
+        return not self.server.start_read_done
+
     async def session(self) -> None:
         # The values known at start-up (from the database) go to the gateways as initial values,
         # so an OPC UA server or MQTT broker shows them at once.
         for addr, st in list(self.server.state.items()):
             if addr in self.tags and st.get("value") is not None:
                 self.hub.update(self.name, addr, st["value"])
-        # From now on every KNX value is a real event (a telegram), never an "initial" one.
-        self.hub._seen.update(f"{self.name}/{a}" for a in self.tags)
         self.set_state(bool(self.server.status.get("connected")))
         await self.wait_stopped()
+
+    def set_ready(self) -> None:
+        # From now on every KNX value is a real event (a telegram), never an "initial" one –
+        # also for addresses that have not been seen yet.
+        if self.connected and not self.ready:
+            self.hub._seen.update(f"{self.name}/{a}" for a in self.tags)
+        super().set_ready()
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
         dpt = tag.extra.get("dpt")

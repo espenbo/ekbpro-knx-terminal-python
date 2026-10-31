@@ -64,24 +64,27 @@ Gren: `feature/modulaer-protokoller`
       alle registrene. Valg av mal i F11-skjemaet.
 - [ ] `./scada modules simulate wago-879-30xx` (eller tilsvarende): Modbus-slave fra en mal, til test uten utstyr
 
-## Oppstart: les først, send etterpå (ny regel 2026-10-31)
+## Oppstart: les først, send etterpå (ferdig 2026-10-31)
 
 Ved oppstart og ved gjenoppkobling skal **ingen** protokoll sende endringer. Statusene skal leses av først.
 
-I dag gjelder sperren bare for KNX (`initial_writes = False` i `knx.py`). De andre driverne har
-`initial_writes = True` (`base.py`), og gatewayen sender startverdiene videre til Modbus, MQTT og OPC UA
-(`gateway.py`, `initial: true` som standard).
-
-- [ ] Endre standarden: `initial_writes = False` for alle drivere, og `initial: false` som standard i gatewayen
-- [ ] Hver tilkobling leser alle taggene sine (Modbus-polling, OPC UA-lesing, MQTT retained, KNX fra databasen
-      eller GroupValueRead) før gatewayen slipper gjennom noe. Verdiene som leses, lagres som «siste verdi» på
-      begge sider av lenken, slik at de ikke sendes senere som en endring.
-- [ ] En tilkobling er «klar» først når første lesing er ferdig. Status i F11: `leser` → `klar`.
-- [ ] Bare endringer som kommer *etter* at begge sider er klare, sendes videre
-- [ ] `initial: true` skal fortsatt kunne slås på per gateway/linje (for eksempel en tom MQTT-broker som skal
-      fylles) – men aldri mot KNX (besluttet 2026-10-31)
-- [ ] Tester: oppstart og gjenoppkobling sender ingenting; første endring etter oppstart sendes
-- [ ] Oppdatere dokumentasjonen (`docs/11-protocols-gateways.md`, docstringen i `gateway.py`)
+- [x] `Driver.ready`: en tilkobling er klar først når første lesing er ferdig (Modbus: første polling,
+      OPC UA-klient: alle noder lest, MQTT: 1 s etter abonnement, KNX: etter `read_on_start` + 2 s).
+      Verdier før det er statuser, ikke endringer. F11 viser `leser …`.
+- [x] Statuser lagres som «siste verdi» på begge sider av lenken. Målets egne verdier følges også for
+      enveislenker, slik at en endring ikke sendes når målet allerede har verdien.
+- [x] En endring til et mål som fortsatt leser, venter til det er klart (og droppes hvis målet har verdien)
+- [x] Startverdier går bare til egne servere (OPC UA-server, Modbus-slave, MQTT-tilstander laget av en
+      gateway) – aldri til utstyr. `initial: true` sender også til utstyr (aldri KNX), `initial: false` til ingenting.
+      Egne servere fylles på nytt når de kommer tilbake (for eksempel en MQTT-broker som har startet på nytt).
+- [x] Rettet: svarene på `read_on_start` ble sendt videre som endringer fra KNX
+- [x] TUI: «Send verdier ved oppstart» er nå et valg (bare til egne servere / ja / nei)
+- [x] Tester (4 nye), `docs/11-protocols-gateways.md`, docstringen i `gateway.py`
+- [ ] Avklare: skal egne servere også vente med å fylles (streng tolkning av regelen)? I dag fylles de straks,
+      fordi det ikke sender noe til utstyr, og fordi en tom OPC UA-server ellers ville vist tomme verdier til
+      første endring.
+- [ ] Vurdere `read_on_start: status` som standard når KNX er kilde i en gateway (i dag er standarden `false`,
+      og KNX-statusene kommer da fra databasen)
 
 ## Dokumentasjon
 
