@@ -164,6 +164,7 @@ class ScadaApp(App):
         self.server_ok = False
         self._quitting = False  # NOT "_closing": that name is used by Textual itself
         self.home = HomeModel(self.model, self.ui)
+        self._add_system_points()
         self.history: dict[str, list[tuple[float, float]]] = {}  # 24 h history for overview charts
         self.traffic: list[int] = []  # telegrams per minute, last hour
         self.ascii = bool(self.ui.get("ascii", False))
@@ -232,6 +233,27 @@ class ScadaApp(App):
                 for n, spec in (pconf.settings_of(conn).get("tags") or {}).items()}
         return add_point_rooms(self.model, rooms, tags)
 
+    def _add_system_points(self) -> None:
+        """The outdoor temperature and the power of the meters in ``ui.systems`` for the overview tiles.
+
+        Registered as ``pt:conn/tag`` like the tags on room cards, so the state, the 24 h history and "old
+        value" work the same way. A KNX outdoor address (``ui.outdoor_ga`` or found by name) wins.
+        """
+        vents, meters, _problems = parse_systems(self.ui.get("systems"))
+        point_gas = self.model.setdefault("point_gas", {})
+
+        def register(key: str, name: str, unit: str) -> str:
+            ga = POINT + key
+            point_gas.setdefault(ga, {"address": ga, "name": name, "dpt": "", "unit": unit, "writable": False,
+                                      "used": True, "placeholder": False, "point": key})
+            return ga
+
+        if not self.home.outdoor_ga:
+            key = next((k for v in vents if v.kind == "ventilation" and (k := v.key("outdoor"))), None)
+            if key:
+                self.home.outdoor_ga = register(key, _("Outdoor"), "°C")
+        self.home.meters = [(m.name, register(k, m.name, "")) for m in meters if (k := m.key("power"))]
+
     def _point_text(self, ga: str, value: Any) -> str:
         if value is None:
             return "–"
@@ -261,6 +283,9 @@ class ScadaApp(App):
         conns = sorted({g["point"].split("/", 1)[0] for g in self.model.get("point_gas", {}).values()})
         for conn in conns:
             for p in await self.request("points", conn=conn, limit=5000) or []:
+                rec = self.model["point_gas"].get(f"{POINT}{conn}/{p['name']}")
+                if rec is not None and not rec.get("unit") and p.get("unit"):
+                    rec["unit"] = p["unit"]            # meters: kW or W, known only from the server
                 self._set_point(f"{conn}/{p['name']}", p.get("value"), p.get("ts"), p.get("q") or "")
 
     def _build_menu(self) -> None:

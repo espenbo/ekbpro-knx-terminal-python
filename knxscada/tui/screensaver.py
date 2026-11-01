@@ -236,7 +236,7 @@ class ScreenSaver(Screen):
         self._shown: dict[str | None, str] = {}  # widget id → markup last shown
         self.step = 0                             # animation step (half seconds)
         self.values: dict[str, Value] = {}        # "conn/tag" → value of the units and meters in ui.systems
-        self.series: dict[str, list[tuple[float, float]]] = {}  # 24 h history of meter power and outdoor tags
+        self.series: dict[str, list[tuple[float, float]]] = {}  # 24 h history of the meters' power
         self._series_at = 0.0
         self._drops: list[list[Any]] = []         # telegram rain: [x, y, speed, text]
         self._rain_seen = time.time() - 60
@@ -254,8 +254,6 @@ class ScreenSaver(Screen):
         vents, meters, _problems = parse_systems(self.scada.ui.get("systems"))
         self.vents = [v for v in vents if v.kind == "ventilation"]
         self.meters = meters
-        outdoor = next((k for v in self.vents if (k := v.key("outdoor"))), None)
-        self.outdoor_key = None if self.scada.home.outdoor_ga else outdoor
         self.set_interval(0.5, self._tick)
         self.set_interval(15, self._load)
         self._load()
@@ -272,7 +270,7 @@ class ScreenSaver(Screen):
                 self.values[f"{conn}/{p['name']}"] = (p.get("value"), p.get("unit") or "", p.get("q") or "")
         if time.time() - self._series_at > 300:
             self._series_at = time.time()
-            for key in [k for m in self.meters if (k := m.key("power"))] + [self.outdoor_key] * bool(self.outdoor_key):
+            for key in [k for m in self.meters if (k := m.key("power"))]:
                 pts = await app.request("history", point=key, hours=24, max_points=300) or []
                 self.series[key] = [(float(p[0]), float(p[1])) for p in pts if p[1] is not None]
 
@@ -347,15 +345,11 @@ class ScreenSaver(Screen):
         return max(40, self.size.width - 8 - 14), max(10, self.size.height - 1 - 2 - 6)
 
     def _outdoor(self) -> tuple[float | None, list[tuple[float, float]]]:
-        """Outdoor temperature and its 24 h history: the KNX address, else the outdoor sensor of a unit."""
+        """Outdoor temperature and its 24 h history: the KNX address, else the outdoor sensor of a unit (the app
+        registers it as ``pt:conn/tag``)."""
         app = self.scada
         ga = app.home.outdoor_ga
-        if ga:
-            return _num(HomeModel.value(app.state, ga)), app.history.get(ga, [])
-        if self.outdoor_key:
-            v = self.values.get(self.outdoor_key)
-            return (_num(v[0]) if v else None), self.series.get(self.outdoor_key, [])
-        return None, []
+        return _num(HomeModel.value(app.state, ga)), app.history.get(ga or "", [])
 
     def _big(self, text: str, color: str = "$primary") -> str:
         """A large value: big block digits if enabled, otherwise bold text."""

@@ -21,6 +21,7 @@ Performance notes (these views run over SSH, often for hours):
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -165,6 +166,8 @@ class OverviewView(GAWatcher, View):
     """F1: status tiles, climate table, temperature chart, room status, activity, traffic, lights."""
 
     ACTIVITY_ROWS = 500
+    #: Seconds each energy meter is shown on the POWER tile (meters from ui.systems, no KNX power address).
+    METER_ROTATE_S = 5
     #: Column (English title, width) of the activity log.
     ACT_COLS = ((N_("Time"), 8), (N_("GA"), 8), (N_("Name"), 40), (N_("Value"), 16))
 
@@ -459,7 +462,9 @@ class OverviewView(GAWatcher, View):
             q("#t-in", Tile).show("-", "", no_data, "idle")
 
         pw = HomeModel.value(state, home.power_ga)
-        if isinstance(pw, (int, float)):
+        if home.meters and not home.power_ga:
+            self._meter_tile(now)
+        elif isinstance(pw, (int, float)):
             spark = self._spark(home.power_ga, 18, now)
             text = f"{pw / 1000:.2f}" if abs(pw) >= 10000 else f"{pw:.0f}"
             q("#t-power", Tile).show(text, "kW" if abs(pw) >= 10000 else "W", "", "ok", spark,
@@ -483,6 +488,26 @@ class OverviewView(GAWatcher, View):
         state_name = "bad" if crit else ("warn" if active or unacked else "ok")
         sub = _("{n} unacknowledged").format(n=len(unacked)) if unacked else _("all normal")
         q("#t-alarm", Tile).show(str(len(active)), _("active"), sub, state_name)
+
+    def _meter_tile(self, now: float) -> None:
+        """The POWER tile without a KNX power address: one meter from ui.systems at a time, its name in the title."""
+        app = self.scada
+        meters = app.home.meters
+        i = int(now // self.METER_ROTATE_S) % len(meters)
+        name, ga = meters[i]
+        tile = self.query_one("#t-power", Tile)
+        short = re.sub(r"\s*\(.*\)\s*$", "", name)          # "Main (riser from the board)" → "Main"
+        title = f"{_('POWER')} · {short}"
+        if tile.border_title != title:
+            tile.border_title = title
+        pw = HomeModel.value(app.state, ga)
+        where = f"{i + 1}/{len(meters)}"
+        if isinstance(pw, (int, float)) and not isinstance(pw, bool):
+            unit = app.ga(ga).get("unit", "")
+            tile.show(f"{pw:.2f}" if unit == "kW" else f"{pw:.0f}", unit, where, "ok", self._spark(ga, 18, now),
+                      HomeModel.is_old(app.state, ga))
+        else:
+            tile.show("-", "", f"{where} {_('no data')}", "idle")
 
     @on(DataTable.RowSelected, "#ov-lights")
     def _light_off(self, event: DataTable.RowSelected) -> None:

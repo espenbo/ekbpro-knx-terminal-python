@@ -107,6 +107,8 @@ class HomeModel:
         self.outdoor_ga = ui.get("outdoor_ga") or _first_ga(gas, r"^(ute ?temp|outdoor|outside)", 9)
         self.power_ga = ui.get("power_ga") or _first_ga(gas, r"power$|effekt|\bW$", dpt="14.056")
         self.energy_ga = ui.get("energy_ga") or _first_ga(gas, r"kwh|energy", 13)
+        # Energy meters from ui.systems: (name, pt:conn/tag of the power), filled by the app.
+        self.meters: list[tuple[str, str]] = []
         self.co2 = [(a, g["name"]) for a, g in gas.items() if g["used"] and g["dpt"] == "9.008" and re.search("co2", g["name"], re.I)]
         self.humidity = [
             (a, g["name"]) for a, g in gas.items()
@@ -117,7 +119,7 @@ class HomeModel:
         """Addresses whose 24 h history the overview needs (room temperatures, outdoor, power)."""
         out = [r.temp_ga for r in self.rooms if r.temp_ga]
         out += [g for g in (self.outdoor_ga, self.power_ga) if g]
-        return out
+        return out + [ga for _name, ga in self.meters]
 
     @staticmethod
     def value(state: dict, ga: str | None) -> Any:

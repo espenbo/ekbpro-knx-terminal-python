@@ -376,3 +376,55 @@ def test_tui_point_rooms(tmp_path, monkeypatch):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def test_tui_overview_tiles_from_systems(tmp_path, monkeypatch):
+    """Without KNX outdoor and power addresses, OUTDOOR comes from a unit's outdoor sensor and POWER rotates
+    through the meters of ui.systems with the meter's name in the title."""
+    from knxscada.tui.app import ScadaApp
+    from knxscada.tui.views import OverviewView, Tile
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    systems = [{"name": "AHU 1", "connection": "vent", "tags": {"outdoor": "RT900"}},
+               {"name": "Energy", "type": "energy", "meters": [
+                   {"name": "Main (riser from the board)", "connection": "m1"}, {"name": "Heat pump", "connection": "m2"}]}]
+    cfg = Config(path=tmp_path / "config.yaml", server={"socket": "s.sock"}, knx={"enabled": False},
+                 ui={"splash": False, "language": "en", "systems": systems})
+    app = ScadaApp(cfg)
+    assert app.home.outdoor_ga == "pt:vent/RT900"
+    assert app.home.meters == [("Main (riser from the board)", "pt:m1/Total active power"),
+                               ("Heat pump", "pt:m2/Total active power")]
+    assert "pt:m2/Total active power" in app.home.trend_gas()
+    points = {"vent": [{"name": "RT900", "value": -2.5, "unit": "°C", "q": "good"}],
+              "m1": [{"name": "Total active power", "value": 3.25, "unit": "kW", "q": "good"}],
+              "m2": [{"name": "Total active power", "value": 800, "unit": "W", "q": "good"}]}
+
+    async def fake_request(cmd, **kw):
+        return points.get(kw.get("conn"), []) if cmd == "points" else []
+
+    async def fake_connect():
+        app._handle({"type": "hello", "state": {}, "status": {"connected": True, "connection": "x"},
+                     "alarms": [], "stats": {}})
+
+    monkeypatch.setattr(app.client, "request", fake_request)
+    monkeypatch.setattr(app.client, "connect", fake_connect)
+    monkeypatch.setattr(type(app.client), "connected", property(lambda self: True))
+    monkeypatch.setattr(app.client, "close_nowait", lambda: None)
+
+    async def run():
+        async with app.run_test(size=(180, 50)) as pilot:
+            await until(lambda: app.state.get("pt:vent/RT900", {}).get("value") == -2.5, 5)
+            view = app.query_one("#overview", OverviewView)
+            await pilot.pause(1.2)
+            assert "-2.5" in str(view.query_one("#t-out", Tile).render())
+            tile = view.query_one("#t-power", Tile)
+            view._meter_tile(0.0)
+            assert tile.border_title == "POWER · Main" and tile.border_subtitle == "1/2"
+            assert "3.25 kW" in str(tile.render())
+            view._meter_tile(OverviewView.METER_ROTATE_S + 0.1)
+            assert tile.border_title == "POWER · Heat pump" and "800 W" in str(tile.render())
+            app._set_point("m2/Total active power", None, None, "bad")
+            view._meter_tile(OverviewView.METER_ROTATE_S + 0.1)
+            assert tile.border_subtitle == "2/2 no data" and tile.has_class("idle")
+
+    asyncio.run(run())
