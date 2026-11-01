@@ -145,6 +145,12 @@ class ScadaServer:
     """Owns the KNX connection, the database, the alarm state and all client connections."""
 
     def __init__(self, cfg: Config, demo: bool = False) -> None:
+        """Load the ETS project(s), open the database and prepare KNX, PLC bridges and the protocol hub.
+
+        Nothing is connected or sent here; :meth:`run` starts everything. A bad KNX interface setting raises
+        at once, so a typo stops the server instead of running it half-configured. *demo* replaces the bus by
+        the :class:`Simulator` and uses a separate ``…-demo.db``.
+        """
         self.cfg = cfg
         self.demo = demo
         self.model = load_project(cfg)
@@ -361,6 +367,11 @@ class ScadaServer:
             self._set_status(False, code if len(ifs) == 1 else N_("disconnected"))
 
     def _set_status(self, connected: bool, code: str) -> None:
+        """Set the overall KNX state (*code* is an untranslated ``N_()`` text), tell the clients and the KNX driver.
+
+        The KNX driver's state drives the gateways: when it goes down their KNX values turn "old", and on
+        the way up nothing is sent to the bus (KNX never gets initial values).
+        """
         self.status.update(connected=connected, connection=code)
         self._broadcast({"type": "status", "status": self.status})
         knx = self.hub.drivers.get("knx") if hasattr(self, "hub") else None
@@ -420,6 +431,7 @@ class ScadaServer:
         await xknx.telegrams.put(Telegram(destination_address=GroupAddress(split_key(ga)[1]), payload=apci))
 
     def _iface_connected(self, name: str) -> bool:
+        """Whether the KNX IP interface *name* is connected now (writes through it are refused otherwise)."""
         return any(i["connected"] for i in self.status["interfaces"] if i["name"] == name)
 
     async def _read_on_start(self) -> None:
@@ -573,6 +585,12 @@ class ScadaServer:
             self._broadcast_alarms()
 
     def _raise_alarm(self, addr: str, rule: Rule, value: Any, name: str | None, text_value: str | None) -> None:
+        """Open an alarm for *addr* (a group address or ``conn/tag``): store it, log it and tell the clients.
+
+        Called by :meth:`_check_alarm` directly, or by the ``delay_s`` timer when the condition lasted long
+        enough. *name*/*text_value* are given for protocol tags; for a group address (None) they are taken
+        from the ETS project and the DPT.
+        """
         self._alarm_delay.pop(addr, None)
         if name is None:
             ga = self.gas[addr]
@@ -607,6 +625,7 @@ class ScadaServer:
                           f"{value}{unit}")
 
     def _broadcast_alarms(self) -> None:
+        """Send the full list of open alarms to every client (the alarm view replaces its list)."""
         self._broadcast({"type": "alarms", "alarms": list(self.alarms.values())})
 
     def event(self, level: str, kind: str, text: str, user: str | None = None) -> None:
@@ -784,6 +803,8 @@ class Simulator:
     """
 
     def __init__(self, server: ScadaServer) -> None:
+        """Work out from the project model which addresses echo to which status addresses, which are switches
+        and which are sensors (DPT 9/13/14 that are not set-points)."""
         self.s = server
         self.echo: dict[str, list[tuple[str, str]]] = {}  # control GA → [(status GA, mode)]
         self.sensors: list[str] = []
@@ -843,6 +864,7 @@ class Simulator:
         self.s.ingest(src=src, dst=addr, kind=kind, value=payload, direction="in")
 
     async def run(self) -> None:
+        """Seed start values, then simulate bus traffic forever (cancelled when the server stops)."""
         # Initial values for everything that has no value in the database yet.
         for addr, ga in self.s.gas.items():
             if addr in self.s.state or not ga["used"]:

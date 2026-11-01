@@ -13,8 +13,8 @@ import pytest
 from knxscada.config import Config
 from knxscada.protocols import PROTOCOLS, installed
 from knxscada.protocols import config as pconfig
-from knxscada.protocols.config import save
 from knxscada.protocols.base import Driver, Tag, coerce, same_value, tag_from_spec
+from knxscada.protocols.config import save
 from knxscada.protocols.gateway import convert, convert_back
 from knxscada.protocols.hub import Hub
 from knxscada.protocols.modbus import from_registers, parse_address, to_registers
@@ -26,6 +26,7 @@ class FakeServer:
     """What the hub needs of the SCADA server."""
 
     def __init__(self, base: Path) -> None:
+        """No KNX, no clients; files are resolved relative to *base* (the test's tmp_path)."""
         self.cfg = SimpleNamespace(resolve=lambda p: base / p, server={}, base=base)
         self.knx_enabled = False
         self.events: list[tuple[str, str]] = []
@@ -34,10 +35,11 @@ class FakeServer:
         self.gas: dict = {}
 
     def event(self, level, category, text, user=None):
+        """Keep (level, text) so tests can check what the hub reported."""
         self.events.append((level, text))
 
     def _broadcast(self, msg):
-        pass
+        """No TUI clients unless a test replaces this."""
 
 
 class Mem(Driver):
@@ -46,12 +48,16 @@ class Mem(Driver):
     protocol = "mem"
 
     def __init__(self, name, settings, hub, initial_allowed=True, server=True, reads_first=False):
+        """*initial_allowed* and *reads_first* play the safety switches of real drivers (KNX, devices that are read
+        first).
+        """
         super().__init__(name, {"role": "server" if server else "client", **settings}, hub)
         self.initial_allowed = initial_allowed
         self.reads_first = reads_first
         self.writes: list[tuple[str, Any]] = []
 
     def create_tag(self, name, spec):
+        """As a server, accept any tag a gateway asks for, as our own Modbus/OPC UA servers do."""
         if self.role != "server":
             return super().create_tag(name, spec)
         tag = tag_from_spec(name, spec)
@@ -59,10 +65,12 @@ class Mem(Driver):
         return tag
 
     async def session(self):
+        """Report the connection as up, then end after a moment; tests that need a lasting connection override this."""
         self.set_state(True)
         await self.wait_stopped(0.05)
 
     async def write(self, tag, value, user=""):
+        """Record the write instead of sending it anywhere."""
         self.writes.append((tag.name, value))
 
 
@@ -80,6 +88,7 @@ async def make_hub(tmp_path: Path, data: dict, mems: dict[str, Mem] | None = Non
 
 
 async def until(cond, timeout=5.0):
+    """Wait until cond() is true, polling every 20 ms; fail after *timeout* seconds."""
     end = asyncio.get_running_loop().time() + timeout
     while not cond():
         if asyncio.get_running_loop().time() > end:
@@ -94,6 +103,7 @@ pytestmark_modbus = pytest.mark.skipif(not installed("modbus"), reason="pymodbus
 
 
 def free_port() -> int:
+    """A TCP port on localhost that is free right now."""
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -106,10 +116,12 @@ def free_port() -> int:
     ({"from": "a", "to": "b", "direction": "both", "scale": None}, {"from": "a", "to": "b", "direction": "both"}),
 ])
 def test_parse_link(item, expected):
+    """A map line can be a tag name, 'a -> b' or a dict; empty options are dropped."""
     assert pconfig.parse_link(item) == expected
 
 
 def test_link_text_is_the_inverse():
+    """Map lines are written back in the shortest form that keeps all options."""
     assert pconfig.link_text({"from": "a", "to": ""}) == "a"
     assert pconfig.link_text({"from": "a", "to": "a"}) == "a"
     assert pconfig.link_text({"from": "a", "to": "b"}) == "a -> b"
@@ -117,6 +129,7 @@ def test_link_text_is_the_inverse():
 
 
 def test_validate_finds_problems():
+    """Validation reports every problem at once, each with the connection or gateway line it belongs to."""
     data = {
         "connections": {
             "1bad": {"protocol": "modbus"},
@@ -139,12 +152,16 @@ def test_validate_finds_problems():
 
 
 def test_validate_accepts_knx_when_set_up():
+    """A gateway from 'knx' is only valid when KNX is set up in config.yaml."""
     data = {"connections": {"m": {"protocol": "mqtt"}}, "gateways": [{"name": "g", "from": "knx", "to": "m", "map": ["1/1/1"]}]}
     assert pconfig.validate(data, knx=True) == []
     assert "no connection called 'knx'" in "\n".join(pconfig.validate(data, knx=False))
 
 
 def test_save_and_load_round_trip(tmp_path):
+    """Saving leaves out defaults, writes tags and map lines compactly, is private (0600), keeps a backup and is stable
+    on a second save.
+    """
     path = tmp_path / "protocols.yaml"
     data = {
         "connections": {
@@ -173,12 +190,16 @@ def test_save_and_load_round_trip(tmp_path):
 
 
 def test_save_refuses_invalid_data(tmp_path):
+    """Invalid data is never written, so a running server is not left with a broken protocols.yaml."""
     with pytest.raises(ValueError, match="unknown protocol"):
         pconfig.save(tmp_path / "p.yaml", {"connections": {"x": {"protocol": "nope"}}})
     assert not (tmp_path / "p.yaml").exists()
 
 
 def test_registry_is_consistent():
+    """No duplicate setting keys in PROTOCOLS, and every default is one of its choices (the F11 form is built from
+    them).
+    """
     for p in PROTOCOLS.values():
         keys = [f.key for f in p.settings]
         assert len(keys) == len(set(keys)), p.name
@@ -193,20 +214,26 @@ def test_registry_is_consistent():
     (True, "int", 1), (True, "str", "true"), (None, "int", None), ({"r": 1}, "", {"r": 1}),
 ])
 def test_coerce(value, typ, expected):
+    """Values are converted to the tag type, also Norwegian words and decimal comma; values without a type are kept as
+    they are.
+    """
     assert coerce(value, typ) == expected
 
 
 def test_coerce_refuses_nonsense():
+    """A word that is neither on nor off is refused, never guessed."""
     with pytest.raises(ValueError):
         coerce("kanskje", "bool")
 
 
 def test_same_value():
+    """Floats are equal within a small tolerance (float32 noise); a bool is never equal to a number."""
     assert same_value(21.5, 21.500001) and not same_value(21.5, 21.6)
     assert not same_value(True, 1) and same_value("a", "a")
 
 
 def test_convert_and_back():
+    """Gateway conversion scales, inverts and maps enum names to numbers, and convert_back undoes the scale."""
     assert convert(215, "float", 0.1, None, False) == pytest.approx(21.5)
     assert convert_back(21.5, "int", 0.1, None, False) == 215
     assert convert(True, "bool", None, None, True) is False
@@ -220,11 +247,13 @@ def test_convert_and_back():
     ("00010", ("co", 9, None)), ("hr:0x5002", ("hr", 0x5002, None)), ("HR:0X600A.1", ("hr", 0x600A, 1)),
 ])
 def test_parse_address(text, expected):
+    """Modbus addresses: table:number, bits, hex and the classic 4xxxx/3xxxx/1xxxx/0xxxx numbers (1-based)."""
     assert parse_address(text) == expected
 
 
 @pytest.mark.parametrize("text", ["xx:1", "hr:70000", "co:1.2", "40000", "1234", "hr:1.16", ""])
 def test_parse_address_refuses(text):
+    """Unknown tables, numbers out of range, bits on coils and ambiguous numbers are refused."""
     with pytest.raises(ValueError):
         parse_address(text)
 
@@ -233,10 +262,12 @@ def test_parse_address_refuses(text):
                                              (2**40, "int64"), (1e300, "float64")])
 @pytest.mark.parametrize("order", ["big", "little"])
 def test_registers_round_trip(value, dtype, order):
+    """Every register type survives to_registers → from_registers in both word orders."""
     assert from_registers(to_registers(value, dtype, order), dtype, order) == pytest.approx(value)
 
 
 def test_registers_word_order():
+    """Word order 'little' puts the low word first; a value too large for the type is refused."""
     assert to_registers(0x00010002, "uint32", "big") == [1, 2]
     assert to_registers(0x00010002, "uint32", "little") == [2, 1]
     with pytest.raises(ValueError):
@@ -249,10 +280,12 @@ def test_registers_word_order():
     (b'{"temp": 20.1, "hum": 40}', "temp", 20.1), (b'{"x": 1}', "", '{"x": 1}'), (b"[1,2]", "", [1, 2]),
 ])
 def test_parse_payload(payload, key, expected):
+    """MQTT payloads: numbers and true/false are parsed, JSON objects by key or 'value', other text kept."""
     assert parse_payload(payload, key) == expected
 
 
 def test_make_payload():
+    """Outgoing MQTT payloads are plain text or JSON with a value field; None is an empty payload."""
     assert make_payload(True, "plain") == "true"
     assert make_payload(None, "plain") == ""
     assert '"value": 21.5' in make_payload(21.5, "json")
@@ -262,12 +295,15 @@ def test_make_payload():
     ("a/#", "a/b/c", True), ("a/+/c", "a/b/c", True), ("a/+", "a/b/c", False), ("a/b", "a/b", True), ("#", "x", True),
 ])
 def test_topic_matches(pattern, topic, ok):
+    """MQTT wildcards: '#' matches the rest, '+' one level."""
     assert topic_matches(pattern, topic) is ok
 
 
 # -- the gateway engine --------------------------------------------------------------------------------
 def test_gateway_forward_rename_scale_and_no_echo(tmp_path):
+    """A gateway line renames and scales, creates a writable target tag, and a value sent one way is not echoed back."""
     async def run():
+        """Forward a raw value, then write the target and check it goes back unscaled, once."""
         src = Mem("src", {"tags": {"raw": {"type": "int"}}}, None, server=False)
         dst = Mem("dst", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dst", "map": [
@@ -296,6 +332,7 @@ def test_gateway_forward_rename_scale_and_no_echo(tmp_path):
 def test_initial_values_never_reach_a_quiet_target(tmp_path):
     """Like KNX: a source that (re)connects must not cause writes to a target with initial_allowed = False."""
     async def run():
+        """Send statuses, a change and values after a reconnect to a target with initial_allowed = False."""
         src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False, reads_first=True)
         quiet = Mem("quiet", {"tags": {"x": {}, "y": {}}}, None, initial_allowed=False, server=False)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "quiet", "map": ["a -> x", "b -> y"]}]},
@@ -323,6 +360,7 @@ def test_initial_values_never_reach_a_quiet_target(tmp_path):
 def test_start_up_sends_nothing_to_devices(tmp_path):
     """Read first, send afterwards: initial values reach our own servers, never a device (client) by default."""
     async def run():
+        """Bring up a source with values and check what reaches our server and the device."""
         src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False, reads_first=True)
         dev = Mem("dev", {"tags": {"x": {}}}, None, server=False)
         srv = Mem("srv", {}, None)
@@ -351,6 +389,7 @@ def test_start_up_sends_nothing_to_devices(tmp_path):
 def test_values_before_ready_are_statuses(tmp_path):
     """Until a connection has read everything once, its values are not passed on as changes."""
     async def run():
+        """Update the source before and after it is ready."""
         src = Mem("src", {"tags": {"a": {}}}, None, server=False, reads_first=True)
         dev = Mem("dev", {"tags": {"x": {}}}, None, server=False)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["a -> x"]}]},
@@ -374,6 +413,7 @@ def test_values_before_ready_are_statuses(tmp_path):
 def test_target_is_read_before_it_is_written(tmp_path):
     """A change waits while the target is reading, and is dropped when the target has that value already."""
     async def run():
+        """Send changes while the target is reading, with one value it already has."""
         src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False)
         dev = Mem("dev", {"tags": {"x": {}, "y": {}}}, None, server=False, reads_first=True)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev",
@@ -403,7 +443,9 @@ def test_target_is_read_before_it_is_written(tmp_path):
 
 
 def test_own_server_is_filled_again_when_it_comes_back(tmp_path):
+    """When our own server reconnects (e.g. a restarted MQTT broker) it gets the current values again."""
     async def run():
+        """Write a value, then drop and restore the server's connection."""
         src = Mem("src", {"tags": {"a": {}}}, None, server=False)
         srv = Mem("srv", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "srv", "map": ["a"]}]},
@@ -422,7 +464,9 @@ def test_own_server_is_filled_again_when_it_comes_back(tmp_path):
 
 
 def test_initial_false_and_deadband(tmp_path):
+    """initial: false holds back the first values, and the deadband skips changes smaller than it."""
     async def run():
+        """Send a status and then small steps; only the one past the deadband goes out."""
         src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False, reads_first=True)
         dst = Mem("dst", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dst", "initial": False,
@@ -444,7 +488,9 @@ def test_initial_false_and_deadband(tmp_path):
 
 
 def test_rate_limit_sends_the_latest_value(tmp_path):
+    """min_interval_ms sends the first value at once and then the latest one, not every step."""
     async def run():
+        """Send five values within the interval."""
         src = Mem("src", {"tags": {"t": {"type": "int"}}}, None, server=False)
         dst = Mem("dst", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dst", "min_interval_ms": 300,
@@ -462,7 +508,9 @@ def test_rate_limit_sends_the_latest_value(tmp_path):
 
 
 def test_wildcard_lines_follow_new_tags(tmp_path):
+    """A wildcard map line also covers tags that appear later (new MQTT topics), with initial: false respected."""
     async def run():
+        """Add a tag after start and update it twice."""
         src = Mem("src", {"tags": {"Lys1": {}, "Varme": {}}}, None, server=False)
         dst = Mem("dst", {}, None)
         hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dst", "map": [
@@ -481,7 +529,11 @@ def test_wildcard_lines_follow_new_tags(tmp_path):
 
 
 def test_problems_are_reported(tmp_path):
+    """Missing tags and unavailable modules are reported as events and in the status, and writes to a failed connection
+    are refused.
+    """
     async def run():
+        """Start with a bad connection and a gateway with unknown tags."""
         src = Mem("src", {"tags": {"x": {}}}, None, server=False)
         cli = Mem("cli", {}, None, server=False)
         hub = await make_hub(tmp_path, {"connections": {"bad": {"protocol": "sparkplug"}},
@@ -508,6 +560,7 @@ def test_modbus_slave_and_master_through_gateways(tmp_path):
     port = free_port()
 
     async def run():
+        """Pass values from memory through a real Modbus slave and master, then write back and try refused writes."""
         src = Mem("src", {"tags": {"temp": {"type": "float"}, "pump": {"type": "bool"}, "big": {"type": "int"}}}, None,
                   server=False)
         sink = Mem("sink", {}, None)
@@ -563,6 +616,7 @@ def test_opcua_server_and_client_through_gateways(tmp_path):
     port = free_port()
 
     async def run():
+        """Start our OPC UA server first, then the client, and check values and a write back."""
         src = Mem("src", {"tags": {"t": {"type": "float"}, "on": {"type": "bool"}}}, None, server=False)
         sink = Mem("sink", {}, None)
         data = {
@@ -613,33 +667,44 @@ def test_opcua_requests_split_at_the_server_limits():
     from knxscada.opcua_bridge import operation_limits, read_values, subscribe
 
     class Node:
+        """A node whose read returns its value or raises it (a missing limit)."""
         def __init__(self, value):
+            """The value to return, or an exception to raise."""
             self.value = value
 
         async def read_value(self):
+            """Return the value, or raise it if it is an exception."""
             if isinstance(self.value, Exception):
                 raise self.value
             return self.value
 
     class Client:
+        """A client whose server publishes the given OperationLimits; it counts the nodes per Read."""
         def __init__(self, limits):
+            """The published limits by node id; no reads yet."""
             self.limits, self.reads = limits, []
 
         def get_node(self, oid):
+            """A node for a limit; an unpublished limit raises when read."""
             return Node(self.limits.get(oid, RuntimeError("no such node")))
 
         async def read_attributes(self, nodes):
+            """Count the nodes in this Read and return one value per node."""
             self.reads.append(len(nodes))
             return [f"dv{n}" for n in nodes]
 
     class Sub:
+        """A subscription that counts the nodes per CreateMonitoredItems call."""
         def __init__(self):
+            """No calls yet."""
             self.calls = []
 
         async def subscribe_data_change(self, nodes):
+            """Count the nodes in this call."""
             self.calls.append(len(nodes))
 
     async def run():
+        """Read the limits (published, missing, 0) and read/subscribe 250 nodes in chunks."""
         ids = ua.ObjectIds
         wago = Client({ids.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead: 100,
                        ids.Server_ServerCapabilities_OperationLimits_MaxMonitoredItemsPerCall: 100})
@@ -677,6 +742,9 @@ def test_opcua_client_rounds_float32(tmp_path):
 # -- KNX as a protocol: the real server (demo bus), a Modbus slave and a master on the other side ------------
 @pytest.fixture
 def knx_server(tmp_path):
+    """A demo ScadaServer with a Modbus slave linked to KNX both ways, and an old value of 1/1/1 from the database.
+    Yields the server and the slave's port.
+    """
     import json
 
     from knxscada import project
@@ -703,6 +771,9 @@ def knx_server(tmp_path):
 
 @pytestmark_modbus
 def test_knx_gateway_both_ways_and_quiet_start(knx_server):
+    """KNX ↔ Modbus: nothing is sent at start-up (the database value stays local), bus values reach the slave, master
+    writes become KNX writes logged with the gateway as user, and the actuator's echo does not loop.
+    """
     from pymodbus.client import AsyncModbusTcpClient
 
     from knxscada import dpt as dptlib
@@ -710,6 +781,7 @@ def test_knx_gateway_both_ways_and_quiet_start(knx_server):
     s, port = knx_server
 
     async def main():
+        """Start the hub and drive the slave with a Modbus client."""
         s._set_status(True, "demo")   # as ScadaServer.run() does before it starts the hub
         await s.hub.start()
         try:
@@ -746,6 +818,9 @@ def test_knx_gateway_both_ways_and_quiet_start(knx_server):
 
 
 def test_server_without_knx(tmp_path):
+    """Without knx: in config.yaml the server runs only the protocols; KNX writes are refused and 'knx' is not a
+    connection.
+    """
     from xknx.dpt import DPTBinary
 
     from knxscada.server import ScadaServer
@@ -759,6 +834,7 @@ def test_server_without_knx(tmp_path):
             asyncio.run(s._send("1/1/1", "write", DPTBinary(1)))
 
         async def main():
+            """Start the hub, ask for the protocols snapshot and stop."""
             await s.hub.start()
             snap = await s.hub.command({"cmd": "protocols"}, "test")
             await s.hub.stop()
@@ -777,6 +853,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_example_file_is_valid():
+    """protocols.example.yaml is valid and its meter gets its tags from the device template."""
     data = pconfig.load_data(ROOT / "protocols.example.yaml")
     assert pconfig.validate(data, knx=True) == []
     meter = pconfig.settings_of(data["connections"]["meter1"])   # tags from the device template
@@ -784,6 +861,9 @@ def test_example_file_is_valid():
 
 
 def test_cli_modules_and_gateway(tmp_path, capsys):
+    """./scada modules lists the modules, ./scada gateway shows the gateways or the errors, and installing nothing or an
+    unknown module fails.
+    """
     from knxscada.__main__ import main
 
     (tmp_path / "config.yaml").write_text("server: {socket: s.sock}\n", encoding="utf-8")
@@ -825,11 +905,13 @@ def test_tui_gateway_view_edits_protocols_yaml(tmp_path, monkeypatch):
     hub.server._broadcast = lambda msg: app._handle(msg)
 
     async def fake_request(cmd, **kw):
+        """Answer protocol commands, including saving and reloading, from the real hub."""
         if cmd in ("protocols", "points", "point_write", "protocols_save", "protocols_reload"):
             return await hub.command({"cmd": cmd, **kw}, "test")
         return [] if cmd != "hello" else None
 
     async def fake_connect():
+        """Act as a server without a KNX connection that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": False, "connection": "off"},
                      "alarms": [], "stats": {}})
 
@@ -839,6 +921,7 @@ def test_tui_gateway_view_edits_protocols_yaml(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Open F11, add a Modbus master and a gateway through the forms, then try an invalid gateway."""
         await hub.start()
         try:
             async with app.run_test(size=(180, 55)) as pilot:
@@ -907,6 +990,7 @@ def test_logging_of_tags(tmp_path):
     from knxscada.store import Store
 
     async def run():
+        """Log values directly with explicit time stamps and through the hub, then read the history back."""
         src = Mem("src", {"tags": {"T": {"type": "float"}, "On": {"type": "bool"}, "Quiet": {"log": False},
                                    "Own": {"log": True}, "Other": {}},
                           "log": ["T", "On", "Q*"], "log_deadband": 0.2, "log_min_s": 10}, None, server=False)
@@ -944,6 +1028,7 @@ def test_alarm_on_protocol_tag_with_delay(knx_server):
                                      "delay_s": 0.2, "text": "Vent: {name} = {value}"})]
 
     async def run():
+        """Raise the alarm tag briefly, then for longer than the delay, then clear it."""
         vent = Mem("vent", {"tags": {"Fan_AL": {"type": "bool", "description": "Tilluftsvifte alarm"},
                                      "Fan_PV": {"type": "float", "unit": "%"}}}, s.hub, server=False)
         s.hub.drivers["vent"] = vent

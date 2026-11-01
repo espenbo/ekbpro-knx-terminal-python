@@ -17,21 +17,33 @@ writes ``protocols.yaml`` and restarts only the connections that changed.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DataTable,
+    Input,
+    Label,
+    OptionList,
+    Select,
+    Static,
+    TextArea,
+)
 from textual.widgets.option_list import Option
 
 from ..i18n import N_, _
 from ..protocols import PROTOCOLS, Field, devices, installed
 from ..protocols.config import DIRECTIONS, link_text, parse_link
+from .dialogs import ConfirmDialog
 from .views import View, hms
 from .widgets import FastTable
 
@@ -112,9 +124,14 @@ def parse_map(text: str) -> list[Any]:
 class ProtocolDialog(ModalScreen[str | None]):
     """Pick the protocol of a new connection."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def compose(self) -> ComposeResult:
+        """List the protocols a new connection can use; KNX (set up in ``config.yaml``) and planned ones are left out.
+
+        Protocols whose optional Python module is missing are still listed, marked "(not installed)", so the
+        user learns what to install (``./scada modules install …``).
+        """
         with Vertical(classes="dialog"):
             yield Label(_("New connection – protocol"), classes="dialog-title")
             options = []
@@ -126,18 +143,27 @@ class ProtocolDialog(ModalScreen[str | None]):
             yield OptionList(*options, id="proto-list")
 
     def on_mount(self) -> None:
+        """Focus the protocol list so the arrow keys work at once."""
         self.query_one("#proto-list", OptionList).focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Return the chosen protocol name (the option id) to the caller."""
         self.dismiss(event.option.id)
 
 
 class ConnectionDialog(ModalScreen[dict | None]):
     """The settings and tags of one connection. Returns ``{"name", "conn"}``, ``{"delete": True}`` or None."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def __init__(self, protocol: str, name: str = "", conn: dict[str, Any] | None = None) -> None:
+        """Prepare the form for a new or an existing connection.
+
+        Args:
+            protocol: key in :data:`PROTOCOLS`; decides which settings and tag fields the form shows.
+            name: the connection's current name, empty for a new connection.
+            conn: the connection's settings from ``protocols.yaml`` (copied, the original is not changed).
+        """
         super().__init__()
         self.p = PROTOCOLS[protocol]
         self.name_ = name
@@ -146,10 +172,16 @@ class ConnectionDialog(ModalScreen[dict | None]):
         self._model = str(self.conn.get("model") or "")   # device template in the form
 
     def _value(self, f: Field) -> Any:
+        """The value of setting *f* in the connection, or the field's default when it is not set."""
         v = self.conn.get(f.key)
         return f.default if v is None else v
 
     def compose(self) -> ComposeResult:
+        """Build the form: name, one row per setting of the protocol (with help text) and the tags as YAML.
+
+        Each setting row has the id ``row-<key>`` so :meth:`_update_visible` can hide settings that do not apply
+        (e.g. serial settings for Modbus TCP). Delete is only offered for an existing connection.
+        """
         with Vertical(classes="dialog form"):
             title = _("New {protocol} connection") if self.new else _("{protocol} connection")
             yield Label(title.format(protocol=self.p.title), classes="dialog-title")
@@ -183,6 +215,11 @@ class ConnectionDialog(ModalScreen[dict | None]):
                 yield Button(_("Cancel"), id="f-cancel")
 
     def _widget(self, f: Field):
+        """The input widget for setting *f*: Select for choices, Checkbox for bool, Input for the rest.
+
+        Lists are edited as comma-separated text; passwords are masked. The widget id is ``f-<key>``, which
+        :meth:`_read` and :meth:`_fill_from_model` rely on.
+        """
         value = self._value(f)
         wid = f"f-{f.key}"
         if f.kind == "choice":
@@ -199,11 +236,17 @@ class ConnectionDialog(ModalScreen[dict | None]):
         return Input("" if value is None else str(value), id=wid, password=f.kind == "password")
 
     def on_mount(self) -> None:
+        """Hide the settings that do not apply to the initial values, then focus the name field."""
         self._update_visible()
         self.query_one("#f-name", Input).focus()
 
     @on(Select.Changed)
     def _changed(self, event: Select.Changed) -> None:
+        """A Select changed: apply a newly chosen device template, then show/hide the dependent settings.
+
+        Textual also sends Changed for the initial value when the form is mounted; comparing with
+        :attr:`_model` keeps that from overwriting the saved settings with the template's.
+        """
         if event.select.id == "f-model":
             model = "" if event.value is Select.NULL else str(event.value)
             if model != self._model:   # chosen by the user (not the initial value)
@@ -220,14 +263,10 @@ class ConnectionDialog(ModalScreen[dict | None]):
         if tpl is None:
             return
         for key, value in (tpl.get("settings") or {}).items():
-            try:
-                w = self.query_one(f"#f-{key}")
-            except Exception:  # noqa: BLE001 - a setting the form does not show
-                continue
-            if isinstance(w, Select):
-                w.value = str(value)
-            elif isinstance(w, Input):
-                w.value = str(value)
+            # A template setting the form does not show (no field with that id) is skipped.
+            for w in self.query(f"#f-{key}"):
+                if isinstance(w, (Select, Input)):
+                    w.value = str(value)
         self.notify(_("{model}: {n} tags and the serial settings come from the device template").format(
             model=tpl["model"], n=len(tpl.get("tags") or {})))
 
@@ -262,12 +301,19 @@ class ConnectionDialog(ModalScreen[dict | None]):
         return out
 
     def _update_visible(self) -> None:
+        """Show only the settings whose ``Field.visible`` condition holds for the values now in the form."""
         values = self._read()
         for f in self.p.settings:
             self.query_one(f"#row-{f.key}").display = f.visible(values)
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
+        """Save, Delete or Cancel.
+
+        Save collects the visible settings, keeps keys of the file the form does not know about, and parses the
+        tags box as YAML. A YAML error is shown and the dialog stays open; validation of the values themselves
+        is left to the server when the result is saved.
+        """
         if event.button.id == "f-cancel":
             self.dismiss(None)
             return
@@ -285,7 +331,8 @@ class ConnectionDialog(ModalScreen[dict | None]):
             try:
                 tags = yaml.safe_load(self.query_one("#f-tags", TextArea).text) or {}
                 if not isinstance(tags, dict):
-                    raise ValueError(_("expected Name: {…} on each line"))
+                    # ValueError: shown to the user like a YAML error, by the handler right below.
+                    raise ValueError(_("expected Name: {…} on each line"))  # noqa: TRY004
             except (yaml.YAMLError, ValueError) as exc:
                 self.notify(_("Tags: {error}").format(error=exc), severity="error")
                 return
@@ -297,15 +344,26 @@ class ConnectionDialog(ModalScreen[dict | None]):
 class GatewayDialog(ModalScreen[dict | None]):
     """One gateway: from, to, direction and its mapping lines. Returns ``{"gw"}``, ``{"delete": True}`` or None."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def __init__(self, names: list[str], gw: dict[str, Any] | None = None) -> None:
+        """Prepare the form for a new gateway (*gw* None) or an existing one.
+
+        Args:
+            names: the connection names offered in From and To.
+            gw: the gateway from ``protocols.yaml`` (copied).
+        """
         super().__init__()
         self.names = names
         self.gw = dict(gw or {})
         self.new = gw is None
 
     def compose(self) -> ComposeResult:
+        """Build the form: name, from, to, direction, deadband, min. interval, start values, on, mapping lines.
+
+        "Send values at start" maps to ``initial`` (None = auto, True, False); the help text states that KNX
+        never gets start values whatever is chosen here – a safety rule enforced by the gateway engine.
+        """
         gw = self.gw
         opts = [(n, n) for n in self.names]
         with Vertical(classes="dialog form"):
@@ -349,10 +407,17 @@ class GatewayDialog(ModalScreen[dict | None]):
                 yield Button(_("Cancel"), id="g-cancel")
 
     def on_mount(self) -> None:
+        """Focus the name field."""
         self.query_one("#g-name", Input).focus()
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
+        """Save, Delete or Cancel.
+
+        Save starts from the gateway's existing keys (unknown ones are kept), writes only values that differ
+        from the defaults (``direction`` forward, ``initial`` auto, ``enabled`` true) so the YAML stays short,
+        and stops with a notification if a mapping line cannot be parsed.
+        """
         if event.button.id == "g-cancel":
             self.dismiss(None)
             return
@@ -389,58 +454,171 @@ class GatewayDialog(ModalScreen[dict | None]):
         self.dismiss({"gw": gw})
 
 
-class PointDialog(ModalScreen[Any]):
-    """Write a value to a tag. Returns the value (text or bool) or None."""
+@dataclass
+class PointWrite:
+    """What the write dialog returns: the value, and for BACnet the chosen priority or a release."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    value: Any = None
+    priority: int | None = None     # None: the tag's/connection's default (protocols without priorities: always)
+    release: bool = False           # BACnet: write Null into the priority slot instead of a value
+
+
+#: BACnet priorities offered in the write dialog with their names from the standard (ASHRAE 135, 19.2.1.1).
+#: 1, 2 and 5 are for life safety and critical equipment and are left out on purpose: an operator in this
+#: program must never be able to override a fire or smoke control command.
+PRIORITY_NAMES = {3: N_("available"), 4: N_("available"), 6: N_("minimum on/off"), 7: N_("available"),
+                  8: N_("manual operator"), 9: N_("available"), 10: N_("available"), 11: N_("available"),
+                  12: N_("available"), 13: N_("available"), 14: N_("available"), 15: N_("available"),
+                  16: N_("available (automatic control)")}
+
+
+class PointDialog(ModalScreen["PointWrite | None"]):
+    """Write a value to a tag. Returns a :class:`PointWrite`, or None when cancelled.
+
+    *tag* is the tag as the server lists it (``points``). When it has a ``priority`` (BACnet), the dialog also
+    offers the write priority – preset to that default – and a **Release** button for the chosen priority.
+    A priority above the default (a lower number) gets a warning: the value then overrides the automatic
+    control until it is released.
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def __init__(self, title: str, tag: dict[str, Any]) -> None:
+        """*title* is shown on top (description and ``conn/tag``); *tag* gives value, unit, type and priority."""
         super().__init__()
         self.title_ = title
         self.tag = tag
+        self.default_priority: int | None = tag.get("priority")
 
     def compose(self) -> ComposeResult:
+        """Current value, the priority (BACnet only), and an input or on/off buttons depending on the type."""
         with Vertical(classes="dialog"):
             yield Label(self.title_, classes="dialog-title", markup=False)
             yield Static(_("Now: {value} {unit}").format(value=show_value(self.tag.get("value")),
                                                           unit=self.tag.get("unit") or ""), markup=False)
+            if self.default_priority is not None:
+                options = [(f"{p} – {_(name)}", p) for p, name in PRIORITY_NAMES.items()]
+                if self.default_priority not in PRIORITY_NAMES:   # configured 1, 2 or 5: still shown, not offered
+                    options.insert(0, (str(self.default_priority), self.default_priority))
+                with Horizontal(classes="dialog-row"):
+                    yield Label(_("Priority"), classes="dialog-label")
+                    yield Select(options, value=self.default_priority, allow_blank=False, id="p-priority")
+                yield Static("", id="p-priority-note", classes="dialog-note")
             if self.tag.get("type") == "bool":
                 with Horizontal(classes="dialog-buttons"):
+                    if self.default_priority is not None:
+                        yield Button(_("Release"), id="p-release")
                     yield Button(_("On"), id="p-true", variant="primary")
                     yield Button(_("Off"), id="p-false")
                     yield Button(_("Cancel"), id="p-cancel")
             else:
                 yield Input(show_value(self.tag.get("value")), id="p-value")
                 with Horizontal(classes="dialog-buttons"):
+                    if self.default_priority is not None:
+                        yield Button(_("Release"), id="p-release")
                     yield Button(_("Write"), id="p-ok", variant="primary")
                     yield Button(_("Cancel"), id="p-cancel")
 
     def on_mount(self) -> None:
+        """Focus the input (or the On button), and explain the preset priority."""
+        self._note()
         for w in self.query(Input):
             w.focus()
             return
         self.query_one("#p-true", Button).focus()
 
+    def priority(self) -> int | None:
+        """The chosen priority, or None when the tag has none (not BACnet)."""
+        if self.default_priority is None:
+            return None
+        return int(self.query_one("#p-priority", Select).value)  # type: ignore[arg-type]
+
+    @on(Select.Changed, "#p-priority")
+    def _note(self) -> None:
+        """Explain the chosen priority; warn when it is above the default (it then overrides the automatic)."""
+        if self.default_priority is None:
+            return
+        p = self.priority()
+        note = self.query_one("#p-priority-note", Static)
+        if p is not None and p < self.default_priority:
+            note.update(Text(_("Priority {priority} overrides the automatic control (priority {default}) until "
+                               "the value is released again with Release.").format(priority=p,
+                                                                                  default=self.default_priority),
+                             style="bold yellow"))
+        else:
+            note.update(Text(_("Lower number = higher priority. The highest active priority decides the value."),
+                             style="dim"))
+
+    def _result(self, value: Any = None, release: bool = False) -> PointWrite:
+        """The dialog's answer; a priority only when it differs from the default (the server then uses its own)."""
+        p = self.priority()
+        return PointWrite(value, p if (release or p != self.default_priority) else None, release)
+
     @on(Input.Submitted)
     def _submitted(self) -> None:
-        self.dismiss(self.query_one("#p-value", Input).value)
+        """Enter in the input field is the same as Write."""
+        self.dismiss(self._result(self.query_one("#p-value", Input).value))
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
+        """Write, On/Off, Release or Cancel."""
         bid = event.button.id
         if bid == "p-ok":
-            self.dismiss(self.query_one("#p-value", Input).value)
+            self.dismiss(self._result(self.query_one("#p-value", Input).value))
         elif bid in ("p-true", "p-false"):
-            self.dismiss(bid == "p-true")
+            self.dismiss(self._result(bid == "p-true"))
+        elif bid == "p-release":
+            self.dismiss(self._result(release=True))
         else:
             self.dismiss(None)
+
+
+def confirm_point_write(app: ScadaApp, conn: str, name: str, info: dict[str, Any], w: PointWrite | None,
+                        old: str, new: str | None = None) -> None:
+    """Ask "Write X to «tag»?" (or "Release …?") and send the write to the server after Yes.
+
+    Shared by F11, Systems › Settings and Monitor, so every write of a protocol tag is confirmed the same way.
+    *old* is the current value as text; *new* the new value as text (default: the value with the tag's unit).
+    The server logs the write with the user; errors from the server or the device are shown as a notification.
+    """
+    if w is None:
+        return
+    tag = info.get("description") or name
+    address = f"{conn}/{name}"
+    if w.release:
+        shown = _("released (priority {priority})").format(priority=w.priority)
+        text = _("Release «{tag}» at priority {priority}?\nThe value with the next lower priority takes over.\n"
+                 "Now: {old}\n({address})").format(tag=tag, priority=w.priority, old=old, address=address)
+    else:
+        shown = new or f"{show_value(w.value) if not isinstance(w.value, str) else w.value} {info.get('unit') or ''}".strip()
+        text = _("Write {new} to «{tag}»?\nNow: {old}\n({address})").format(new=shown, tag=tag, old=old,
+                                                                         address=address)
+        if w.priority is not None:
+            text += "\n" + _("Priority {priority} (instead of {default})").format(priority=w.priority,
+                                                                                default=info.get("priority"))
+
+    async def send() -> None:
+        """The write itself, after Yes."""
+        extra: dict[str, Any] = {}
+        if w.priority is not None:
+            extra["priority"] = w.priority
+        if w.release:
+            extra["release"] = True
+        try:
+            await app.client.request("point_write", conn=conn, tag=name, value=w.value, **extra)
+        except Exception as exc:  # noqa: BLE001 - the server's message is shown as it is
+            app.notify(f"{address}: {exc}", severity="error")
+            return
+        app.notify(_("Written: {tag} = {value}").format(tag=address, value=shown))
+
+    app.push_screen(ConfirmDialog(text), lambda ok: app.run_worker(send(), group="point-write") if ok else None)
 
 
 # ========================================================================================= view
 class GatewayView(View):
     """F11: connections, tags and gateways."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("a", "add_connection", _("New connection")),
         Binding("e", "edit_connection", _("Edit connection")),
         Binding("g", "add_gateway", _("New gateway")),
@@ -450,6 +628,7 @@ class GatewayView(View):
     ]
 
     def __init__(self, **kw: Any) -> None:
+        """Create the empty view; the data comes from the server when the view is shown (:meth:`load`)."""
         super().__init__(**kw)
         self.snap: dict[str, Any] = {}
         self.conn = ""                        # the selected connection
@@ -457,9 +636,11 @@ class GatewayView(View):
 
     @property
     def scada(self) -> ScadaApp:
+        """The app, typed as :class:`ScadaApp` for the helpers (``request``, ``notify``, ``state``)."""
         return self.app  # type: ignore[return-value]
 
     def compose(self) -> ComposeResult:
+        """Three tables (connections on top, tags and gateway links below) and a line for config problems."""
         conns = FastTable(id="gw-conns", cursor_type="row")
         conns.border_title = _("Connections   (a: new · e/Enter: edit)")
         yield conns
@@ -473,6 +654,7 @@ class GatewayView(View):
         yield Static("", id="gw-problems", markup=False)
 
     def on_mount(self) -> None:
+        """Add the columns of the three tables (labels translated here, widths in characters)."""
         for tid, cols in (
             ("#gw-conns", (("name", N_("Name"), 16), ("protocol", N_("Protocol"), 10), ("role", N_("Role"), 7),
                            ("where", N_("Address"), 30), ("tags", N_("Tags"), 6), ("state", N_("State"), 40))),
@@ -487,10 +669,15 @@ class GatewayView(View):
 
     # -- data from the server -------------------------------------------------------------------
     def on_show_view(self) -> None:
+        """Called when F11 is shown: fetch a fresh snapshot of the protocol configuration and state."""
         self.load()
 
     @work(exclusive=True, group="gateways")
     async def load(self) -> None:
+        """Worker: ask the server for the ``protocols`` snapshot (config, status, links, problems) and show it.
+
+        None means the request failed (already notified by ``request``) – most likely an older server.
+        """
         snap = await self.scada.request("protocols")
         if snap is None:
             self.query_one("#gw-problems", Static).update(
@@ -499,6 +686,11 @@ class GatewayView(View):
         self._apply(snap)
 
     def _apply(self, snap: dict[str, Any]) -> None:
+        """Show a ``protocols`` snapshot: connection table, gateway links and up to six problems.
+
+        Args:
+            snap: ``{"path", "config", "status", "links", "problems"}`` as sent by the server.
+        """
         self.snap = snap
         self.on_protocols(snap.get("status") or [])
         self._fill_links()
@@ -525,6 +717,11 @@ class GatewayView(View):
                 self._select(status[min(max(row, 0), t.row_count - 1)]["name"])
 
     def _fill_links(self) -> None:
+        """Fill the gateway table: one row per active link, then one row per gateway that has no link yet.
+
+        Row keys are the link keys from the hub, or ``gw:<name>`` for unlinked gateways; :meth:`action_edit_gateway`
+        reads the gateway name back from them.
+        """
         t = self.query_one("#gw-links", FastTable)
         t.clear()
         for link in self.snap.get("links") or []:
@@ -542,15 +739,22 @@ class GatewayView(View):
 
     @on(DataTable.RowHighlighted, "#gw-conns")
     def _conn_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """The cursor moved to another connection: load its tags."""
         if event.row_key is not None and event.row_key.value != self.conn:
             self._select(str(event.row_key.value))
 
     def _select(self, conn: str) -> None:
+        """Make *conn* the selected connection and load its tags in the background."""
         self.conn = conn
         self.load_points(conn)
 
     @work(exclusive=True, group="gateway-points")
     async def load_points(self, conn: str) -> None:
+        """Worker: fetch the tags of *conn* with their current values and fill the tag table.
+
+        The answer is dropped if the user has selected another connection meanwhile, so a slow connection
+        cannot overwrite the tags of a quick one.
+        """
         pts = await self.scada.request("points", conn=conn, limit=5000) or []
         if conn != self.conn:
             return
@@ -564,6 +768,7 @@ class GatewayView(View):
 
     @staticmethod
     def _quality(q: str | None) -> Text:
+        """The quality column: empty for good, "old"/"bad" (bad in red), other codes as they are."""
         return Text({"good": "", "old": _("old"), "bad": _("bad")}.get(q or "", q or ""),
                     style="red" if q == "bad" else "dim")
 
@@ -586,6 +791,11 @@ class GatewayView(View):
                 return
 
     def on_telegram(self, t: dict) -> None:
+        """KNX telegram: update the value of the group address if the KNX connection is the one shown.
+
+        KNX values come with telegrams, not with ``points``; the value is taken from the app's state, which
+        the telegram has already updated.
+        """
         if self.conn != "knx" or not self.display or "dst" not in t or t["dst"] not in self.points:
             return
         st = self.scada.state.get(t["dst"]) or {}
@@ -594,10 +804,20 @@ class GatewayView(View):
 
     # -- editing --------------------------------------------------------------------------------
     def _config(self) -> dict[str, Any]:
+        """A deep copy of the configuration from the last snapshot, safe to edit before saving."""
         return copy.deepcopy(self.snap.get("config") or {"connections": {}, "gateways": []})
 
     @work(exclusive=True, group="gateway-save")
     async def _save(self, data: dict[str, Any], done: str) -> None:
+        """Worker: send the edited configuration (``protocols_save``) and show the new snapshot.
+
+        The server validates, writes ``protocols.yaml`` and restarts only the changed connections. Validation
+        errors come back as an exception and are shown for 15 s; nothing is changed then.
+
+        Args:
+            data: the whole configuration (``connections`` and ``gateways``).
+            done: the notification shown on success.
+        """
         try:
             snap = await self.scada.client.request("protocols_save", data=data)
         except Exception as exc:  # noqa: BLE001 - validation errors from the server
@@ -609,13 +829,16 @@ class GatewayView(View):
             self.load_points(self.conn)
 
     def action_add_connection(self) -> None:
+        """a: pick a protocol, then open an empty connection form for it."""
         def picked(protocol: str | None) -> None:
+            """Open the connection form for the chosen protocol (None = cancelled)."""
             if protocol:
                 self.app.push_screen(ConnectionDialog(protocol), self._connection_done(""))
 
         self.app.push_screen(ProtocolDialog(), picked)
 
     def action_edit_connection(self) -> None:
+        """e/Enter: edit the selected connection. KNX is configured in ``config.yaml`` and cannot be edited here."""
         if not self.conn:
             return
         if self.conn == "knx":
@@ -627,7 +850,20 @@ class GatewayView(View):
         self.app.push_screen(ConnectionDialog(conn["protocol"], self.conn, conn), self._connection_done(self.conn))
 
     def _connection_done(self, old: str):
+        """Make the result callback for the connection form.
+
+        Args:
+            old: the connection's name before editing, empty for a new connection.
+
+        Returns:
+            A callback that applies the form's result (save, rename, delete) to a copy of the configuration
+            and saves it.
+        """
         def done(result: dict | None) -> None:
+            """Apply the form's result: delete (refused while a gateway uses the connection), rename or add.
+
+            A rename also changes ``from``/``to`` of the gateways that used the old name, so they keep working.
+            """
             if not result:
                 return
             data = self._config()
@@ -658,12 +894,15 @@ class GatewayView(View):
         return done
 
     def _names(self) -> list[str]:
+        """The names of all connections (incl. KNX), offered as From/To in the gateway form."""
         return [s["name"] for s in self.snap.get("status") or []]
 
     def action_add_gateway(self) -> None:
+        """g: open an empty gateway form."""
         self.app.push_screen(GatewayDialog(self._names()), self._gateway_done(None))
 
     def action_edit_gateway(self) -> None:
+        """G/Enter: edit the gateway of the selected row (a link ``gateway|…`` or an unlinked ``gw:name``)."""
         t = self.query_one("#gw-links", FastTable)
         if not t.row_count:
             return
@@ -675,7 +914,13 @@ class GatewayView(View):
             self.app.push_screen(GatewayDialog(self._names(), gws[index]), self._gateway_done(index))
 
     def _gateway_done(self, index: int | None):
+        """Make the result callback for the gateway form.
+
+        Args:
+            index: position of the gateway in ``gateways``, None for a new one.
+        """
         def done(result: dict | None) -> None:
+            """Apply the form's result: delete, replace or append the gateway, then save."""
             if not result:
                 return
             data = self._config()
@@ -694,6 +939,11 @@ class GatewayView(View):
         return done
 
     def action_write(self) -> None:
+        """w/Enter: write a value to the selected tag.
+
+        KNX tags open the normal group address dialog; read-only tags (``writable: false``) are refused with a
+        warning; others get the write dialog and then a confirmation (:func:`confirm_point_write`).
+        """
         t = self.query_one("#gw-tags", FastTable)
         if not t.row_count or not self.conn:
             return
@@ -706,27 +956,32 @@ class GatewayView(View):
             self.scada.notify(_("{tag} is read-only").format(tag=f"{self.conn}/{name}"), severity="warning")
             return
         conn = self.conn
-
-        def done(value: Any) -> None:
-            if value is not None:
-                self.scada.run_request("point_write", conn=conn, tag=name, value=value)
-
-        self.app.push_screen(PointDialog(f"{conn}/{name}", point), done)
+        old = f"{show_value(point.get('value'))} {point.get('unit') or ''}".strip()
+        # Confirmed like everywhere else: a value is never sent to a device by a single key press.
+        self.app.push_screen(PointDialog(f"{conn}/{name}", point),
+                             lambda w: confirm_point_write(self.scada, conn, name, point, w, old))
 
     @on(DataTable.RowSelected, "#gw-conns")
     def _conn_selected(self) -> None:
+        """Enter on a connection edits it."""
         self.action_edit_connection()
 
     @on(DataTable.RowSelected, "#gw-tags")
     def _tag_selected(self) -> None:
+        """Enter on a tag writes to it."""
         self.action_write()
 
     @on(DataTable.RowSelected, "#gw-links")
     def _link_selected(self) -> None:
+        """Enter on a gateway link edits the gateway."""
         self.action_edit_gateway()
 
     @work(exclusive=True, group="gateway-save")
     async def action_reload(self) -> None:
+        """r: ask the server to re-read ``protocols.yaml`` (after editing the file by hand) and show the result.
+
+        Same worker group as :meth:`_save`, so a reload and a save never run at the same time.
+        """
         try:
             snap = await self.scada.client.request("protocols_reload")
         except Exception as exc:  # noqa: BLE001

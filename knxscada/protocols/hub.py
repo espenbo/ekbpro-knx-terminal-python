@@ -43,10 +43,30 @@ log = logging.getLogger("knxscada.protocols")
 FLUSH_S = 0.5
 
 
+
+#: BACnet priorities a user may not write with (1–2 manual/automatic life safety, 5 critical equipment control).
+RESERVED_PRIORITIES = (1, 2, 5)
+
+
+def check_priority(value: Any) -> int:
+    """A BACnet write priority as int, 1 (highest, life safety) … 16 (lowest, automatic control).
+
+    Raises ValueError for anything else. Priority 6 (minimum on/off) is allowed here; the device itself refuses
+    it if it reserves the slot.
+    """
+    try:
+        p = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(_("Priority must be a number from 1 to 16, not {value}").format(value=repr(value))) from None
+    if not 1 <= p <= 16:
+        raise ValueError(_("Priority must be a number from 1 to 16, not {value}").format(value=repr(value)))
+    return p
+
 class Hub:
     """Drivers, tag values and gateways of one server."""
 
     def __init__(self, server: ScadaServer) -> None:
+        """An empty hub for *server*; nothing runs until :meth:`start` (called from the server's start-up)."""
         self.server = server
         self.path = protocols_path(server.cfg)
         self.data: dict[str, Any] = {"connections": {}, "gateways": []}
@@ -78,6 +98,12 @@ class Hub:
             self.data = {"connections": {}, "gateways": []}
 
     async def start(self) -> None:
+        """Read ``protocols.yaml``, start every driver and build the gateway links.
+
+        Called once by the server after its KNX setup. The KNX driver only wraps the server's own KNX
+        connection (it never opens one), so it is added whenever KNX is configured. Connections that cannot
+        be created end up in :attr:`failed` and the rest start anyway.
+        """
         self.load()
         if self.knx:
             from .knx import Driver as KnxDriver
@@ -107,15 +133,27 @@ class Hub:
         self._add(drv)
 
     def _add(self, drv: Driver) -> None:
+        """Register *drv* and run it (:meth:`Driver.run` reconnects on its own) as a named task."""
         self.drivers[drv.name] = drv
         self.tasks[drv.name] = asyncio.create_task(drv.run(), name=f"protocol:{drv.name}")
 
     def _build_engine(self) -> None:
+        """Replace the gateway engine with one built from the current ``gateways:`` list.
+
+        The old engine is stopped first so its pending rate-limited sends are dropped rather than
+        delivered through links that may no longer exist.
+        """
         self.engine.stop()
         self.engine = GatewayEngine(self, self.data.get("gateways") or [])
         self.engine.build()
 
     async def _stop_driver(self, name: str) -> None:
+        """Stop the driver of connection *name* and forget its values.
+
+        The stop gets 5 s; then the task is cancelled anyway, so a device that hangs in a close cannot
+        block a reload or the shutdown. Its values are dropped so a restarted driver begins with no
+        values (nothing old is passed on as if it were new).
+        """
         drv = self.drivers.pop(name, None)
         task = self.tasks.pop(name, None)
         if drv is not None:
@@ -130,6 +168,7 @@ class Hub:
             self._seen.discard(key)
 
     async def stop(self) -> None:
+        """Stop the gateways, the client flush loop and every driver (server shutdown)."""
         self.engine.stop()
         if self._flusher is not None:
             self._flusher.cancel()
@@ -201,6 +240,11 @@ class Hub:
         return any(fnmatch.fnmatchcase(tag, str(p)) for p in patterns)
 
     def _setting(self, drv: Driver, tag: str, key: str, default: float) -> float:
+        """A numeric logging setting (*key*, e.g. ``log_min_s``) of *tag*: the tag's own, else the connection's.
+
+        A decimal comma is accepted. An unreadable value gives *default* rather than falling back to the
+        connection's value, so a typo is not silently replaced by a different number.
+        """
         t = drv.tags.get(tag)
         for value in ((t.extra.get(key) if t is not None else None), drv.settings.get(key)):
             if value not in (None, ""):
@@ -255,8 +299,15 @@ class Hub:
         self.engine.on_ready(conn)
         self._broadcast_status()
 
-    async def write(self, conn: str, tag: str, value: Any, user: str = "") -> None:
-        """Write a value to a tag (from a gateway or a user). Raises when it cannot be done."""
+    async def write(self, conn: str, tag: str, value: Any, user: str = "", priority: int | None = None,
+                    release: bool = False) -> None:
+        """Write a value to a tag (from a gateway or a user). Raises when it cannot be done.
+
+        *priority* (1–16) and *release* are for drivers with write priorities (BACnet, ``Driver.priorities``):
+        the value is written into that slot of the priority array instead of the tag's or connection's default
+        ``priority``; *release* writes "nothing" (Null) into the slot, so the next lower priority – often the
+        automatic control at 16 – takes over again. Both are refused for other drivers.
+        """
         drv = self.drivers.get(conn)
         if drv is None:
             raise RuntimeError(self.failed.get(conn) or _("There is no connection called {name}").format(name=repr(conn)))
@@ -267,16 +318,36 @@ class Hub:
             raise ValueError(_("{tag} is read-only").format(tag=f"{conn}/{t.name}"))
         if drv.role == "client" and not drv.connected:
             raise RuntimeError(_("{connection} is not connected").format(connection=conn))
+        if priority is not None or release:
+            if not drv.priorities:
+                raise ValueError(_("{connection} has no write priorities (only BACnet has)").format(connection=conn))
+            if priority is not None:
+                priority = check_priority(priority)
+            # A release has no value to convert; the driver writes Null, and the tag keeps showing what the
+            # device reports afterwards (the next poll or COV) – it is not set to None here.
+            await drv.write(t, None if release else coerce(value, t.type), user, priority=priority, release=release)
+            if not drv.echoes and not release:
+                self.update(conn, t.name, coerce(value, t.type))
+            return
         value = coerce(value, t.type)
         await drv.write(t, value, user)
         if not drv.echoes:
             self.update(conn, t.name, value)
 
     def event(self, level: str, text: str, user: str | None = None) -> None:
+        """Write a line to the server's event log under the source "gateway" (used by drivers and the engine).
+
+        *level* is "info", "warning" or "error"; *user* is who caused it, if anyone.
+        """
         self.server.event(level, "gateway", text, user)
 
     # -- clients ----------------------------------------------------------------------------------
     async def _flush_loop(self) -> None:
+        """Every :data:`FLUSH_S`: store held-back logged values, then send the changed values to the clients.
+
+        Batching keeps a busy Modbus poll from flooding the TUIs. KNX values are left out because the
+        server sends KNX telegrams to the clients by itself. Without clients the batch is just dropped.
+        """
         while True:
             await asyncio.sleep(FLUSH_S)
             if self._log_wait:
@@ -289,6 +360,7 @@ class Hub:
                     k: [r["v"], r["ts"], r["q"]] for k, r in dirty.items() if not k.startswith("knx/")}})
 
     def _broadcast_status(self) -> None:
+        """Send the connection list (:meth:`status`) to every client after a connect, disconnect or reload."""
         self.server._broadcast({"type": "protocols", "status": self.status()})
 
     def status(self) -> list[dict[str, Any]]:
@@ -341,7 +413,12 @@ class Hub:
         return out
 
     def points(self, conn: str, limit: int = 5000) -> list[dict[str, Any]]:
-        """The tags of one connection with their values."""
+        """The tags of one connection with their values.
+
+        For drivers with write priorities each tag also gets ``priority``: the slot a plain write uses (the
+        tag's own ``priority``, else the connection's; 16 when neither is set). The TUI's write dialog uses the
+        key both as the default and as the sign that a priority can be chosen.
+        """
         drv = self.drivers.get(conn)
         if drv is None:
             return []
@@ -351,8 +428,21 @@ class Hub:
             if conn == "knx":
                 st = self.server.state.get(t.name) or {}
                 rec = {"v": st.get("value"), "ts": st.get("ts"), "q": ("old" if st.get("old") else "good") if st else ""}
-            out.append({**t.info(), "value": rec.get("v"), "ts": rec.get("ts"), "q": rec.get("q", "")})
+            info = {**t.info(), "value": rec.get("v"), "ts": rec.get("ts"), "q": rec.get("q", "")}
+            if drv.priorities:
+                info["priority"] = self._default_priority(conn, t.name)
+            out.append(info)
         return out
+
+    def _default_priority(self, conn: str, tag: str) -> int:
+        """The priority a write to *conn/tag* uses when none is chosen: the tag's, the connection's, else 16."""
+        drv = self.drivers[conn]
+        t = drv.resolve(tag)
+        value = (t.extra.get("priority") if t is not None else None) or drv.settings.get("priority")
+        try:
+            return check_priority(value)
+        except (TypeError, ValueError):
+            return 16
 
     async def command(self, req: dict[str, Any], user: str) -> Any:
         """Client commands for protocols and gateways."""
@@ -365,9 +455,25 @@ class Hub:
             return self.points(str(req.get("conn") or ""), int(req.get("limit") or 5000))
         if cmd == "point_write":
             conn, tag = str(req["conn"]), str(req["tag"])
-            await self.write(conn, tag, req.get("value"), user)
+            priority = req.get("priority")
+            release = bool(req.get("release"))
+            # 1, 2 and 5 are the life-safety and critical-equipment slots (fire, smoke control): an operator in
+            # this program must not be able to take them, even by sending the command by hand.
+            if priority is not None and check_priority(priority) in RESERVED_PRIORITIES:
+                raise ValueError(_("Priority {priority} is reserved for life safety and critical equipment")
+                                 .format(priority=priority))
+            await self.write(conn, tag, req.get("value"), user, priority=priority, release=release)
             if conn != "knx":  # the KNX driver logs its own writes
-                self.event("info", f"{conn}/{tag} ← {req.get('value')}", user)
+                # The log line keeps the form "conn/tag ← value" (the TUI's monitor reads it back); a priority
+                # chosen by the user and a release are added after the value.
+                if release:
+                    text = _("released (priority {priority})").format(priority=priority if priority is not None
+                                                                       else self._default_priority(conn, tag))
+                else:
+                    text = str(req.get("value"))
+                    if priority is not None:
+                        text += " " + _("(priority {priority})").format(priority=priority)
+                self.event("info", f"{conn}/{tag} ← {text}", user)
             return None
         if cmd == "protocols_save":
             data = req.get("data") or {}

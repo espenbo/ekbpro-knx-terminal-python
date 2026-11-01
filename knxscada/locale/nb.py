@@ -316,6 +316,25 @@ CATALOGUE: dict[str, str] = {
     "{protocol} – value changes and writes": "{protocol} – verdiendringer og skrivinger",
     "{n} entries": "{n} linjer",
     "Filter: connection, tag, description or value  (/)": "Filter: tilkobling, tagg, beskrivelse eller verdi  (/)",
+    "{tag}: our own objects have no priority array to release": "{tag}: våre egne objekter har ingen prioritetstabell å slippe",
+    "Priority must be a number from 1 to 16, not {value}": "Prioriteten må være et tall fra 1 til 16, ikke {value}",
+    "{connection} has no write priorities (only BACnet has)": "{connection} har ikke skriveprioritet (bare BACnet har det)",
+    "Priority {priority} is reserved for life safety and critical equipment":
+        "Prioritet {priority} er reservert for livssikkerhet og kritisk utstyr",
+    "released (priority {priority})": "sluppet (prioritet {priority})",
+    "(priority {priority})": "(prioritet {priority})",
+    "available": "ledig",
+    "minimum on/off": "minimum av/på",
+    "manual operator": "manuell betjening",
+    "available (automatic control)": "ledig (automatikk)",
+    "Release «{tag}» at priority {priority}?\nThe value with the next lower priority takes over.\nNow: {old}\n({address})":
+        "Slippe «{tag}» på prioritet {priority}?\nVerdien med nest lavere prioritet tar over.\nNå: {old}\n({address})",
+    "Lower number = higher priority. The highest active priority decides the value.":
+        "Lavere tall = høyere prioritet. Den høyeste aktive prioriteten bestemmer verdien.",
+    "Priority {priority} (instead of {default})": "Prioritet {priority} (i stedet for {default})",
+    "Priority {priority} overrides the automatic control (priority {default}) until the value is released again with Release.":
+        "Prioritet {priority} overstyrer automatikken (prioritet {default}) til verdien slippes igjen med Slipp.",
+    "Release": "Slipp",
     "Sky": "Himmel",
     "Ventilation": "Ventilasjon",
     "Heat map": "Varmekart",

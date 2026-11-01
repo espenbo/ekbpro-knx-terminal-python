@@ -32,12 +32,12 @@ import os
 import sys
 import time
 from collections import deque
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.color import Color
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -132,9 +132,17 @@ class KeyBar(LiveStatic):
 
 
 class ScadaApp(App):
+    """The SCADA terminal: one instance per TUI process, a client of the server's Unix socket.
+
+    Owns the local copy of the server state (:attr:`state`, :attr:`alarms`, :attr:`events`, :attr:`telegrams`,
+    :attr:`point_log`), the menu tree, the top bar and the key bar, and dispatches every server message to the
+    views (see :meth:`_handle`). Views reach it as ``self.app`` / ``self.scada`` and use :meth:`request`,
+    :meth:`write`, :meth:`ga` and :meth:`color`. The app never writes anything on its own: every write comes from
+    a user action, and raw writes are confirmed first (``ui.confirm_raw_write``).
+    """
     CSS_PATH = "app.tcss"
     TITLE = PRODUCT
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         # Ctrl bindings get priority so they work even while an Input has focus.
         *[Binding(key, f"menu('{vid}')", _(label), key_display=key_label(key), priority=key.startswith("ctrl"))
           for vid, _icon, label, key in MENU],
@@ -146,6 +154,12 @@ class ScadaApp(App):
     ]
 
     def __init__(self, cfg: Config) -> None:
+        """Load the project and set up the empty client state; nothing is connected until :meth:`on_mount`.
+
+        Args:
+            cfg: the loaded ``config.yaml``; ``cfg.ui`` (the ``ui:`` section) controls title, theme, splash,
+                screensaver, ``ascii``, ``big_digits``, ``systems`` and more.
+        """
         super().__init__()
         self.cfg = cfg
         self.ui: dict[str, Any] = cfg.ui
@@ -181,6 +195,12 @@ class ScadaApp(App):
 
     # -- construction ----------------------------------------------------------------------
     def compose(self) -> ComposeResult:
+        """Build the fixed layout: top bar, menu tree, one view per menu entry in a ContentSwitcher, key bar.
+
+        All views are created up front (and stay mounted) so server messages can be dispatched to them at any
+        time; the switcher only decides which one is visible. ``protomon`` has no own menu key: it is reached
+        through Monitor › protocol.
+        """
         yield TopBar(id="topbar")
         with Horizontal(id="body"):
             yield Tree(_("Menu"), id="menu")
@@ -200,6 +220,12 @@ class ScadaApp(App):
         yield KeyBar(id="keybar")
 
     def on_mount(self) -> None:
+        """Called by Textual once the DOM exists: theme, menu, timers, connection to the server and splash.
+
+        Timers: the top bar every second (clock, blinking alarm), the idle check for the screensaver every 5 s
+        and the telegram traffic every 30 s. Problems found while adding ``project.point_rooms`` are shown as
+        notifications here, because the app could not notify before it was mounted.
+        """
         for theme in THEMES:
             self.register_theme(theme)
         # The user's own choice for this installation (Ctrl+T) wins over the configured default.
@@ -249,6 +275,10 @@ class ScadaApp(App):
         point_gas = self.model.setdefault("point_gas", {})
 
         def register(key: str, name: str, unit: str) -> str:
+            """Add one protocol tag as a read-only pseudo group address ``pt:conn/tag`` and return that address.
+
+            ``setdefault`` keeps a record that ``project.point_rooms`` already created for the same tag.
+            """
             ga = POINT + key
             point_gas.setdefault(ga, {"address": ga, "name": name, "dpt": "", "unit": unit, "writable": False,
                                       "used": True, "placeholder": False, "point": key})
@@ -261,6 +291,15 @@ class ScadaApp(App):
         self.home.meters = [(m.name, register(k, m.name, "")) for m in meters if (k := m.key("power"))]
 
     def _point_text(self, ga: str, value: Any) -> str:
+        """Format a protocol tag value for a room card, the way the server formats KNX values.
+
+        Args:
+            ga: the pseudo address ``pt:conn/tag`` (its record gives the unit).
+            value: the raw value; None means no value yet (shown as an en dash).
+
+        Returns:
+            The display text, e.g. ``"21.5 °C"``, ``"on"`` or ``"42 %"``.
+        """
         if value is None:
             return "–"
         if isinstance(value, bool):
@@ -380,9 +419,15 @@ class ScadaApp(App):
 
     @work(exclusive=True, group="traffic")
     async def _load_traffic(self) -> None:
+        """Timer worker (every 30 s): refresh the telegrams-per-minute series for the overview chart."""
         await self._fetch_traffic()
 
     async def _fetch_traffic(self) -> None:
+        """Fetch the telegram traffic of the last hour (``traffic`` command) into :attr:`traffic`.
+
+        Skipped while disconnected; errors are swallowed (and the series emptied) instead of notified, because
+        this runs every 30 s and an older server simply does not know the command.
+        """
         if not self.client.connected:
             return
         try:
@@ -391,6 +436,11 @@ class ScadaApp(App):
             self.traffic = []
 
     def _fmt_tel(self, t: dict) -> str:
+        """Display text for a telegram fetched from the database, which has no ``text`` (live ones have).
+
+        Read requests carry no value, so they get an empty text; otherwise the value is formatted with the
+        DPT of the destination address from the project.
+        """
         if t["type"] == "read":
             return ""
         return dptlib.fmt(self.ga(t["dst"]).get("dpt"), t.get("value"))
@@ -411,6 +461,13 @@ class ScadaApp(App):
         self.exit()
 
     def _handle(self, msg: dict) -> None:
+        """Dispatch one message pushed by the server and update the local state and the views.
+
+        Message types: ``hello`` (full snapshot after connecting), ``telegram``, ``status`` (KNX/PLC connection),
+        ``points`` (changed protocol tag values, ``{conn/tag: (value, ts, quality)}``), ``protocols`` (connection
+        states of the hub), ``stats``, ``alarms``, ``event`` and ``disconnected`` (sent by the client when the
+        socket closes). Called from :meth:`_on_server_message`; a :class:`NoMatches` raised here is ignored there.
+        """
         kind = msg.get("type")
         if kind == "hello":
             self.state = msg["state"]
@@ -503,12 +560,22 @@ class ScadaApp(App):
 
     # -- state / watchers -----------------------------------------------------------------
     def watch_ga(self, ga: str, widget) -> None:
+        """Register *widget* to get ``state_changed()`` whenever the state of *ga* changes.
+
+        Called by the value widgets when they are mounted (``widgets.py``); a widget can watch several addresses.
+        """
         self._watchers.setdefault(ga, set()).add(widget)
 
     def unwatch_ga(self, ga: str, widget) -> None:
+        """Stop sending state changes of *ga* to *widget* (called when the widget is unmounted)."""
         self._watchers.get(ga, set()).discard(widget)
 
     def _notify_watchers(self, ga: str) -> None:
+        """Call ``state_changed()`` on every mounted widget that watches *ga*.
+
+        The set is copied first because a callback may unmount widgets (and so unwatch) while we iterate;
+        widgets that are no longer mounted are skipped instead of raising.
+        """
         for w in list(self._watchers.get(ga, ())):
             if w.is_mounted:
                 w.state_changed()
@@ -549,6 +616,7 @@ class ScadaApp(App):
             return
 
         def done(action: str | None) -> None:
+            """Perform the action chosen in the GA dialog: read request, add to trends, or write (with confirm)."""
             if action == "read":
                 self.run_request("read", ga=addr)
             elif action == "trend":
@@ -631,7 +699,12 @@ class ScadaApp(App):
             target.focus()
 
     def action_pick_theme(self) -> None:
+        """Ctrl+T / menu: choose a colour theme; the choice is saved for this installation and this user.
+
+        The dialog itself switches the theme live; here the result is only persisted (``prefs.save_site_theme``).
+        """
         def done(name: str | None) -> None:
+            """Save the chosen theme name (None = cancelled, nothing saved) and confirm with a notification."""
             if name:
                 save_site_theme(self.cfg.path, name)
                 self.notify(_("Colour theme: {name} (saved for {user})").format(name=name, user=self.client.user.split("@")[0]))
@@ -642,6 +715,11 @@ class ScadaApp(App):
         """Choose the UI language; it is saved per user and the UI restarts in it."""
 
         def done(code: str | None) -> None:
+            """Save the chosen language code and restart the UI if it differs from the current one.
+
+            None means the dialog was cancelled. The restart is needed because many texts (bindings, menu labels)
+            are translated when the classes are defined.
+            """
             if not code:
                 return
             save_prefs(language=code)
@@ -659,10 +737,16 @@ class ScadaApp(App):
             view.on_theme_changed()
 
     def action_toggle_menu(self) -> None:
+        """Ctrl+B: show or hide the menu tree to give the views the full width."""
         menu = self.main.query_one("#menu", Tree)
         menu.display = not menu.display
 
     def _update_keybar(self, vid: str) -> None:
+        """Rebuild the key bar: all menu keys (the active view's highlighted), F9, and the view's own hints.
+
+        Args:
+            vid: the view being shown. ``protomon`` highlights "Monitor", since it is reached through that entry.
+        """
         t = Text()
         active = "monitor" if vid == "protomon" else vid
         for v, _icon, label, key in MENU:
@@ -676,6 +760,11 @@ class ScadaApp(App):
         self.main.query_one("#keybar", KeyBar).set(t)
 
     def _show(self, vid: str) -> None:
+        """Make view *vid* visible in the ContentSwitcher and let it load its data (``on_show_view``).
+
+        Args:
+            vid: the view id (the same as the menu id, plus ``protomon``).
+        """
         self._update_keybar(vid)
         switcher = self.main.query_one("#views", ContentSwitcher)
         if switcher.current == vid and vid != "rooms":
@@ -685,10 +774,12 @@ class ScadaApp(App):
 
     @on(Tree.NodeSelected, "#menu")
     def _menu_selected(self, event: Tree.NodeSelected) -> None:
+        """Enter on a menu node: show the view, room, floor or action stored in the node's data."""
         self._select(event.node.data)
 
     @on(Tree.NodeHighlighted, "#menu")
     def _menu_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Cursor moved in the menu: show views and rooms at once, but leave actions to Enter."""
         # Moving the cursor over views and rooms shows them directly (no Enter needed),
         # but actions (quit, theme, about) require Enter.
         data = event.node.data
@@ -697,6 +788,13 @@ class ScadaApp(App):
             self._select(data)
 
     def _select(self, data: tuple | None) -> None:
+        """Act on the data of a menu node.
+
+        Args:
+            data: ``("view", id)``, ``("monitor", protocol)``, ``("system", index)``, ``("room", room, floor)``,
+                ``("floor", floor)`` or ``("building", name)`` (buildings only group floors and do nothing).
+                None (a node without data) is ignored.
+        """
         if not data:
             return
         if data[0] == "view" and data[1] in ACTIONS:
@@ -775,6 +873,12 @@ class ScadaApp(App):
         view.select(proto)
 
     def _show_room(self, room: dict, floor: dict) -> None:
+        """Show the cards of the functions in *room* in the room view (title "floor › room").
+
+        Does nothing if this room is already shown, because the menu fires both a highlight and a select for
+        the same node and rebuilding the cards twice is slow. The cards are built in an exclusive worker so a
+        quick walk through the menu cancels the rooms the user has already passed.
+        """
         if self._current_room == room["id"] and self.main.query_one("#views", ContentSwitcher).current == "rooms":
             return
         self._current_room = room["id"]
@@ -784,6 +888,7 @@ class ScadaApp(App):
                         exclusive=True, group="room")
 
     def show_room_id(self, room_id: str) -> None:
+        """Show the room with id *room_id* (from the overview, room list and floor plan); unknown ids are ignored."""
         for floor in self.model["floors"]:
             for room in floor["rooms"]:
                 if room["id"] == room_id:
@@ -805,12 +910,14 @@ class ScadaApp(App):
 
     # -- screensaver -----------------------------------------------------------------------
     async def on_event(self, event) -> None:
+        """Record the time of the last user input for the screensaver, then let Textual handle the event as usual."""
         # Every key press, click or scroll counts as activity.
         if isinstance(event, (events.Key, events.MouseDown, events.MouseScrollDown, events.MouseScrollUp)):
             self._last_input = time.time()
         await super().on_event(event)
 
     def _check_idle(self) -> None:
+        """Timer (every 5 s): start the screensaver after ``ui.screensaver_minutes`` without input (0 = off)."""
         minutes = float(self.ui.get("screensaver_minutes", 5) or 0)
         if minutes <= 0 or len(self.screen_stack) > 1:  # disabled, or a dialog is open
             return
@@ -818,10 +925,15 @@ class ScadaApp(App):
             self.action_screensaver()
 
     def action_screensaver(self) -> None:
+        """F9 or idle timer: push the screensaver unless it is already showing.
+
+        Closing it resets the idle time, so it does not come back immediately.
+        """
         if not isinstance(self.screen, ScreenSaver):
             self.push_screen(ScreenSaver(), lambda _result: setattr(self, "_last_input", time.time()))
 
     def show_function_room(self, fid: str) -> None:
+        """Show the room that contains the function *fid* (the first match); unknown ids are ignored."""
         for floor in self.model["floors"]:
             for room in floor["rooms"]:
                 if fid in room["functions"]:
@@ -830,6 +942,11 @@ class ScadaApp(App):
 
     # -- top bar --------------------------------------------------------------------------
     def _update_topbar(self) -> None:
+        """Redraw the top bar: title, DEMO, KNX interfaces, PLC bridge, telegrams/s, unacknowledged alarms, user, clock.
+
+        Called every second (clock and blinking alarm) and after every status or alarm change. Silently does
+        nothing before the bar is mounted or after it is gone.
+        """
         try:
             bar = self.main.query_one("#topbar", TopBar)
         except NoMatches:

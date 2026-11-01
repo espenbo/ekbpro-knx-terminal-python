@@ -64,6 +64,7 @@ def templates() -> dict[str, dict[str, Any]]:
 
 
 def _key(text: str) -> str:
+    """A model name for comparing: lower case, runs of white space as one space."""
     return re.sub(r"\s+", " ", str(text)).strip().lower()
 
 

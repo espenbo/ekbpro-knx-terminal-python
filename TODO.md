@@ -20,7 +20,12 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
-- 2026-11-01 kveld: 412 tester grønne (1 hoppet over), ruff 55. Ingenting fra Runde 2 er committet ennå.
+- 2026-11-01 kveld: 413 tester grønne (1 hoppet over), ruff 0 (alle 55 gamle merknader rettet eller begrunnet med
+  `noqa`). Ingenting fra Runde 2 er committet ennå.
+- [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
+      `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
+      utstyrssærheter og ytelse. Kontrollert: AST uten docstrings lik før og etter (ingen kodeendring), ruff 0,
+      413 grønne. Fire tomme `pass` fjernet der docstringen nå er kroppen (PIE790).
 
 ## Neste (ønsker fra brukeren 2026-11-01 kveld)
 
@@ -40,9 +45,14 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
         og skjule tagger som endrer seg hvert sekund (PLS-klokke `Act_Time`) med et eget filter.
 - [x] BACnet-skriving mot ekte utstyr (2026-11-01): brukeren slo av to lys via en KNX→BACnet-gateway med
       prioritet 16 – status bekreftet.
-- [ ] BACnet-skriving: velge prioritet ved skriving. `priority` finnes allerede per tilkobling og per tagg
-      (tom = enhetens standard). Mangler: valg i skrivedialogen (Anlegg › Innstillinger, romkort), med
-      tilkoblingens prioritet som forvalg, og at prioriteten logges sammen med skrivingen.
+- [x] BACnet-skriving med valgt prioritet og «Slipp» (2026-11-01): `Driver.priorities` (BACnet), `Hub.write(...,
+      priority, release)`, `point_write` tar `priority`/`release: true`; 1, 2 og 5 avvises (`RESERVED_PRIORITIES`).
+      `points` gir taggens standardprioritet. `PointDialog` viser prioritet 3–16 med standarden forvalgt, advarer
+      under standarden og har «Slipp» (Null i plassen). Felles bekreftelse `confirm_point_write` i F11, Anlegg og
+      Monitor (F11 skrev før uten bekreftelse). Hendelsesloggen: «verdi (prioritet 8)» / «sluppet (prioritet 8)».
+      Tester i test_protomon og test_bacnet, dok 03 og 11 (en+nb).
+  - [ ] Romkortene (`point_rooms`) skriver fortsatt med standardprioriteten, uten valg.
+  - [ ] Mulig senere: vise enhetens prioritetstabell (`priority-array`) i dialogen – hvem som styrer nå.
 - [x] Skrivbare punkter på romkort fra `point_rooms`: virket allerede (skrivbar bool → bryter); kortet må ha
       `usage: light` for å telle som lys og komme i «Lys på».
 - [ ] MQTT Sparkplug B (ny modul).

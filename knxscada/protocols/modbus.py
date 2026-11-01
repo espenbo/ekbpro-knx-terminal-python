@@ -77,6 +77,7 @@ TABLES = {"co": "co", "coil": "co", "coils": "co", "di": "di", "discrete": "di",
 #: Classic numbering: first digit → table.
 CLASSIC = {"0": "co", "1": "di", "3": "ir", "4": "hr"}
 
+#: ``table:number[.bit]`` – the number decimal or ``0x`` hex; the separator may also be a space or nothing (``hr100``).
 ADDRESS_RE = re.compile(r"^\s*([a-z]+)\s*[:\s]?\s*(0x[0-9a-f]+|\d+)(?:\.(\d{1,2}))?\s*$", re.IGNORECASE)
 
 #: struct format and number of registers per data type.
@@ -84,6 +85,8 @@ FORMATS = {"int16": ("h", 1), "uint16": ("H", 1), "int32": ("i", 2), "uint32": (
            "int64": ("q", 4), "uint64": ("Q", 4), "float64": ("d", 4)}
 
 #: Largest block read in one request, and the gap that is still read across to join two blocks.
+#: 100 registers stays below the protocol limit (125) and what small devices and gateways accept;
+#: ``max_registers``/``max_gap`` override the register values per connection.
 MAX_REGS, MAX_BITS = 100, 1000
 GAP_REGS, GAP_BITS = 8, 64
 
@@ -123,6 +126,7 @@ def to_registers(value: Any, dtype: str, word_order: str = "big") -> list[int]:
         return [1 if value else 0]
     fmt, _n = FORMATS[dtype]
     if fmt not in "fd":
+        # A scaled value (unscale gives 215.00000000000003) must not fail struct.pack for an integer type.
         value = round(float(value))
     try:
         data = struct.pack(">" + fmt, value)
@@ -142,6 +146,7 @@ def from_registers(regs: list[int], dtype: str, word_order: str = "big") -> int 
         words.reverse()
     value = struct.unpack(">" + fmt, b"".join(w.to_bytes(2, "big") for w in words))[0]
     if fmt in "fd":
+        # float32 carries ~7 digits: rounding hides the binary noise (21.5 instead of 21.499999046325684).
         return round(value, 6) if fmt == "f" else value
     return value
 
@@ -159,6 +164,7 @@ class Point:
 
     @property
     def end(self) -> int:
+        """The address after the last register/bit of the point (exclusive end)."""
         return self.index + self.count
 
 
@@ -175,6 +181,11 @@ class Block:
 
 
 def default_dtype(table: str, bit: int | None, value_type: str = "") -> str:
+    """The Modbus data type of a tag without one: bool for bits and coils/inputs, else from the tag's value type.
+
+    *value_type* is the generic ``type`` (``float`` → float32, ``int`` → int32); anything else is a plain
+    uint16 register, the most common case for simple devices.
+    """
     if table in ("co", "di") or bit is not None:
         return "bool"
     return {"float": "float32", "int": "int32", "bool": "bool"}.get(value_type, "uint16")
@@ -209,11 +220,16 @@ def write_point(text: str, read: Point) -> Point:
 
 
 class Driver(BaseDriver):
+    """One Modbus connection: a master polling one device / RS485 line (client), or our slave (server)."""
+
     protocol = "modbus"
 
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
+        """Set up the connection *name*. Attributes used by :meth:`make_tag` are set before the base class builds
+        the tags; an unknown ``model`` raises ValueError, so the hub reports the connection as failed."""
         self.word_order = str(settings.get("word_order") or "big")
         self.unit = int(settings.get("unit_id") if settings.get("unit_id") not in (None, "") else 1)
+        #: Tag name → where it is read (and, without ``write_address``, written).
         self.points: dict[str, Point] = {}
         self.write_points: dict[str, Point] = {}   # tags written elsewhere than they are read (write_address)
         self.template = devices.find(settings.get("model"))   # ValueError for an unknown model
@@ -226,11 +242,19 @@ class Driver(BaseDriver):
         self.client = None
         self.server = None
         self.blocks: list[Block] = []
+        # One request at a time: the poll, heartbeats and user writes share one connection, and an RS485 line
+        # (or a TCP gateway in front of one) cannot have two requests in flight.
         self._lock = asyncio.Lock()
         self.store = Store(self)
 
     # -- tags -------------------------------------------------------------------------------------
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
+        """A tag from its ``tags:`` entry; the name is the address when ``address`` is missing (``to: hr:100``).
+
+        The generic value type follows the Modbus data type (scaled numbers become float). The address is shown in
+        the canonical form (``hr:100.3``) so references in any spelling find it. Client tags in input tables
+        are read-only unless a ``write_address`` says where they are written. ValueError for a bad address.
+        """
         point = point_of({**spec, "address": spec.get("address") or name}, self.unit)
         table, index, bit, dtype = point.table, point.index, point.bit, point.dtype
         scale, offset = as_float(spec.get("scale")), as_float(spec.get("offset"))
@@ -253,6 +277,7 @@ class Driver(BaseDriver):
         return tag
 
     def resolve(self, ref: str) -> Tag | None:
+        """The tag called *ref*, or the tag at the address *ref* in any spelling (``40101`` finds ``hr:100``)."""
         tag = super().resolve(ref)
         if tag is None:
             try:
@@ -264,6 +289,7 @@ class Driver(BaseDriver):
         return tag
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
+        """Add a gateway target to our slave (its name must be an address, or ``spec`` gives one); clients refuse."""
         if self.role != "server":
             return super().create_tag(name, spec)
         try:
@@ -277,18 +303,21 @@ class Driver(BaseDriver):
 
     # -- connection -------------------------------------------------------------------------------
     def describe(self) -> str:
+        """Host/port or serial line, plus the unit id and the identified device for a master."""
         where = super().describe()
         if self.role != "client":
             return where
         return f"{where}  unit {self.unit}" + (f"  · {self.identity}" if self.identity else "")
 
     async def session(self) -> None:
+        """Serve as slave or poll as master until the connection fails or the driver stops."""
         if self.role == "server":
             await self._serve()
         else:
             await self._poll()
 
     async def close(self) -> None:
+        """Close the master's connection or shut the slave down (frees the TCP port / serial device)."""
         if self.client is not None:
             client, self.client = self.client, None
             client.close()
@@ -297,6 +326,11 @@ class Driver(BaseDriver):
             await server.shutdown()
 
     def _make_client(self):
+        """A pymodbus client for ``transport`` tcp, rtu (serial) or rtu_over_tcp (RTU frames through a TCP gateway).
+
+        pymodbus' own reconnect is off (``reconnect_delay=0``) and it retries once: :meth:`Driver.run` handles
+        reconnecting with back-off, so a dead device is not hammered and its values turn "old" in one place.
+        """
         from pymodbus import FramerType
         from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
 
@@ -314,6 +348,11 @@ class Driver(BaseDriver):
 
     # -- master -----------------------------------------------------------------------------------
     def _build_blocks(self) -> None:
+        """Group the tags into read requests: per unit id and table, sorted by address, joined across small gaps.
+
+        Fewer requests matter on RS485 (9600 baud) and for gateways that answer slowly; the gap keeps unused
+        addresses between tags from splitting a block, up to the block size limit.
+        """
         groups: dict[tuple[int, str], list[tuple[Point, Tag]]] = {}
         for tag in self.tags.values():
             p = self.points[tag.name]
@@ -336,6 +375,10 @@ class Driver(BaseDriver):
                     self.blocks.append(cur)
 
     async def _poll(self) -> None:
+        """The master's session: connect, identify the device (templates), start heartbeats and poll.
+
+        Heartbeats only run while the session does, so a device watchdog notices when we lose the connection.
+        """
         self.client = self._make_client()
         if not await self.client.connect():
             raise ConnectionError(_("cannot connect to {where}").format(where=super().describe()))
@@ -369,6 +412,11 @@ class Driver(BaseDriver):
             await asyncio.sleep(max(every, 0.1))
 
     async def _poll_loop(self) -> None:
+        """Read every block every ``poll_ms`` (at least 50 ms); ready after the first full round.
+
+        Blocks the device refused are read tag by tag. The interval is counted from the start of a round, so
+        slow reads do not stretch it. A lost connection raises out of :meth:`_read` and ends the session.
+        """
         interval = max(int(self.settings.get("poll_ms") or 1000), 50) / 1000
         while not self._stop:
             started = asyncio.get_running_loop().time()
@@ -435,6 +483,12 @@ class Driver(BaseDriver):
         return rr.bits if table in ("co", "di") else rr.registers
 
     async def _read_block(self, block: Block, alone: bool = False) -> None:
+        """Read one block and publish its tags; *alone* is a single tag read from a refused block.
+
+        An exception response marks the tags "bad" (keeping the last value for display) and, for a joined
+        block, makes it be read tag by tag from the next poll – one missing register should not hide its
+        neighbours. Raw values in the template's or the tag's ``invalid`` list are "bad" too.
+        """
         data = await self._read(block.table, block.unit, block.start, block.end - block.start)
         if data is None:
             if len(block.tags) > 1 and not alone:
@@ -459,9 +513,11 @@ class Driver(BaseDriver):
             self.publish(tag, raw)
 
     def _order(self, tag: Tag) -> str:
+        """Word order of *tag*'s 32/64-bit values: the tag's ``word_order``, else the connection's ("big"/"little")."""
         return str(tag.extra.get("word_order") or self.word_order)
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
+        """Write *value* (gateway units) to the device (master) or into our tables for others to read (slave)."""
         raw = tag.to_raw(value)
         if self.role == "server":
             self.store.put(self.points[tag.name], raw, self._order(tag))
@@ -480,6 +536,8 @@ class Driver(BaseDriver):
             if p.table == "co":
                 rr = await c.write_coil(p.index, bool(raw), device_id=p.unit)
             elif p.table == "hr" and p.bit is not None:
+                # A bit in a register: read-modify-write under the lock so our own poll cannot slip in between
+                # (another master on the device could still change the other bits meanwhile).
                 cur = await c.read_holding_registers(p.index, count=1, device_id=p.unit)
                 if cur.isError():
                     raise RuntimeError(_("{tag}: the device refused the request ({error})").format(tag=tag.name, error=cur))
@@ -499,6 +557,7 @@ class Driver(BaseDriver):
 
     # -- slave ------------------------------------------------------------------------------------
     async def _serve(self) -> None:
+        """The slave's session: start a pymodbus TCP or serial server answered by :class:`Store`, run until stopped."""
         from pymodbus import FramerType
         from pymodbus.server import ModbusSerialServer, ModbusTcpServer
         from pymodbus.simulator import DataType, SimData, SimDevice
@@ -533,9 +592,13 @@ class Store:
     FC: ClassVar[dict[int, str]] = {1: "co", 5: "co", 15: "co", 2: "di", 3: "hr", 6: "hr", 16: "hr", 22: "hr", 23: "hr", 4: "ir"}
 
     def __init__(self, driver: Driver) -> None:
+        """Empty tables for *driver*; :meth:`index` fills the address index once the tags are known."""
         self.d = driver
+        #: Table → address → register value (bits as 0/1). Missing addresses read as 0.
         self.data: dict[str, dict[int, int]] = {"co": {}, "di": {}, "hr": {}, "ir": {}}
+        #: Addresses a master may write (tags that are writable, i.e. mapped with ``direction: both``).
         self.writable: dict[str, set[int]] = {"co": set(), "hr": set()}
+        #: (table, address) → the tags read there (a 32-bit tag is listed under both of its registers).
         self.by_addr: dict[tuple[str, int], list[Tag]] = {}
         self.by_write: dict[tuple[str, int], list[Tag]] = {}   # tags with write_address, by where they are written
 
@@ -557,9 +620,12 @@ class Store:
                     self.writable[wp.table].add(a)
 
     def device_ids(self) -> list[int]:
+        """The unit ids we answer (asked by pymodbus); 0 = any, when the connection has ``unit_id: 0``."""
         return [self.d.unit] if self.d.unit else [0]
 
     def _check(self, device_id: int) -> None:
+        """Refuse a request for another unit id (0, broadcast, is always accepted) – on a shared RS485 line
+        another slave must answer it, not us."""
         if self.d.unit and device_id not in (self.d.unit, 0):
             from pymodbus.exceptions import NoSuchIdException
 
@@ -578,6 +644,8 @@ class Store:
                 table[p.index + i] = w
 
     async def async_getValues(self, device_id: int, func_code: int, address: int, count: int = 1):
+        """pymodbus: a master reads *count* registers/bits from *address* with *func_code* (also used before a
+        write is answered). Unknown addresses read as 0; an unknown function gets exception 1."""
         self._check(device_id)
         table = self.FC.get(func_code)
         if table is None:
@@ -590,6 +658,13 @@ class Store:
         return [data.get(a, 0) for a in range(address, address + count)]
 
     async def async_setValues(self, device_id: int, func_code: int, address: int, values):
+        """pymodbus: a master writes *values* from *address*. Returns None, or an exception code to answer with.
+
+        The whole write is refused (exception 2) when any address is not writable, so a multi-register write
+        never half-succeeds. Every tag whose registers were touched is then decoded from the tables and
+        published, which hands it to the gateway (back to the source). A tag with ``write_address`` is also
+        copied to where it is read, as the real device would show it.
+        """
         from pymodbus.constants import ExcCodes
 
         self._check(device_id)

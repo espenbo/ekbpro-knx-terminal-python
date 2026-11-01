@@ -85,7 +85,8 @@ def plc_configs(plc: dict[str, Any]) -> list[dict[str, Any]]:
         c.setdefault("gvl", "GVL_KNX")
         return [c]
     if not isinstance(items, list):
-        raise ValueError("plc.controllers must be a list")
+        # ValueError, not TypeError: it is a mistake in config.yaml, reported like the other configuration errors.
+        raise ValueError("plc.controllers must be a list")  # noqa: TRY004
     defaults = {k: v for k, v in plc.items() if k not in _OWN_KEYS}
     out, names, errors = [], set(), []
     for i, item in enumerate(items, 1):
@@ -344,7 +345,7 @@ def to_plc_value(entry: PlcEntry, value: Any) -> Any:
             return float(value)
         if t.startswith("STRING"):
             return str(value)
-        return int(round(float(value)))
+        return round(float(value))   # round() of a float is an int; integer PLC types take whole numbers
     except (TypeError, ValueError):
         return None
 

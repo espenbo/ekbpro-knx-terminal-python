@@ -9,10 +9,13 @@ import pytest
 from knxscada.protocols import PROTOCOLS, devices, installed
 from knxscada.protocols.config import dump, settings_of, validate
 
-from .test_protocols import make_hub, until, free_port
+from .test_protocols import free_port, make_hub, until
 
 
 def test_wago_meters_are_known_by_name_and_number():
+    """A template is found by model name or order number, ignoring case and extra spaces; an unknown model is an error
+    and the models are offered in the F11 form.
+    """
     assert {"WAGO 879-3000", "WAGO 879-3020", "WAGO 879-3040"} <= set(devices.names("modbus"))
     assert devices.find("WAGO 879-3020")["model"] == "WAGO 879-3020"
     assert devices.find(" wago  879-3040 ")["number"] == "879-3040"
@@ -25,6 +28,7 @@ def test_wago_meters_are_known_by_name_and_number():
 
 
 def test_wago_template_has_the_35_main_values_named_as_in_the_manual():
+    """The WAGO template has the 35 main values with the manual's names, Float ABCD from 0x5002, read only."""
     tags = devices.find("WAGO 879-3000")["tags"]
     assert len(tags) == 35
     assert tags["L1 voltage"] == {"address": "hr:0x5002", "type": "float32", "unit": "V", "writable": False}
@@ -34,6 +38,9 @@ def test_wago_template_has_the_35_main_values_named_as_in_the_manual():
 
 
 def test_template_settings_are_defaults_and_own_tags_are_added():
+    """Template settings are defaults the connection can override, own tags and descriptions are merged in, and only
+    differences are saved to protocols.yaml.
+    """
     conn = {"protocol": "modbus", "model": "WAGO 879-3000", "baudrate": "19200",
             "tags": {"Day register": {"address": "hr:0x6049", "type": "float32"},
                      "L1 voltage": {"description": "incoming"}}}
@@ -49,6 +56,7 @@ def test_template_settings_are_defaults_and_own_tags_are_added():
 
 
 def test_validate_reports_an_unknown_model():
+    """An unknown model is reported by validation; a known order number is accepted."""
     data = {"connections": {"m": {"protocol": "modbus", "model": "ABB 123"},
                             "ok": {"protocol": "modbus", "model": "879-3000"}}, "gateways": []}
     errors = validate(data)
@@ -56,6 +64,9 @@ def test_validate_reports_an_unknown_model():
 
 
 def test_describe_and_mismatches():
+    """The identification read from the meter is shown as text, and a different model or RS485 parity than configured is
+    reported.
+    """
     tpl = devices.find("WAGO 879-3000")
     found = {"meter_code": "879-3040", "unit_id": 1, "baudrate": "9600", "parity": "N", "serial": "00123456"}
     assert devices.describe(tpl, found) == "WAGO 879-3040 (2PU CT – current transformer)  unit 1  9600 N  serial 00123456"
@@ -70,6 +81,9 @@ def test_master_identifies_the_meter(tmp_path):
     port = free_port()
 
     async def run():
+        """Fill a slave with the identification registers of a 879-3020, then let a master with the 879-3000 template
+        read it.
+        """
         meter = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port, "tags": {
             "code": {"address": "hr:0x4002"}, "id": {"address": "hr:0x4003"}, "baud": {"address": "hr:0x4004"},
             "parity": {"address": "hr:0x4011"}, "serial": {"address": "hr:0x4000", "type": "uint32"},
@@ -106,6 +120,9 @@ def test_master_identifies_the_meter(tmp_path):
     ("Carlo Gavazzi EM580", 34, 125, 0), ("Carlo Gavazzi WM15", 40, 125, 8),
 ])
 def test_carlo_gavazzi_templates(model, n_tags, max_regs, max_gap):
+    """Each Carlo Gavazzi template has its tags, low word first, its block limits, and 'only:' tags are kept for the
+    right model only.
+    """
     s = settings_of({"protocol": "modbus", "model": model})
     assert len(s["tags"]) == n_tags
     assert (s["parity"], s["word_order"], s["max_registers"]) == ("N", "little", max_regs)
@@ -117,6 +134,7 @@ def test_carlo_gavazzi_templates(model, n_tags, max_regs, max_gap):
 
 @pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
 def test_blocks_respect_max_registers_and_gaps():
+    """Read blocks never exceed the meter's register limit, and with max_gap 0 (EM580) gaps are never read across."""
     from types import SimpleNamespace
 
     from knxscada.protocols.modbus import Driver
@@ -138,6 +156,9 @@ def test_master_reads_a_carlo_gavazzi_meter(tmp_path):
     port = free_port()
 
     async def run():
+        """Fill a slave with EM111 registers (identification, values and an overflow code), then read it with the
+        template.
+        """
         meter = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port, "word_order": "little",
                  "tags": {"code": {"address": "hr:0x000B"}, "id": {"address": "hr:0x2000"},
                           "baud": {"address": "hr:0x2001"}, "parity": {"address": "hr:0x2002"},
@@ -178,6 +199,9 @@ def test_master_reads_a_carlo_gavazzi_meter(tmp_path):
     ("Carlo Gavazzi EM271", "W TOT TCDA1 DMD", 800, 1500),
 ])
 def test_simulator_is_identified_and_read_by_the_master(tmp_path, model, tag, lo, hi):
+    """./scada simulate gives a slave that the master identifies as the same model and reads with good values in a
+    plausible range.
+    """
     import time
 
     from knxscada.protocols import simulate
@@ -185,6 +209,7 @@ def test_simulator_is_identified_and_read_by_the_master(tmp_path, model, tag, lo
     port = free_port()
 
     async def run():
+        """Start the simulator, let a master with the template read it, then stop both."""
         tpl, sim = simulate.build(model, port=port)
         simulate.refresh(sim, time.time())
         task = asyncio.create_task(sim.run())
@@ -209,6 +234,9 @@ def test_simulator_is_identified_and_read_by_the_master(tmp_path, model, tag, lo
 
 # -- Solar-Log ---------------------------------------------------------------------------------------------
 def test_solar_log_templates():
+    """The Solar-Log templates: TCP, low word first, no gaps, input registers only, power-control tags written to
+    holding registers, and no '/' in tag names.
+    """
     free = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP", "host": "192.0.2.10"})
     pm = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP PM", "host": "192.0.2.10"})
     assert (free["transport"], free["port"], free["word_order"], free["max_gap"]) == ("tcp", 502, "little", 0)
@@ -233,7 +261,8 @@ def test_tag_invalid_codes_and_solar_log_simulator(tmp_path):
     port = free_port()
 
     async def run():
-        tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
+        """Set the module temperature to the 'no sensor' code in the simulator and read the PM template."""
+        _tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
         simulate.refresh(sim, time.time())
         task = asyncio.create_task(sim.run())
         hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
@@ -258,7 +287,11 @@ def test_tag_invalid_codes_and_solar_log_simulator(tmp_path):
 
 
 def test_write_address_validation():
+    """write_address must be a writable area (hr or co) that suits the type; input registers and bad addresses are
+    refused.
+    """
     def errors(spec):
+        """Validation errors for one Modbus tag."""
         return validate({"connections": {"m": {"protocol": "modbus", "host": "192.0.2.10", "tags": {"t": spec}}},
                          "gateways": []})
 
@@ -280,6 +313,7 @@ def test_solar_log_power_control_and_watchdog(tmp_path):
     port = free_port()
 
     async def run():
+        """Write power-control values, check they come back on the input registers and that the heartbeat counts."""
         _tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
         simulate.refresh(sim, time.time())
         task = asyncio.create_task(sim.run())
@@ -313,9 +347,11 @@ def test_solar_log_power_control_and_watchdog(tmp_path):
 
 @pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
 def test_heartbeat_on_a_read_only_tag_is_reported_once(tmp_path):
+    """A heartbeat on a tag that cannot be written gives one error, not one every interval."""
     port = free_port()
 
     async def run():
+        """Let a master run a heartbeat on an input register and count the errors."""
         slave = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port,
                  "tags": {"wd": {"address": "ir:7"}}}
         hub = await make_hub(tmp_path, {"connections": {"slave": slave}, "gateways": []})
@@ -334,6 +370,7 @@ def test_heartbeat_on_a_read_only_tag_is_reported_once(tmp_path):
 
 
 def test_simulate_lists_templates(capsys):
+    """./scada simulate without a model lists the templates it can simulate."""
     from knxscada.__main__ import main
 
     assert main(["simulate"]) == 0

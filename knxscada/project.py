@@ -80,16 +80,16 @@ def split_key(key: str) -> tuple[str, str]:
 # The patterns include common English and Norwegian words used in ETS projects.
 
 #: Names that indicate a status/feedback address.
-STATUS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state)\b", re.I)
+STATUS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state)\b", re.IGNORECASE)
 #: Names that indicate a setpoint (writing a temperature makes sense).
-SETPOINT_RE = re.compile(r"setpoint|setpunkt|settpunkt|skal|ønsket|onsket|basis", re.I)
+SETPOINT_RE = re.compile(r"setpoint|setpunkt|settpunkt|skal|ønsket|onsket|basis", re.IGNORECASE)
 #: Names that indicate a switching (control) address even without the write flag.
-CONTROL_RE = re.compile(r"\b(switching|av/på|av/paa)\b", re.I)
+CONTROL_RE = re.compile(r"\b(switching|av/på|av/paa)\b", re.IGNORECASE)
 #: Placeholder names such as "-------" used to reserve addresses.
-PLACEHOLDER_RE = re.compile(r"^[-_\s.x]*$", re.I)
+PLACEHOLDER_RE = re.compile(r"^[-_\s.x]*$", re.IGNORECASE)
 #: Words removed when comparing names, so "Hall light switching" and
 #: "Hall light status" are recognised as belonging together.
-PAIR_WORDS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state|switching|switch|value|verdi)\b", re.I)
+PAIR_WORDS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state|switching|switch|value|verdi)\b", re.IGNORECASE)
 
 #: ETS function role → (role on the card, English label shown for it).
 #: Labels are translated when displayed.
@@ -241,6 +241,10 @@ _POINT_ROLES = {"temp": "TempRoom", "setpoint": "TempRoomSetpoint", "heat": "Hea
 
 
 def _is_bool(spec: dict[str, Any]) -> bool:
+    """Whether a protocols.yaml tag *spec* is on/off: ``type: bool``, a BACnet binary object or a Modbus coil/input.
+
+    Used for point rooms, so such a tag gets an on/off card (DPT 1.001) instead of a number.
+    """
     obj = str(spec.get("object") or "")
     return spec.get("type") == "bool" or obj.split(":")[0] in ("bv", "bi", "bo") or \
         str(spec.get("address") or "").split(":")[0] in ("co", "di")
@@ -356,12 +360,14 @@ def merge_models(projects: list[dict[str, Any]], models: list[dict[str, Any]]) -
         pre = p["prefix"]
 
         def key(a: str | None, pre: str = pre) -> str | None:
+            """*a* with this project's prefix (``S:1/2/3``); empty/None unchanged. *pre* is bound per loop pass."""
             return ga_key(pre, a) if a else a
 
         for a, g in m["gas"].items():
             gas[key(a)] = {**g, "address": key(a)}
 
         def ranges_with_prefix(rs: list[dict], key=key) -> list[dict]:
+            """The group range tree *rs* with every address prefixed (recursively)."""
             return [{**r, "address": key(r["address"]), "gas": [key(a) for a in r["gas"]],
                      "children": ranges_with_prefix(r["children"])} for r in rs]
 
@@ -434,6 +440,10 @@ def build_model(raw: dict[str, Any], rooms: dict[str, Any] | None = None) -> dic
 
     # --- 2. Group range tree -----------------------------------------------------------
     def walk(ranges: dict, path: list[str]) -> list[dict]:
+        """Turn the raw group range dict into a sorted tree and set each address' ``range`` text on the way.
+
+        *path* is the names of the ranges above (``["Lighting"]``), giving ``"Lighting / Switching"``.
+        """
         out = []
         for addr, r in sorted(ranges.items(), key=lambda kv: _ga_sort_key(kv[0])):
             p = path + [r["name"]]
@@ -537,6 +547,7 @@ def build_from_ranges(ranges: list[dict], gas: dict[str, dict]) -> tuple[list[di
     functions: dict[str, dict] = {}
 
     def usable(addr: str) -> bool:
+        """Worth a card: linked to a device, not a placeholder name and with a DPT (needed to show the value)."""
         g = gas.get(addr)
         return bool(g and g["used"] and not g["placeholder"] and g["dpt"])
 
@@ -622,6 +633,7 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
     main_name = {r["address"]: r["name"] or r["address"] for r in ranges}
 
     def usable(addr: str) -> bool:
+        """Worth a card (as in :func:`build_from_ranges`) and not left out by the rule's ``exclude`` patterns."""
         g = gas[addr]
         return bool(g["used"] and not g["placeholder"] and g["dpt"] and addr not in excluded)
 

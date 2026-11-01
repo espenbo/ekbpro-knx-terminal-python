@@ -32,6 +32,9 @@ SYSTEMS = [
 
 
 def test_parse_systems():
+    """ui.systems: the prefix is added to tag names, mode texts get int keys, short labels come from the name, settings
+    filter by glob, and bad entries are reported instead of stopping the TUI.
+    """
     vents, meters, problems = parse_systems(SYSTEMS)
     assert [v.name for v in vents] == ["AHU 1", "y"]
     assert vents[0].tags["supply"] == "U1_RT401" and vents[0].key("supply") == "vent/U1_RT401"
@@ -48,6 +51,9 @@ def test_parse_systems():
 
 
 def test_render_vent_and_meter_cells():
+    """The air-flow drawing shows values, alarms, filter, mode and power, fits a narrow width, marks old values as 'no
+    contact' and shows a stopped unit without alarm.
+    """
     vent = Vent("AHU", "v", {"outdoor": "o", "supply": "s", "supply_fan": "f", "alarm": "a", "filter_extract": "q",
                              "mode": "m"}, mode_texts={1: "Manual off"})
     values = {"v/o": (-5.25, "°C", "good"), "v/s": (21.0, "°C", "good"), "v/f": (55.0, "%", "good"),
@@ -89,11 +95,13 @@ def test_tui_systems_view(tmp_path, monkeypatch):
     meter = Mem("meter", {"tags": {"Total active power": {"type": "float", "unit": "kW"}}}, hub, server=False)
 
     async def fake_request(cmd, **kw):
+        """Answer protocol commands from the real hub; the rest is empty."""
         if cmd in ("protocols", "points"):
             return await hub.command({"cmd": cmd, **kw}, "test")
         return [] if cmd != "hello" else None
 
     async def fake_connect():
+        """Act as a server without a KNX connection that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": False, "connection": "off"},
                      "alarms": [], "stats": {}})
 
@@ -103,6 +111,8 @@ def test_tui_systems_view(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Start the hub with values, then check the unit card, its settings tab and the meter table as values change.
+        """
         hub.data, hub.load = {"connections": {}, "gateways": []}, (lambda: None)
         for d in (vent, meter):
             hub._add(d)
@@ -140,6 +150,9 @@ def test_tui_systems_view(tmp_path, monkeypatch):
 
 
 def test_week_program_line():
+    """Week calendars from CODESYS (one value per day, Monday first) are shown as one line per day, with 'off' for
+    disabled days.
+    """
     vent = Vent("AHU", "v", {r: r for r in ("week_start_hour", "week_start_minute", "week_stop_hour",
                                              "week_stop_minute", "week_enabled", "overtime")})
     values = {"v/week_start_hour": ([5, 5, 5, 5, 5, 10, 10], "", "good"),
@@ -155,6 +168,9 @@ def test_week_program_line():
 
 
 def test_arrays_are_converted_per_element():
+    """Array tags (CODESYS calendars) are converted element by element and compared with the float tolerance per
+    element.
+    """
     from knxscada.protocols.base import coerce, same_value
 
     assert coerce([1, 0, 2], "bool") == [True, False, True]
@@ -163,6 +179,9 @@ def test_arrays_are_converted_per_element():
 
 
 def test_consumption_from_counter():
+    """Consumption per bucket comes from an energy counter: interpolated between readings, spread over quiet gaps and
+    empty when the counter goes back (replaced meter).
+    """
     pts = [(0, 100.0), (1800, 101.0), (3600, 102.0), (5400, 104.0), (7200, 106.0)]
     assert value_at(pts, -1) is None and value_at(pts, 3600) == 102.0 and value_at(pts, 4500) == 103.0
     assert value_at(pts, 9000) == 106.0                                   # after the last point: the last reading
@@ -174,6 +193,9 @@ def test_consumption_from_counter():
 
 
 def test_settings_sections():
+    """The settings tab groups tags by configured groups, then by component code and common description, hides 'hide'
+    tags and shortens the labels by the group title (whole words only).
+    """
     vents, _meters, problems = parse_systems([
         {"name": "AHU", "connection": "v", "prefix": "U1_", "hide": ["Act_Time"],
          "groups": [{"title": "Operation", "tags": ["SYS_*", "SD_CMD"]}, {"tags": ["x"]}]}])
@@ -230,7 +252,9 @@ def test_tui_systems_write(tmp_path, monkeypatch):
     hub.server._broadcast = lambda msg: app._handle(msg)
     hub.server.clients = {object()}
     class Connected(Mem):                     # Mem's session ends at once; writes need a connection
+        """A memory driver that stays connected so writes are accepted."""
         async def session(self):
+            """Mark the connection as up and wait, like a real driver's session."""
             self.set_state(True)
             await self.wait_stopped(60)
 
@@ -239,11 +263,13 @@ def test_tui_systems_write(tmp_path, monkeypatch):
                                  "SD": {"type": "int", "writable": True}}}, hub, server=False)
 
     async def fake_request(cmd, **kw):
+        """Answer protocol commands, including point_write, from the real hub."""
         if cmd in ("protocols", "points", "point_write"):
             return await hub.command({"cmd": cmd, **kw}, "test")
         return [] if cmd != "hello" else None
 
     async def fake_connect():
+        """Act as a server without a KNX connection that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": False, "connection": "off"},
                      "alarms": [], "stats": {}})
 
@@ -253,6 +279,9 @@ def test_tui_systems_write(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Change the operating mode from the overview, then write a setpoint from the settings tab; a read-only tag
+        gets no dialog.
+        """
         hub.data, hub.load = {"connections": {}, "gateways": []}, (lambda: None)
         try:
             async with app.run_test(size=(180, 50)) as pilot:
@@ -295,6 +324,7 @@ def test_tui_systems_write(tmp_path, monkeypatch):
 
 
 def test_panel_type():
+    """type: panel is a unit without the air-flow drawing, only grouped tags."""
     vents, _m, problems = parse_systems([{"name": "Annex", "type": "panel", "connection": "gw",
                                           "groups": [{"title": "Lights", "tags": ["Light *"]}]}])
     assert not problems and vents[0].kind == "panel" and vents[0].label() == "Annex"
@@ -328,7 +358,9 @@ def test_tui_point_rooms(tmp_path, monkeypatch):
     hub.server.clients = {object()}
 
     class Connected(Mem):
+        """A memory driver that stays connected so the switch can write."""
         async def session(self):
+            """Mark the connection as up and wait, like a real driver's session."""
             self.set_state(True)
             await self.wait_stopped(60)
 
@@ -337,11 +369,13 @@ def test_tui_point_rooms(tmp_path, monkeypatch):
                                    "RT205_PV": {"type": "float", "unit": "°C", "writable": False}}}, hub, server=False)
 
     async def fake_request(cmd, **kw):
+        """Answer protocol commands, including point_write, from the real hub."""
         if cmd in ("protocols", "points", "point_write"):
             return await hub.command({"cmd": cmd, **kw}, "test")
         return [] if cmd != "hello" else None
 
     async def fake_connect():
+        """Act as a server without a KNX connection that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": False, "connection": "off"},
                      "alarms": [], "stats": {}})
 
@@ -351,9 +385,10 @@ def test_tui_point_rooms(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Open the room from the menu, check the values from the hub, switch the light and wait for the feedback."""
         hub.data, hub.load = {"connections": {}, "gateways": []}, (lambda: None)
         try:
-            async with app.run_test(size=(180, 50)) as pilot:
+            async with app.run_test(size=(180, 50)):
                 hub._add(gw)
                 await hub.start()
                 await until(lambda: gw.connected, 5)
@@ -400,9 +435,11 @@ def test_tui_overview_tiles_from_systems(tmp_path, monkeypatch):
               "m2": [{"name": "Total active power", "value": 800, "unit": "W", "q": "good"}]}
 
     async def fake_request(cmd, **kw):
+        """Serve the points of the outdoor sensor and the two meters."""
         return points.get(kw.get("conn"), []) if cmd == "points" else []
 
     async def fake_connect():
+        """Act as a server that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": True, "connection": "x"},
                      "alarms": [], "stats": {}})
 
@@ -412,6 +449,7 @@ def test_tui_overview_tiles_from_systems(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Check the outdoor tile, then rotate the power tile through both meters, the last one without data."""
         async with app.run_test(size=(180, 50)) as pilot:
             await until(lambda: app.state.get("pt:vent/RT900", {}).get("value") == -2.5, 5)
             view = app.query_one("#overview", OverviewView)

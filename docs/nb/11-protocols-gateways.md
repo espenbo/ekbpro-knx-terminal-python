@@ -258,7 +258,10 @@ til én enkelt verdi.
 Taggene peker på et objekt: `object: av:3` (kortnavn `ai ao av bi bo bv msi mso msv csv iv piv lav acc`; den lange
 formen `analog-value,3` virker også) og, når det ikke er nåverdien, en `property:` (`status-flags`,
 `out-of-service` …). Av/på-objekter gir `true`/`false`, multi-state-objekter 1, 2, 3 …. En tagg kan ha sin egen
-skrive`priority`. Innganger (`ai`, `bi`, `msi`) er skrivebeskyttet hvis ikke taggen sier `writable: true`.
+skrive`priority`. Innganger (`ai`, `bi`, `msi`) er skrivebeskyttet hvis ikke taggen sier `writable: true`. En
+operatør kan velge en annen prioritet for én skriving, og slippe en prioritet igjen, i skrivedialogen i TUI-en
+(brukerveiledningen, «Skriving til BACnet»); `point_write` tar `priority` og `release: true` til dette.
+Prioritet 1, 2 og 5 avvises for operatører.
 
 ```yaml
   aggregat1:

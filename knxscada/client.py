@@ -16,6 +16,7 @@ on the UI thread and may touch widgets directly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import getpass
 import itertools
 import json
@@ -41,6 +42,11 @@ class ScadaClient:
     TIMEOUT = 30
 
     def __init__(self, socket_path: Path, on_message: Callable[[dict], None]) -> None:
+        """A client for the server socket at *socket_path*; nothing is opened until :meth:`connect`.
+
+        *on_message* is called (in the event loop) for every server message that is not a reply to one of
+        our requests – telegrams, status, alarms, points … The operator name for the audit log is taken now.
+        """
         self.socket_path = socket_path
         self.on_message = on_message
         self.user = current_user()
@@ -52,6 +58,7 @@ class ScadaClient:
 
     @property
     def connected(self) -> bool:
+        """The socket is open and not being closed (the TUI shows "disconnected" and reconnects otherwise)."""
         return self._writer is not None and not self._writer.is_closing()
 
     async def connect(self) -> None:
@@ -74,10 +81,9 @@ class ScadaClient:
         """
         if self.connected:
             assert self._writer is not None
-            try:
+            # The goodbye is a courtesy: when the socket is already gone there is nobody to tell.
+            with contextlib.suppress(Exception):
                 self._writer.write((json.dumps({"id": 0, "cmd": "bye", "user": self.user}) + "\n").encode())
-            except Exception:  # noqa: BLE001 - the socket may already be gone
-                pass
             self._writer.close()
         if self._task:
             self._task.cancel()

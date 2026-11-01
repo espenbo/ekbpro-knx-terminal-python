@@ -65,6 +65,7 @@ SHORT = {"ai": "analog-input", "ao": "analog-output", "av": "analog-value", "bi"
 #: BACnet name → the short name shown in tag addresses.
 ABBREVIATION = {long: short for short, long in reversed(SHORT.items())}
 
+#: An object reference: a type name (short, long or camelCase) and an instance, separated by ":", "," or a space.
 OBJECT_RE = re.compile(r"^\s*([a-z][a-z-]*?)\s*[:,\s]?\s*(\d+)\s*$", re.IGNORECASE)
 
 #: Object types our device can have, and the value type of their present value.
@@ -189,13 +190,27 @@ def _no_answer(exc: BaseException) -> bool:
 
 
 class Driver(BaseDriver):
+    """One BACnet/IP connection: a client of one remote device, or our own BACnet device (``role``).
+
+    Client: polls its tags (and optionally follows them with COV), writes with a priority. Server: every
+    tag is a local object of our device; tags come from ``tags:`` and from gateways (:meth:`create_tag`).
+    """
+
     protocol = "bacnet"
+    #: Writes go into a slot of the device's priority array; the hub passes a chosen priority or a release.
+    priorities = True
 
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
+        """Set up the connection *name*; nothing is opened until :meth:`session`.
+
+        ``objects`` must exist before the base class builds the tags, because :meth:`make_tag` fills it.
+        """
         self.objects: dict[str, tuple[str, int]] = {}   # tag name → (object type, instance)
         super().__init__(name, settings, hub)
         self.echoes = self.role == "client"   # the next poll (or COV) reports a written value
+        # Client: the first poll only reports statuses, so a reconnect never makes gateways send anything on.
         self.reads_first = self.role == "client"
+        # A tag that failed the first poll (device busy, object missing) is still a status when it later appears.
         self.first_value_is_status = self.role == "client"
         self.app = None
         self.target = None          # Address of the device (client)
@@ -207,6 +222,11 @@ class Driver(BaseDriver):
 
     # -- tags -------------------------------------------------------------------------------------
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
+        """A tag from its ``tags:`` entry (or a gateway target): parse ``object``/``property`` into ``objects``.
+
+        The address shown is the short form (``av:3``, plus the property when it is not the present value).
+        Raises ValueError for an unreadable object, or for an object type our own device cannot have.
+        """
         tag = tag_from_spec(name, spec, "object")
         if self.role == "server" and not spec.get("object"):
             # A server tag without an object gets one when the device starts (see _object_of).
@@ -226,6 +246,7 @@ class Driver(BaseDriver):
         return tag
 
     def resolve(self, ref: str) -> Tag | None:
+        """The tag called *ref*, or the tag of the object *ref* in any spelling (``analogValue:3`` finds ``av:3``)."""
         tag = super().resolve(ref)
         if tag is None:
             try:
@@ -236,6 +257,11 @@ class Driver(BaseDriver):
         return tag
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
+        """Add a gateway target as an object of our device (server); clients refuse (base class).
+
+        ``writable`` is off unless the gateway says so (``direction: both``), so a BMS cannot write to a
+        value that only flows out. While the device runs, the object is created at once.
+        """
         if self.role != "server":
             return super().create_tag(name, spec)
         tag = self.make_tag(name, spec)
@@ -246,10 +272,12 @@ class Driver(BaseDriver):
         return tag
 
     def _prop(self, tag: Tag) -> str:
+        """The BACnet property the tag reads and writes (``present-value`` unless ``property`` says otherwise)."""
         return str(tag.extra.get("property") or "present-value")
 
     # -- connection -------------------------------------------------------------------------------
     def describe(self) -> str:
+        """Short text for the TUI: our device instance and UDP address (server), or the device and its identity."""
         s = self.settings
         if self.role == "server":
             return _("device {n}").format(n=s.get("device_instance")) + f"  {self._local_address()}"
@@ -257,6 +285,13 @@ class Driver(BaseDriver):
         return where + (f"  · {self.identity}" if self.identity else "")
 
     def _local_address(self) -> str:
+        """The UDP address our bacpypes3 application binds to: ``host:port`` or ``ip/prefix:port``.
+
+        Without ``local_address`` a client binds to the address routed towards the device (see the module
+        docstring: over a VPN the answer would otherwise go to the LAN address). ``host`` lets bacpypes3 pick
+        the default interface. Servers default to the standard port 47808, clients to any free port, so both
+        can run on one machine.
+        """
         s = self.settings
         host = str(s.get("local_address") or "")
         if not host and self.role != "server" and s.get("address"):
@@ -265,14 +300,18 @@ class Driver(BaseDriver):
         default = 47808 if self.role == "server" else 0
         port = s.get("local_port")
         port = default if port in (None, "") else int(port)
+        # An address that already carries a port (``192.168.1.10/24:47809``) is used as it is.
         return host if ":" in host.rsplit("/", 1)[-1] else f"{host}:{port}"
 
     def _make_app(self, instance: int, name: str):
+        """A bacpypes3 application as device *instance* named *name*, with this connection's address, APDU
+        timeout and BBMD (foreign-device registration) settings."""
         s = self.settings
         return make_app(self._local_address(), instance, name, float(s.get("timeout_s") or 3),
                         str(s.get("bbmd") or ""), int(s.get("bbmd_ttl") or 300))
 
     async def session(self) -> None:
+        """Run the client or the server until the connection is lost or the driver stops; COV tasks end with it."""
         try:
             if self.role == "server":
                 await self._serve()
@@ -284,6 +323,7 @@ class Driver(BaseDriver):
             self._tasks = []
 
     async def close(self) -> None:
+        """Close the UDP endpoint and drop our local objects (they are made again on the next session)."""
         if self.app is not None:
             app, self.app = self.app, None
             with contextlib.suppress(Exception):
@@ -292,6 +332,12 @@ class Driver(BaseDriver):
 
     # -- client -----------------------------------------------------------------------------------
     async def _client_session(self) -> None:
+        """Find the device (``address`` or Who-Is for ``device_id``), identify it, then poll every ``poll_ms``.
+
+        A device that does not answer the identification at all fails the session (retried later). ``rpm`` is
+        reset on each connect so a device whose firmware was updated gets ReadPropertyMultiple again. The poll
+        interval is measured from the start of each poll, so slow reads do not stretch the period.
+        """
         from bacpypes3.pdu import Address
 
         s = self.settings
@@ -346,6 +392,11 @@ class Driver(BaseDriver):
         return "  ".join(parts)
 
     async def _poll(self) -> None:
+        """Read every tag once, ``max_per_request`` objects per ReadPropertyMultiple.
+
+        A refused RPM switches to single reads for the rest of the session; no answer at all raises
+        ConnectionError so the session reconnects and the values turn "old".
+        """
         tags = [t for t in self.tags.values() if t.name in self.objects]
         size = max(1, int(self.settings.get("max_per_request") or 20))
         for i in range(0, len(tags), size):
@@ -362,6 +413,7 @@ class Driver(BaseDriver):
                 await self._read_one(tag)
 
     async def _read_multiple(self, tags: list[Tag]) -> None:
+        """Read *tags* with one ReadPropertyMultiple and publish them; a property answered with an error is "bad"."""
         params: list[Any] = []
         for tag in tags:
             otype, instance = self.objects[tag.name]
@@ -379,6 +431,7 @@ class Driver(BaseDriver):
                 self.publish(tag, from_bacnet(value))
 
     async def _read_one(self, tag: Tag) -> None:
+        """Read one tag with ReadProperty and publish it (an error answer marks it "bad", no answer reconnects)."""
         otype, instance = self.objects[tag.name]
         try:
             value = await self.app.read_property(self.target, f"{otype},{instance}", self._prop(tag))
@@ -390,6 +443,7 @@ class Driver(BaseDriver):
         self.publish(tag, from_bacnet(value))
 
     def _bad(self, tag: Tag) -> None:
+        """Mark *tag* as "bad" but keep its last value for display (bad values are never passed to gateways)."""
         rec = self.hub.values.get(f"{self.name}/{tag.name}")
         self.hub.update(self.name, tag.name, rec["v"] if rec else None, "bad")
 
@@ -414,15 +468,19 @@ class Driver(BaseDriver):
 
     # -- server -----------------------------------------------------------------------------------
     def _numbers_file(self) -> Path:
+        """``var/bacnet/<connection>.json`` next to the site's config: the object numbers given to targets."""
         return self.hub.server.cfg.resolve(f"var/bacnet/{self.name}.json")
 
     def _load_numbers(self) -> None:
+        """Read the kept object numbers; a missing or broken file starts afresh (numbers are then handed out again)."""
         try:
             self._numbers = json.loads(self._numbers_file().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             self._numbers = {}
 
     def _save_numbers(self) -> None:
+        """Write the object numbers (sorted, so the file diffs well). A failure is ignored: the device still runs,
+        only the numbers may change after the next restart."""
         path = self._numbers_file()
         with contextlib.suppress(OSError):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -454,6 +512,11 @@ class Driver(BaseDriver):
         return otype, instance
 
     async def _serve(self) -> None:
+        """Be our BACnet device: create the application and one object per tag, then wait until stopped.
+
+        Objects get the tag's last value from the hub (if any) so a BMS does not read zeros after the session
+        is restarted; this only fills our own address space and sends nothing to any device.
+        """
         s = self.settings
         instance = s.get("device_instance")
         if instance in (None, ""):
@@ -486,6 +549,11 @@ class Driver(BaseDriver):
                 self._set_local(tag, tag.to_raw(rec["v"]))
 
     def _set_local(self, tag: Tag, raw: Any) -> None:
+        """Set the present value of our object for *tag* to *raw* (COV subscribers are notified by bacpypes3).
+
+        Binary objects take "active"/"inactive"; a multi-state value outside 1…numberOfStates raises ValueError
+        rather than being clipped, so a wrong mapping is seen. Does nothing before the object exists.
+        """
         obj = self.local.get(tag.name)
         if obj is None:
             return
@@ -502,17 +570,35 @@ class Driver(BaseDriver):
         self.publish(tag, from_bacnet(value))
 
     # -- values -----------------------------------------------------------------------------------
-    async def write(self, tag: Tag, value: Any, user: str = "") -> None:
-        raw = tag.to_raw(value)
+    async def write(self, tag: Tag, value: Any, user: str = "", priority: int | None = None,
+                    release: bool = False) -> None:
+        """Write *value* to the device (client) or to our own object (server).
+
+        Client: WriteProperty with a priority – *priority* when the user chose one, else the tag's or the
+        connection's ``priority`` (none: the device's default, 16 for commandable objects). *release* writes Null
+        into that slot, which removes our command: the value with the next lower priority, or the relinquish
+        default, takes over. Our own objects (server) have no priority array, so a priority is ignored there and a
+        release is refused.
+        """
         if self.role == "server":
-            self._set_local(tag, raw)
+            if release:
+                raise ValueError(_("{tag}: our own objects have no priority array to release").format(tag=tag.name))
+            self._set_local(tag, tag.to_raw(value))
             return
         if self.app is None or not self.connected:
             raise ConnectionError(_("{connection} is not connected").format(connection=self.name))
         otype, instance = self.objects[tag.name]
         prop = self._prop(tag)
-        priority = tag.extra.get("priority", self.settings.get("priority"))
-        value = to_bacnet(otype, prop, raw)
+        if priority is None:
+            priority = tag.extra.get("priority", self.settings.get("priority"))
+        if release:
+            from bacpypes3.primitivedata import Null
+
+            value = Null(())
+            # A release must name a slot: without a configured one it is the slot a plain write would have used.
+            priority = priority if priority not in (None, "") else 16
+        else:
+            value = to_bacnet(otype, prop, tag.to_raw(value))
         from bacpypes3.apdu import ErrorRejectAbortNack
 
         try:
@@ -535,7 +621,8 @@ def _local_class(otype: str):
     from bacpypes3.object import CharacterStringValueObject
 
     class CharacterStringValue(LocalObject, CharacterStringValueObject):
-        pass
+        """A local characterstring-value object (bacpypes3 has no ready-made local class for it)."""
+
 
     base = {"analog-value": analog.AnalogValueObject, "analog-input": analog.AnalogInputObject,
             "binary-value": binary.BinaryValueObject, "binary-input": binary.BinaryInputObject,
@@ -544,7 +631,14 @@ def _local_class(otype: str):
             "characterstring-value": CharacterStringValue}[otype]
 
     class Point(base):
+        """Our object for one tag: named after the tag, with unit, COV increment and number of states from it."""
+
         def __init__(self, driver: Driver, tag: Tag, otype: str, instance: int) -> None:
+            """Create the object (*otype*, *instance*) for *tag* of *driver*, with a neutral start value.
+
+            The start value (0, inactive, state 1, "") only lives until :meth:`Driver._add_object` sets the
+            last known value; ``cov_increment`` (default 0.1) and ``states`` (default 16) come from the tag.
+            """
             kwargs: dict[str, Any] = {"objectIdentifier": (otype, instance), "objectName": tag.name,
                                       "statusFlags": [0, 0, 0, 0], "outOfService": False}
             if tag.description:
@@ -562,6 +656,11 @@ def _local_class(otype: str):
             self._driver, self._tag = driver, tag
 
         async def write_property(self, attr, value, index=None, priority=None):
+            """A BMS writes a property: only the present value of a writable tag is allowed.
+
+            Everything else is answered with writeAccessDenied. An accepted write is passed to the driver,
+            which publishes it, so the gateway sends it back to the source (``direction: both``).
+            """
             name = attr if isinstance(attr, str) else self._property_identifier_class(attr).attr
             if name != "presentValue" or not self._tag.writable:
                 raise ExecutionError(errorClass="property", errorCode="writeAccessDenied")

@@ -21,8 +21,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static
 
 from ..i18n import N_, _
-from .dialogs import ConfirmDialog
-from .gateways import PointDialog, conn_state, show_value
+from .gateways import PointDialog, confirm_point_write, conn_state, show_value
 from .views import View, hms
 from .widgets import FastTable, LineLog, LiveStatic, columns
 
@@ -294,8 +293,8 @@ class ProtocolMonitorView(View):
 
         Only tags with ``writable: true`` in protocols.yaml can be written (safety rule: tags towards equipment
         are read-only until writing has been agreed and tested); the server checks this again. The dialog
-        starts from the latest value in the buffer, else the value from the tag list. Two steps – value, then
-        "Write X to «tag»? Now: Y" – so a value is never sent by a single key press.
+        starts from the latest value in the buffer, else the value from the tag list. Two steps – value (and for
+        BACnet the priority), then "Write X to «tag»? Now: Y" – so a value is never sent by a single key press.
         """
         conn, name = e["conn"], e["tag"]
         info = self.tags.get(f"{conn}/{name}") or {}
@@ -305,26 +304,6 @@ class ProtocolMonitorView(View):
         title = f"{info.get('description') or name}  ({conn}/{name})"
         current = next((x["value"] for x in reversed(self.scada.point_log)
                         if x["conn"] == conn and x["tag"] == name and not x["write"]), info.get("value"))
-
-        def confirm(value: Any) -> None:
-            """The value from PointDialog (None = cancelled) → the confirmation dialog → _write."""
-            if value is None:
-                return
-            new = show_value(value) if not isinstance(value, str) else value
-            text = _("Write {new} to «{tag}»?\nNow: {old}\n({address})").format(
-                new=f"{new} {info.get('unit') or ''}".strip(), tag=info.get("description") or name,
-                old=f"{show_value(current)} {info.get('unit') or ''}".strip(), address=f"{conn}/{name}")
-            self.app.push_screen(ConfirmDialog(text), lambda ok: self._write(conn, name, value, new) if ok else None)
-
-        self.app.push_screen(PointDialog(title, {**info, "value": current}), confirm)
-
-    @work(group="protomon-write")
-    async def _write(self, conn: str, name: str, value: Any, shown: str) -> None:
-        """Send the write to the server (``point_write``); it is logged there with the user and comes back to
-        the log as a write entry. Errors from the server or the device are shown as a notification."""
-        try:
-            await self.scada.client.request("point_write", conn=conn, tag=name, value=value)
-        except Exception as exc:  # noqa: BLE001 - the server's message is shown as it is
-            self.scada.notify(f"{conn}/{name}: {exc}", severity="error")
-            return
-        self.scada.notify(_("Written: {tag} = {value}").format(tag=f"{conn}/{name}", value=shown))
+        old = f"{show_value(current)} {info.get('unit') or ''}".strip()
+        self.app.push_screen(PointDialog(title, {**info, "value": current}),
+                             lambda w: confirm_point_write(self.scada, conn, name, info, w, old))

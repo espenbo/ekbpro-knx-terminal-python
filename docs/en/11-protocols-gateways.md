@@ -256,7 +256,10 @@ to a single value.
 Tags name an object: `object: av:3` (short names `ai ao av bi bo bv msi mso msv csv iv piv lav acc`; the long
 `analog-value,3` works too) and, when it is not the present value, a `property:` (`status-flags`,
 `out-of-service` …). On/off objects give `true`/`false`, multi-state objects 1, 2, 3 …. A tag can have its own
-write `priority`. Inputs (`ai`, `bi`, `msi`) are read-only unless the tag says `writable: true`.
+write `priority`. Inputs (`ai`, `bi`, `msi`) are read-only unless the tag says `writable: true`. An operator can
+choose another priority for a single write, and release a priority again, in the TUI's write dialog (user guide,
+"Writing to BACnet"); `point_write` takes `priority` and `release: true` for this. Priorities 1, 2 and 5 are
+refused for operators.
 
 ```yaml
   ahu1:

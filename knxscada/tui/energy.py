@@ -93,6 +93,7 @@ class EnergyView(View):
     ]
 
     def __init__(self, **kw: Any) -> None:
+        """Create the empty view; the meters are parsed from ``ui.systems`` in :meth:`compose`."""
         super().__init__(**kw)
         self.meters: list[Meter] = []
         self.values: dict[str, Value] = {}
@@ -108,9 +109,11 @@ class EnergyView(View):
 
     @property
     def meter(self) -> Meter | None:
+        """The meter under the table cursor, or None when no meters are set up."""
         return self.meters[self.selected] if self.meters else None
 
     def compose(self) -> ComposeResult:
+        """The meter table, a detail card and two charts (power, consumption) – or a hint when there are no meters."""
         _vents, self.meters, _problems = parse_systems(self.scada.ui.get("systems"))
         if not self.meters:
             yield Static(_("No energy meters set up. Add a ui.systems entry with type: energy to config.yaml – "
@@ -123,6 +126,10 @@ class EnergyView(View):
             yield CachedPlot(id="en-use-plot", classes="chart")
 
     def on_mount(self) -> None:
+        """Add the columns and one row per meter (values "–" until they arrive), and start the 1 s redraw timer.
+
+        The table height is fixed to its rows so the charts below get the rest of the screen.
+        """
         if self.meters:
             t = self.query_one("#en-meters", FastTable)
             t.border_title = _("Energy meters")
@@ -137,13 +144,20 @@ class EnergyView(View):
 
     # -- data -------------------------------------------------------------------------------------
     def connections(self) -> list[str]:
+        """The connections of all meters, without duplicates; values of other connections are ignored."""
         return list(dict.fromkeys(m.conn for m in self.meters))
 
     def on_show_view(self) -> None:
+        """Called when Ctrl+G shows the view: fetch current values and the logs."""
         self.load()
 
     @work(exclusive=True, group="energy")
     async def load(self) -> None:
+        """Worker: fetch the current values of every meter connection, then the sparklines and the selected meter's log.
+
+        The sparklines (one log request per meter) are refreshed at most every 5 minutes. Nothing is done
+        while the server is not connected.
+        """
         if not self.scada.client.connected:
             return
         for conn in self.connections():
@@ -157,6 +171,10 @@ class EnergyView(View):
         await self._load_history()
 
     async def _load_sparks(self) -> None:
+        """Fetch the 24 h power log of every meter and turn it into the sparkline of the table (``SPARK_W`` wide).
+
+        Meters without a power tag, or without a log, get an empty cell.
+        """
         now = time.time()
         for i, m in enumerate(self.meters):
             key = m.key("power")
@@ -168,6 +186,10 @@ class EnergyView(View):
         self._dirty = True
 
     async def _load_history(self) -> None:
+        """Fetch the power and energy log of the selected meter for the chosen period and redraw.
+
+        The answer is dropped when the user selected another meter meanwhile (checked with ``is``).
+        """
         m = self.meter
         if m is None:
             return
@@ -184,9 +206,15 @@ class EnergyView(View):
 
     @work(exclusive=True, group="energy-history")
     async def reload_history(self) -> None:
+        """Worker for :meth:`_load_history` after a meter or period change; exclusive, so only the last one counts."""
         await self._load_history()
 
     def on_points(self, values: dict[str, list]) -> None:
+        """Live values (``points`` messages): keep those of the meter connections and extend the selected meter's curves.
+
+        Only marks the view dirty; the redraw happens in :meth:`_refresh_if_dirty` (table every second, charts
+        at most every 30 s).
+        """
         conns = self.connections()
         m = self.meter
         for key, (v, ts, q) in values.items():
@@ -204,11 +232,13 @@ class EnergyView(View):
                     self._plot_dirty = True
 
     def get(self, key: str | None) -> Value | None:
+        """The kept value of *key* (``conn/tag``) as (value, unit, quality), or None when unknown or *key* is None."""
         return self.values.get(key) if key else None
 
     # -- interaction ------------------------------------------------------------------------------
     @on(DataTable.RowHighlighted, "#en-meters")
     def _row(self, event: DataTable.RowHighlighted) -> None:
+        """The cursor moved to another meter: clear its curves and fetch the log of the new one."""
         index = int(event.row_key.value) if event.row_key and event.row_key.value else 0
         if index != self.selected or not (self.power or self.energy):
             self.selected = index
@@ -220,12 +250,14 @@ class EnergyView(View):
                 self.reload_history()
 
     def action_period(self, period: str) -> None:
+        """d/w/m: switch the charts to 24 hours, 7 days or 30 days and fetch the log for that period."""
         if period in PERIODS and period != self.period:
             self.period = period
             self.reload_history()
 
     # -- drawing ----------------------------------------------------------------------------------
     def on_theme_changed(self) -> None:
+        """Ctrl+T: the chart colours come from the theme, so redraw the charts."""
         self.replot()
 
     def today(self) -> float | None:
@@ -237,6 +269,10 @@ class EnergyView(View):
         return b - a if a is not None and b is not None and b >= a else None
 
     def _detail(self) -> Text:
+        """The text of the detail card: name, connection, power, energy counter, today's and the period's consumption.
+
+        A hint is added when there is no log at all, since then the charts stay empty for a reason the user can fix.
+        """
         m = self.meter
         t = Text()
         if m is None:
@@ -256,10 +292,12 @@ class EnergyView(View):
         return t
 
     def _span(self) -> tuple[float, float]:
+        """(start, end) of the chosen period as Unix times, ending now."""
         now = time.time()
         return now - PERIODS[self.period][0] * 3600, now
 
     def _refresh_if_dirty(self) -> None:
+        """Timer (1 s): update the table cells and the detail card when values changed, the charts at most every 30 s."""
         if not self.display or not self.meters:
             return
         if self._plot_dirty and time.time() - self._plot_at > 30:

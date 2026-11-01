@@ -23,6 +23,8 @@ from knxscada.tui.systems import Vent
 
 
 def test_sun_times():
+    """Sunrise and sunset match the almanac for Oslo within five minutes, and polar night and midnight sun are handled.
+    """
     # Oslo (almanac): 21 December 09:18–15:12 CET, 21 June 03:53–22:44 CEST. Five minutes allowed.
     rise, sset = sun_times(355, 59.91, 10.75, 1)
     assert abs(rise - (9 + 18 / 60)) < 0.09 and abs(sset - (15 + 12 / 60)) < 0.09
@@ -34,6 +36,7 @@ def test_sun_times():
 
 
 def test_moon():
+    """The moon phase is 0.5 at a known full moon and the glyphs/names follow the phase, also in ASCII."""
     full = 947182440 + 29.530588853 * 86400 / 2
     assert abs(moon_phase(full) - 0.5) < 1e-6
     assert moon_glyph(0.5) == ("●", "full moon") and moon_glyph(0.0)[1] == "new moon"
@@ -41,6 +44,9 @@ def test_moon():
 
 
 def test_canvas_and_heat_colors():
+    """The canvas clips text at the edges and escapes '[' in markup; heat colours follow the deviation from the
+    setpoint.
+    """
     c = Canvas(6, 2)
     c.put(-1, 0, "abc", "b")          # cut at the left edge
     c.put(4, 1, "[xyz", "")           # cut at the right edge; "[" must be escaped
@@ -52,6 +58,8 @@ def test_canvas_and_heat_colors():
 
 
 def test_vent_lines_move():
+    """The ventilation drawing shows the values and animates while running, but stands still when the unit is stopped.
+    """
     vent = Vent("AHU 1", "v", {"outdoor": "o", "supply": "s", "extract": "e", "supply_fan": "f", "running": "r",
                                "heating": "h", "mode": "m"}, mode_texts={1: "Comfort"})
     values = {"v/o": (-4.0, "°C", ""), "v/s": (19.5, "°C", ""), "v/e": (22.0, "°C", ""), "v/f": (60.0, "%", ""),
@@ -100,6 +108,7 @@ def test_tui_every_page(tmp_path, monkeypatch):
               "m2": [{"name": "Total active power", "value": 1.1, "unit": "kW"}]}
 
     async def fake_request(cmd, **kw):
+        """Serve the protocol points and a day of history for the meters."""
         if cmd == "points":
             return points.get(kw["conn"], [])
         if cmd == "history":
@@ -107,6 +116,7 @@ def test_tui_every_page(tmp_path, monkeypatch):
         return []
 
     async def fake_connect():
+        """Act as a server that has just said hello."""
         app._handle({"type": "hello", "state": {}, "status": {"connected": True, "connection": "x"},
                      "alarms": [], "stats": {}})
 
@@ -116,6 +126,7 @@ def test_tui_every_page(tmp_path, monkeypatch):
     monkeypatch.setattr(app.client, "close_nowait", lambda: None)
 
     async def run():
+        """Fill in room values and telegrams, open the screensaver and render every page for a few animation steps."""
         async with app.run_test(size=(160, 48)) as pilot:
             await pilot.pause(0.2)
             for key, value in (("RT201_PV", 23.4), ("RT201_SP", 21.0), ("RT202_PV", 19.0), ("Light Status", True)):

@@ -129,6 +129,7 @@ class Canvas:
     """A grid of characters with a style each, rendered as Textual markup (one tag per run of equal style)."""
 
     def __init__(self, width: int, height: int) -> None:
+        """Create an empty canvas of *width* × *height* cells (at least 1 × 1, so a tiny screen cannot break it)."""
         self.w, self.h = max(1, width), max(1, height)
         self.cells = [[(" ", "")] * self.w for _ in range(self.h)]
 
@@ -176,9 +177,11 @@ def vent_lines(s: Vent, get: Callable[[str | None], Value | None], t: int, ascii
     *t* is the animation step: arrows move along the ducts and the fans turn while the unit runs.
     """
     def v(role: str, decimals: int = 1) -> str:
+        """The value of *role* as display text (``fmt``), with *decimals* decimals; "–" when it has no value."""
         return fmt(get(s.key(role)), decimals)
 
     def level(role: str) -> float | None:
+        """The value of *role* as a number (fan output in %, heating output …), or None when unknown or not numeric."""
         val = get(s.key(role))
         return _num(val[0]) if val else None
 
@@ -190,10 +193,12 @@ def vent_lines(s: Vent, get: Callable[[str | None], Value | None], t: int, ascii
     fans = "|/-\\" if ascii_only else "◐◓◑◒"
 
     def fan(turning: bool, role: str, reverse: bool = False) -> str:
+        """A fan as ``(◐  42 %)``: the glyph turns with the animation step while *turning* (*reverse*: the other way)."""
         glyph = fans[(-t if reverse else t) % 4] if turning else fans[0]
         return f"[b]({glyph} {v(role, 0):>5})[/b]"
 
     def box(icon: str, role: str, style: str = "") -> str:
+        """A component as ``[icon value]``, escaped so the brackets are not read as markup, optionally in *style*."""
         text = f"[{icon} {v(role, 0):>5}]"
         return f"[{style}]{escape(text)}[/]" if style else escape(text)
 
@@ -206,9 +211,11 @@ def vent_lines(s: Vent, get: Callable[[str | None], Value | None], t: int, ascii
     blank = "─" * 9 if not ascii_only else "-" * 9
 
     def sduct(n: int = 4) -> str:
+        """A piece of supply duct (accent colour); its arrows move to the right while the supply fan runs."""
         return f"[$accent]{_duct(n, t, True, supply_on, ascii_only)}[/]"
 
     def educt(n: int = 4) -> str:
+        """A piece of extract duct (warning colour); its arrows move to the left while the extract fan runs."""
         return f"[$warning]{_duct(n, t, False, extract_on, ascii_only)}[/]"
 
     state = (f"[$error b]⚠ {_('ALARM')}[/]" if alarm else
@@ -233,6 +240,7 @@ class ScreenSaver(Screen):
     """Full-screen information display. Styling lives in app.tcss (ScreenSaver, #ss-body, #ss-foot)."""
 
     def __init__(self) -> None:
+        """Set up the page rotation, the animation state and the caches; values are loaded in :meth:`on_mount`."""
         super().__init__()
         self.page = 0
         self.last_switch = time.time()
@@ -247,13 +255,19 @@ class ScreenSaver(Screen):
 
     @property
     def scada(self) -> ScadaApp:
+        """The app, typed as :class:`ScadaApp` (state, history, alarms, ``home``, ``ui``)."""
         return self.app  # type: ignore[return-value]
 
     def compose(self) -> ComposeResult:
+        """The page body and a one-line footer (page dots, page name, active alarms)."""
         yield Static("", id="ss-body")
         yield Static("", id="ss-foot")
 
     def on_mount(self) -> None:
+        """Read the units and meters from ``ui.systems`` and start the timers: 0.5 s redraw, 15 s value poll.
+
+        Only ``ventilation`` units get a page; panels have no air-flow picture.
+        """
         vents, meters, _problems = parse_systems(self.scada.ui.get("systems"))
         self.vents = [v for v in vents if v.kind == "ventilation"]
         self.meters = meters
@@ -279,10 +293,12 @@ class ScreenSaver(Screen):
 
     # -- events ------------------------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
+        """Any key closes the screensaver."""
         event.stop()  # the key only wakes the UI; it must not trigger an action
         self.dismiss()
 
     def on_click(self) -> None:
+        """A click closes the screensaver."""
         self.dismiss()
 
     # -- pages -------------------------------------------------------------------------
@@ -361,6 +377,7 @@ class ScreenSaver(Screen):
         return "\n".join(f"[{color}]{escape(line)}[/]" for line in big_text(text, self.scada.ascii))
 
     def _spark(self, ga: str | None, width: int, hours: float = 24) -> str:
+        """Sparkline of the 24 h history the app keeps for group address *ga* ("" without an address or data)."""
         if not ga:
             return ""
         return self._spark_of(self.scada.history.get(ga, []), width, hours)

@@ -4,6 +4,7 @@ from knxscada.tui.home import HomeModel
 
 
 def _model():
+    """A minimal project model: one room with a heating function whose datapoints have no ETS roles, only labels."""
     dps = [
         {"label": "Set Temp", "role": "", "kind": "setpoint", "ga": "2/1/0", "status": None, "dpt": "9.001"},
         {"label": "Er-Verdi", "role": "", "kind": "value", "ga": None, "status": "2/0/0", "dpt": "9.001"},
@@ -17,6 +18,9 @@ def _model():
 
 
 def test_setpoint_and_valve_without_roles():
+    """Room temperature, setpoint and valve are found from labels/kinds when ETS gives no roles, and a valve at 0 %
+    means not heating.
+    """
     home = HomeModel(_model(), {})
     (room,) = home.rooms
     assert (room.temp_ga, room.sp_ga, room.heat_ga) == ("2/0/0", "2/1/0", "2/3/0")

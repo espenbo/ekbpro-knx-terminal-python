@@ -108,7 +108,7 @@ def bar(frac: float, width: int, ascii_only: bool = False) -> str:
     """Horizontal bar *width* characters wide, filled to *frac* (0–1) with 1/8 resolution."""
     frac = max(0.0, min(1.0, frac))
     if ascii_only:
-        full = int(round(frac * width))
+        full = round(frac * width)
         return "#" * full + "." * (width - full)
     eighths = " ▏▎▍▌▋▊▉"
     total = frac * width

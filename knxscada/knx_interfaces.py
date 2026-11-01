@@ -146,6 +146,8 @@ class Router:
     """Chooses the interface an outgoing telegram for a group address is sent through."""
 
     def __init__(self, configs: list[dict[str, Any]]) -> None:
+        """Routing tables from the validated interface *configs* (:func:`interface_configs`): ``addresses``
+        patterns first, then the interface that last received the address, then the project's default."""
         self.names = [c["name"] for c in configs]
         self.prefix = {c["name"]: c.get("prefix", "") for c in configs}
         self.patterns = [(c["name"], c["addresses"]) for c in configs if c["addresses"]]
@@ -189,6 +191,7 @@ class Deduplicator:
     """
 
     def __init__(self, window_ms: int = DEDUP_MS) -> None:
+        """Treat equal telegrams on different interfaces within *window_ms* as one (0 turns it off)."""
         self.window = window_ms / 1000
         self.recent: dict[tuple, tuple[float, str]] = {}  # key → (time, interface)
         self._last_cleanup = 0.0

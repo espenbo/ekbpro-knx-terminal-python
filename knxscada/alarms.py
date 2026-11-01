@@ -124,9 +124,8 @@ class Rule:
             return False
         if self.exclude_name and self.exclude_name.search(ga["name"]):
             return False
-        if self.dpt_main is not None and dptlib.split(ga["dpt"])[0] != self.dpt_main:
-            return False
-        return True
+        # Last check: no DPT filter, or the main type (9 in "9.001") must match.
+        return self.dpt_main is None or dptlib.split(ga["dpt"])[0] == self.dpt_main
 
     def matches_point(self, key: str, name: str, description: str = "") -> bool:
         """True if the protocol tag *key* (``connection/tag``) is selected by this rule."""

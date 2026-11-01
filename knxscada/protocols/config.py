@@ -80,6 +80,7 @@ def protocols_path(cfg: Config) -> Path:
 
 
 def empty() -> dict[str, Any]:
+    """The contents of an empty ``protocols.yaml``: no connections, no gateways."""
     return {"connections": {}, "gateways": []}
 
 
@@ -298,11 +299,14 @@ class _Flow(dict):
 
 
 def _flow_representer(dumper: yaml.SafeDumper, data: _Flow):
+    """Write a :class:`_Flow` dict in flow style (``{address: hr:100, type: float32}``) – one line per tag or
+    mapping line keeps a hand-edited file readable."""
     return dumper.represent_mapping("tag:yaml.org,2002:map", data.items(), flow_style=True)
 
 
 class _Dumper(yaml.SafeDumper):
-    pass
+    """A SafeDumper of our own, so the :class:`_Flow` representer does not change ``yaml.SafeDumper`` globally."""
+
 
 
 _Dumper.add_representer(_Flow, _flow_representer)

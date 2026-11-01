@@ -67,6 +67,7 @@ def _flag(value: Any) -> bool | None:
 
 
 def _num(value: Any, default: float | None = None) -> float | None:
+    """A numeric line setting (``scale``, ``deadband`` …) as float; *default* when empty. ValueError if not a number."""
     if value is None or value == "":
         return default
     return float(value)
@@ -76,7 +77,7 @@ def _num(value: Any, default: float | None = None) -> float | None:
 class Link:
     """One mapping line between a source tag (a) and a target tag (b)."""
 
-    gateway: str
+    gateway: str                   # name of the gateway the line belongs to (shown in errors and the TUI)
     a_conn: str
     a_tag: str
     b_conn: str
@@ -88,26 +89,31 @@ class Link:
     deadband: float = 0.0
     min_interval: float = 0.0      # seconds
     initial: bool | None = None    # None: as the target driver says (Driver.initial_default)
+    #: Last value known on each side (received or sent) – the echo and "already has it" checks compare with it.
     last_a: Any = MISSING
     last_b: Any = MISSING
-    count: int = 0
-    last_ts: float = 0.0
-    error: str = ""
+    count: int = 0                 # writes done, for the TUI
+    last_ts: float = 0.0           # time of the last successful write (epoch seconds)
+    error: str = ""                # last error, "" while the link works
+    #: Rate-limited writes waiting to go out, per direction (True = forward).
     pending: dict[bool, asyncio.TimerHandle] = field(default_factory=dict)
     held: dict[bool, Any] = field(default_factory=dict)    # changes waiting for the target to finish reading
-    sent_at: dict[bool, float] = field(default_factory=dict)
+    sent_at: dict[bool, float] = field(default_factory=dict)   # monotonic time of the last write per direction
 
     @property
     def key(self) -> str:
+        """Unique id of the link (gateway, source and target); a line that matches twice is linked once."""
         return f"{self.gateway}|{self.a_conn}/{self.a_tag}|{self.b_conn}/{self.b_tag}"
 
     def info(self) -> dict[str, Any]:
+        """What the TUI's gateway view shows of the link: ends, direction, write count, last write and error."""
         return {"key": self.key, "gateway": self.gateway, "from": f"{self.a_conn}/{self.a_tag}",
                 "to": f"{self.b_conn}/{self.b_tag}", "both": self.both, "count": self.count, "ts": self.last_ts,
                 "error": self.error}
 
 
 def _invert(value: Any) -> Any:
+    """``invert``: on ↔ off. Numbers become 0/1 (a non-zero number counts as on); text is left as it is."""
     if isinstance(value, bool):
         return not value
     if isinstance(value, (int, float)):
@@ -155,6 +161,10 @@ class GatewayEngine:
     """All links of all gateways, indexed by the tags whose values they react to."""
 
     def __init__(self, hub: Hub, gateways: list[dict[str, Any]]) -> None:
+        """An engine for the ``gateways:`` list of ``protocols.yaml`` (``enabled: false`` ones are left out).
+
+        Nothing is linked until :meth:`build`; the hub calls it right after creating the engine.
+        """
         self.hub = hub
         self.gateways = [g for g in gateways if isinstance(g, dict) and g.get("enabled", True) is not False]
         self.links: list[Link] = []
@@ -163,7 +173,7 @@ class GatewayEngine:
         self._patterns: list[tuple[dict[str, Any], dict[str, Any]]] = []   # (gateway, line) with * or ?
         self._checked: set[tuple[str, str]] = set()                        # tags already matched with the patterns
         self._made: set[str] = set()                                       # link keys, so a tag is linked once
-        self.problems: list[str] = []
+        self.problems: list[str] = []                                      # build errors, shown in the TUI
 
     # -- building ---------------------------------------------------------------------------------
     def build(self) -> None:
@@ -214,6 +224,7 @@ class GatewayEngine:
                 self._problem(f"{gname}: {exc}")
                 return None
         elif both and not b_tag.writable and b.role == "server":
+            # Only our own server tags are opened for writing here; a device tag keeps its ``writable: false``.
             b_tag.writable = True
         link = Link(
             gateway=gname, a_conn=a.name, a_tag=a_tag.name, b_conn=b.name, b_tag=b_tag.name, both=both,
@@ -245,6 +256,7 @@ class GatewayEngine:
         return link
 
     def _problem(self, text: str) -> None:
+        """Record a build problem (missing tag, bad target) once and report it in the event log."""
         if text not in self.problems:
             self.problems.append(text)
             self.hub.event("error", text)
@@ -271,6 +283,14 @@ class GatewayEngine:
             link.last_b = value   # what the target has now
 
     def _deliver(self, link: Link, forward: bool, value: Any, initial: bool) -> None:
+        """Pass *value* of one end through *link* (*forward*: source → target, else target → source).
+
+        *initial* marks a status read after a start-up or reconnect, which is only remembered unless the
+        target takes initial values (:meth:`_sends_initial`) – this is what keeps a restart from writing
+        anything to KNX or to devices. A target that is connected but still reading gets the value later
+        (:meth:`on_ready`); for a client target that is not connected the hub refuses the write, which is
+        reported on the link.
+        """
         last_in = link.last_a if forward else link.last_b
         if last_in is not MISSING and same_value(value, last_in):
             return  # our own write coming back, or no change
@@ -305,11 +325,18 @@ class GatewayEngine:
 
     @staticmethod
     def _sends_initial(link: Link, drv, tag) -> bool:
+        """Does *link* send initial values to *tag* of *drv*? Never to KNX (``initial_allowed``); else the line's
+        ``initial``, or the driver's default (our own servers yes, devices no)."""
         if not drv.initial_allowed:
             return False
         return drv.initial_default(tag) if link.initial is None else link.initial
 
     def _send(self, link: Link, forward: bool, dst_conn: str, dst_tag: str, out: Any) -> None:
+        """Write the converted *out* unless the target has it already or it is inside the ``deadband``.
+
+        The value is remembered as the target's at once (before the write is done), so the read-back of
+        our own write is recognised as an echo and not sent back to the source.
+        """
         last_out = link.last_b if forward else link.last_a
         if last_out is not MISSING and same_value(out, last_out):
             return  # the target has it already
@@ -355,6 +382,7 @@ class GatewayEngine:
 
     @staticmethod
     def _set_last(link: Link, a_side: bool, value: Any) -> None:
+        """Remember *value* as what the source (*a_side*) or the target has; MISSING forgets it."""
         if a_side:
             link.last_a = value
         else:
@@ -374,6 +402,7 @@ class GatewayEngine:
                 wait, lambda: loop.create_task(self._write(link, forward, conn, tag, value)))
 
     async def _write(self, link: Link, forward: bool, conn: str, tag: str, value: Any) -> None:
+        """Write through the hub as user ``gw:<gateway>`` (so the hub's checks – ``writable``, connected – apply)."""
         link.pending.pop(forward, None)
         link.sent_at[forward] = time.monotonic()
         try:
@@ -394,6 +423,7 @@ class GatewayEngine:
             self.hub.event("error", f"{link.gateway}: {text}")
 
     def stop(self) -> None:
+        """Cancel every rate-limited write still waiting (the engine is being replaced or the server stops)."""
         for link in self.links:
             for h in link.pending.values():
                 h.cancel()

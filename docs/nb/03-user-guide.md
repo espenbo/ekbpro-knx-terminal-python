@@ -123,10 +123,27 @@ protokollen i en installasjon uten KNX); trykket igjen går den videre til neste
 god) og hver **skriving** (→ verdi og brukeren som skrev), live. Verdier som ikke endrer seg, vises ikke: huben
 sender bare endringer videre.
 
-- **`/`** filtrerer på tilkobling, tagg, beskrivelse, verdi eller bruker; `skriv` viser bare skrivinger.
+- **`/`** filtrerer på tilkobling, tagg, beskrivelse, verdi eller bruker; `skriv` viser bare skrivinger,
+  `sluppet` slippene.
 - **`p`** setter på pause og fortsetter, **`c`** tømmer visningen.
 - **Enter, klikk eller `w`** på en linje skriver en ny verdi til taggen, med bekreftelse – bare for tagger med
-  `writable: true`. En BACnet-skriving bruker prioriteten til tilkoblingen (`priority`).
+  `writable: true`. For BACnet viser dialogen også skriveprioriteten (se «Skriving til BACnet» under).
+
+### Skriving til BACnet: prioritet og slipp
+
+En BACnet-verdi skrives inn i én av 16 plasser i enhetens prioritetstabell; den høyeste aktive plassen (det laveste
+tallet) bestemmer verdien. Skrivedialogen (Monitor, Anlegg › Innstillinger, F11 `w`) har feltet **Prioritet**,
+forhåndsvalgt med taggens eller tilkoblingens `priority` (16 når ingen er satt):
+
+- **16** er den vanlige plassen for automatikk. En skriving der blir overskrevet neste gang regulatoren skriver.
+- **8** (manuell betjening) og andre tall under standarden **overstyrer automatikken til verdien slippes**.
+  Dialogen advarer om dette, og bekreftelsen nevner prioriteten.
+- **Slipp** skriver «ingenting» inn i den valgte plassen, slik at verdien med nest lavere prioritet tar over igjen.
+  Slipp den samme prioriteten som du skrev med.
+- 1, 2 og 5 (livssikkerhet og kritisk utstyr) tilbys aldri, og serveren avviser dem.
+
+Hendelsesloggen viser hver skriving med prioriteten når den ikke var standard, og slipp som
+«sluppet (prioritet 8)».
 
 Monitoren viser det som har skjedd siden TUI-en ble startet (opptil 10 000 linjer for alle protokollene).
 

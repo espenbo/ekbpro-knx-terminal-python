@@ -59,8 +59,7 @@ from textual.widgets import (
 
 from ..i18n import N_, _
 from .charts import CachedPlot, draw, palette
-from .dialogs import ConfirmDialog
-from .gateways import PointDialog
+from .gateways import PointDialog, PointWrite, confirm_point_write
 from .views import View
 from .widgets import FastTable, LiveStatic
 
@@ -114,6 +113,7 @@ class Vent:
     kind: str = "ventilation"                            # "panel": no drawing, only the tags in sections
 
     def key(self, role: str) -> str | None:
+        """The hub key ``conn/tag`` of *role*, or None when the role has no tag (it is then left out of the drawing)."""
         tag = self.tags.get(role)
         return f"{self.conn}/{tag}" if tag else None
 
@@ -125,11 +125,18 @@ class Vent:
         return m.group(1) if m else self.name
 
     def shows_setting(self, tag: str) -> bool:
+        """True when *tag* (full name, with the prefix) belongs on the "Settings" tab.
+
+        ``hide`` (matched without the prefix) always wins; without ``settings`` patterns every other tag is shown,
+        otherwise only the tags matching one of them (matched with the prefix, as written in ``protocols.yaml``).
+        Matching is case-sensitive, like the tag names of the PLC.
+        """
         if any(fnmatch.fnmatchcase(self.short_name(tag), p) for p in self.hide):
             return False
         return not self.settings or any(fnmatch.fnmatchcase(tag, p) for p in self.settings)
 
     def short_name(self, tag: str) -> str:
+        """*tag* without the unit's ``prefix``: the shorter name shown in the table and matched by ``groups``/``hide``."""
         return tag[len(self.prefix):] if self.prefix and tag.startswith(self.prefix) else tag
 
 
@@ -142,6 +149,7 @@ class Meter:
     tags: dict[str, str] = field(default_factory=dict)   # role → tag name
 
     def key(self, role: str) -> str | None:
+        """The hub key ``conn/tag`` of *role* (e.g. ``power``), or None when the meter has no tag for it."""
         tag = self.tags.get(role)
         return f"{self.conn}/{tag}" if tag else None
 
@@ -198,6 +206,7 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
 
 
 def _str_list(value: Any) -> list[str]:
+    """A YAML value that may be one string or a list as a list of strings (None or empty → ``[]``)."""
     if not value:
         return []
     return [str(v) for v in (value if isinstance(value, list) else [value])]
@@ -213,6 +222,8 @@ class Group:
     rows: list[tuple[dict, str]] = field(default_factory=list)
 
 
+#: A TFM component code at the start of a tag name: two capitals and three digits (``JV401``, ``RT900``),
+#: followed by ``_`` or the end of the name.
 _TFM = re.compile(r"([A-Z]{2}\d{3})(?:_|$)")
 
 
@@ -345,6 +356,12 @@ Block = list[Text]
 
 
 def _box(label: str, value: str, style: str, width: int) -> Block:
+    """A framed component of the drawing: four lines, *label* and *value* centred and cut to the box width.
+
+    Args:
+        style: Rich style of the whole box (green when running, dim when off …).
+        width: outer width including the two border characters.
+    """
     inner = width - 2
     return [Text(f"┌{'─' * inner}┐", style), Text(f"│{label[:inner]:^{inner}}│", style),
             Text(f"│{value[:inner]:^{inner}}│", style), Text(f"└{'─' * inner}┘", style)]
@@ -358,12 +375,20 @@ def _duct(width: int, style: str, arrow: str = "") -> Block:
 
 
 def _text_block(lines: list[str], width: int, style: str = "", styles: dict[int, str] | None = None) -> Block:
+    """Up to four lines of plain text as a block (missing lines are blank).
+
+    Args:
+        width: pad and cut every line to this width; 0 keeps the lines as they are (the right-hand end of the
+            drawing, where the text may run to the edge).
+        style: style of every line, unless *styles* gives one for that line index.
+    """
     styles = styles or {}
     return [Text(f"{lines[i] if i < len(lines) else '':<{width}}"[:width] if width else
                  (lines[i] if i < len(lines) else ""), styles.get(i, style)) for i in range(4)]
 
 
 def _join(blocks: list[Block]) -> list[Text]:
+    """Put blocks side by side: the four lines of each block are appended to the four output lines."""
     out = [Text() for _ in range(4)]
     for b in blocks:
         for i in range(4):
@@ -418,10 +443,15 @@ def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, m
     duct = "" if running else c.dim
 
     def fan(role: str, run_role: str, label: str) -> Block:
+        """The box of a fan: its output in % as the value, green when running.
+
+        The run feedback (*run_role*) decides "running" when it is set up; otherwise an output above 0 does.
+        """
         running_fan = on(v[run_role]) if v[run_role] is not None else on(v[role])
         return _box(label, fmt(v[role], 0), f"bold {c.ok}" if running_fan else c.dim, box_w)
 
     def filt(role: str) -> Block:
+        """A filter box (OK / ⚠ Alarm / – when unknown), or plain duct when the unit has no filter tag for *role*."""
         if role not in s.tags:
             return _duct(box_w, duct)
         bad = on(v[role])
@@ -429,11 +459,13 @@ def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, m
         return _box(_("Filter"), value, f"bold {c.warn}" if bad else ("" if bad is False else c.dim), box_w)
 
     def coil(label: str, role: str, style_on: str) -> Block:
+        """A heating or cooling coil box with its output, in *style_on* while active, or plain duct without a tag."""
         if role not in s.tags:
             return _duct(box_w, duct)
         return _box(label, fmt(v[role], 0), style_on if on(v[role]) else c.dim, box_w)
 
     def flows(flow: str, pressure: str) -> str:
+        """Air flow and pressure of one side as text after the drawing (empty when neither is set up)."""
         parts = [fmt(v[r], 0) for r in (flow, pressure) if v[r] is not None]
         return "   " + "  ".join(parts) if parts else ""
 
@@ -480,6 +512,7 @@ def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, m
 def render_week(v: dict[str, Value | None], c: Colors) -> Text | None:
     """``Week  Mon 05:00–21:00  Tue …  Sun off  Overtime on`` – None without a week program."""
     def day_list(role: str) -> list | None:
+        """The value of *role* as a list (one entry per day), or None when it is missing or not an array."""
         x = v.get(role)
         return list(x[0]) if x is not None and isinstance(x[0], (list, tuple)) else None
 
@@ -505,6 +538,10 @@ def render_week(v: dict[str, Value | None], c: Colors) -> Text | None:
 
 
 def theme_colors(app: Any) -> Colors:
+    """The drawing colours from the active Textual theme (success/warning/error/accent), with plain fallbacks.
+
+    Called at every redraw, so a theme change (Ctrl+T) is picked up without caching anything.
+    """
     tv = getattr(app, "theme_variables", {}) or {}
     return Colors(ok=tv.get("success", "green"), warn=tv.get("warning", "yellow"), bad=tv.get("error", "red"),
                   dim="dim", accent=tv.get("accent", "cyan"))
@@ -516,12 +553,20 @@ class ModeDialog(ModalScreen["int | None"]):
     BINDINGS: ClassVar = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def __init__(self, title: str, modes: dict[int, str], current: Any) -> None:
+        """Prepare the dialog.
+
+        Args:
+            title: dialog title (``Mode – <unit name>``).
+            modes: the unit's ``mode_texts`` (value written → button text).
+            current: the current mode value; its button is highlighted. None or a non-int shows "–".
+        """
         super().__init__()
         self.title_ = title
         self.modes = modes
         self.current = current
 
     def compose(self) -> ComposeResult:
+        """The current mode and one button per mode (the current one highlighted), then Cancel."""
         with Vertical(classes="dialog"):
             yield Label(self.title_, classes="dialog-title", markup=False)
             now = self.modes.get(self.current, "–") if isinstance(self.current, int) else "–"
@@ -532,6 +577,7 @@ class ModeDialog(ModalScreen["int | None"]):
                 yield Button(_("Cancel"), id="mode-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Return the mode of the pressed button (``mode-<n>``), or None for Cancel."""
         bid = event.button.id or ""
         self.dismiss(int(bid[5:]) if bid.startswith("mode-") and bid != "mode-cancel" else None)
 
@@ -560,6 +606,7 @@ class SystemsView(View):
     POINTS_MAX_AGE = 300
 
     def __init__(self, **kw: Any) -> None:
+        """Create the empty view; the units are parsed from ``ui.systems`` in :meth:`compose`."""
         super().__init__(**kw)
         self.vents: list[Vent] = []
         self.meters: list[Meter] = []
@@ -579,6 +626,7 @@ class SystemsView(View):
 
     @property
     def vent(self) -> Vent | None:
+        """The unit shown now, or None when ``ui.systems`` has no air handling units or panels."""
         return self.vents[self.index] if self.vents else None
 
     @property
@@ -587,6 +635,11 @@ class SystemsView(View):
         return self.curves.get(self.index, {})
 
     def compose(self) -> ComposeResult:
+        """Parse ``ui.systems`` and build two tabs: Overview (drawing + two charts) and Settings (filter + table).
+
+        Without units only a hint is shown. Problems in ``ui.systems`` are listed below so a typo in
+        ``config.yaml`` is visible instead of silently ignored.
+        """
         self.vents, self.meters, self.problems = parse_systems(self.scada.ui.get("systems"))
         if not self.vents:
             yield Static(_("No air handling units set up. Add ui.systems to config.yaml – see the user guide "
@@ -605,6 +658,7 @@ class SystemsView(View):
             yield Static("\n".join(self.problems), classes="muted")
 
     def on_mount(self) -> None:
+        """Add the table columns, set the card title and start the 1 s redraw timer (:meth:`_refresh_if_dirty`)."""
         if self.vents:
             t = self.query_one("#sys-tags", FastTable)
             for key, heading, width in self.TAG_COLUMNS:
@@ -613,6 +667,7 @@ class SystemsView(View):
         self.set_interval(1, self._refresh_if_dirty)
 
     def _title(self) -> None:
+        """Put the unit's name on the card border and fix the card height (see the comment inside)."""
         if (s := self.vent) is not None:
             card = self.query_one("#sys-card", LiveStatic)
             card.border_title = s.name
@@ -626,6 +681,7 @@ class SystemsView(View):
         return next(iter(self.query("#sys-tabs Tabs")), None)
 
     def _settings_shown(self) -> bool:
+        """True when the view is visible and its Settings tab is the active one."""
         return self.display and self.query_one("#sys-tabs", TabbedContent).active == "sys-tab-settings"
 
     # -- unit selection ---------------------------------------------------------------------------
@@ -650,6 +706,11 @@ class SystemsView(View):
         self._load_timer = self.set_timer(0.15, self.load)
 
     def action_unit(self, step: int) -> None:
+        """PgUp/PgDn: the previous/next unit (wrapping), with the menu cursor following.
+
+        Args:
+            step: +1 or -1.
+        """
         if self.vents:
             self.select((self.index + step) % len(self.vents))
             node = getattr(self.scada, "menu_nodes", {}).get(f"system{self.index}")
@@ -658,10 +719,15 @@ class SystemsView(View):
 
     # -- data -------------------------------------------------------------------------------------
     def connections(self) -> list[str]:
+        """All connections the units use (their own and their meters'), without duplicates, in config order.
+
+        Used by :meth:`on_points` to drop values of connections this view does not show.
+        """
         conns = [s.conn for s in self.vents] + [s.meter for s in self.vents if s.meter]
         return list(dict.fromkeys(conns))
 
     def on_show_view(self) -> None:
+        """Called when the view becomes visible: pick the right tab and load what is missing or stale."""
         self._sync_tab()
         self.load()
 
@@ -679,6 +745,12 @@ class SystemsView(View):
 
     @work(exclusive=True, group="systems")
     async def load(self) -> None:
+        """Worker: fetch the tag lists of the current unit and its meter, and its 24 h chart curves.
+
+        Only what is older than :attr:`POINTS_MAX_AGE` (tags) or 5 minutes (curves) is fetched, so walking
+        through the units in the menu stays fast. The requests for several connections run in parallel.
+        Nothing is done while the server is not connected.
+        """
         s, index = self.vent, self.index
         if s is None or not self.scada.client.connected:
             return
@@ -702,6 +774,12 @@ class SystemsView(View):
             await self._load_history(s, index)
 
     async def _load_history(self, s: Vent, index: int) -> None:
+        """Fetch the 24 h log of every chart role of unit *s* (at most 600 points each) and draw if still shown.
+
+        Args:
+            s: the unit.
+            index: its position, used as the key of :attr:`curves`; the answer is kept even if the user moved on.
+        """
         keys = [k for role, _name in (*TEMP_CURVES, *OUTPUT_CURVES) if (k := s.key(role))]
         results = await asyncio.gather(
             *(self.scada.request("history", point=k, hours=24, max_points=600) for k in keys))
@@ -727,10 +805,19 @@ class SystemsView(View):
                         self._plot_dirty = self._plot_dirty or i == self.index
 
     def get(self, key: str | None) -> Value | None:
+        """The kept value of *key* (``conn/tag``) as (value, unit, quality), or None when unknown or *key* is None.
+
+        Passed to :func:`render_vent` as its value getter.
+        """
         return self.values.get(key) if key else None
 
     # -- settings tab -----------------------------------------------------------------------------
     def _fill_tags(self) -> None:
+        """Fill the settings table with the tags of the current unit in sections, filtered by the filter words.
+
+        Every word must occur in the section title, the label or the tag name. Section rows get a key starting
+        with ``#group#`` so they can never be mistaken for a tag (writing ignores them).
+        """
         s = self.vent
         if s is None:
             return
@@ -757,18 +844,26 @@ class SystemsView(View):
         table.border_title = _("{n} tags of {conn}").format(n=count, conn=s.conn)
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        """Typing in the filter field refills the table."""
         if event.input.id == "sys-filter":
             self._fill_tags()
 
     # -- writing (only tags with writable: true; every write is confirmed and logged by the server) -------
     def _point(self, conn: str, name: str) -> dict | None:
+        """The tag info of *name* on *conn* as the server listed it (``writable``, ``priority`` …), or None."""
         return next((p for p in self.tags.get(conn, []) if p["name"] == name), None)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a tag row: write to it (same as w)."""
         if event.data_table.id == "sys-tags":
             self.action_write()
 
     def action_write(self) -> None:
+        """w/Enter on the Settings tab: write a value to the selected tag.
+
+        Only tags the server reports as ``writable`` can be written; the value goes through the write dialog and a
+        confirmation (:func:`confirm_point_write`), and the server logs it with the user.
+        """
         s = self.vent
         if s is None or not self._settings_shown():
             return
@@ -784,9 +879,15 @@ class SystemsView(View):
             return
         title = f"{p.get('description') or name}  ({s.conn}/{name})"
         point = {**p, "value": (self.get(f"{s.conn}/{name}") or (None,))[0]}
-        self.app.push_screen(PointDialog(title, point), lambda v: self._confirm(s.conn, name, p, v))
+        old = fmt(self.get(f"{s.conn}/{name}"), 2)
+        self.app.push_screen(PointDialog(title, point),
+                             lambda w: confirm_point_write(self.scada, s.conn, name, p, w, old))
 
     def action_mode(self) -> None:
+        """m: set the unit's operating mode (``mode`` tag) with a button per ``mode_texts`` entry, then confirm.
+
+        Refused with a warning when the unit has no mode set up or the tag is read-only.
+        """
         s = self.vent
         if s is None or not s.mode_texts or "mode" not in s.tags:
             self.scada.notify(_("No operating mode (mode, mode_texts) set up for this unit"), severity="warning")
@@ -801,32 +902,17 @@ class SystemsView(View):
         modes = s.mode_texts
 
         def chosen(mode: int | None) -> None:
+            """Confirm and write the chosen mode; choosing the current mode (or Cancel) does nothing."""
             if mode is not None and mode != current:
-                self._confirm(s.conn, name, {**p, "description": f"{_('Mode')} – {s.name}"}, mode,
-                              shown=modes.get(mode, str(mode)))
+                # The mode is written with the default priority: the mode dialog has no priority choice.
+                confirm_point_write(self.scada, s.conn, name, {**p, "description": f"{_('Mode')} – {s.name}"},
+                                    PointWrite(mode), fmt(self.get(f"{s.conn}/{name}"), 2),
+                                    new=modes.get(mode, str(mode)))
 
         self.app.push_screen(ModeDialog(f"{_('Mode')} – {s.name}", modes, current), chosen)
 
-    def _confirm(self, conn: str, name: str, p: dict, value: Any, shown: str | None = None) -> None:
-        if value is None:
-            return
-        unit = p.get("unit") or ""
-        new = shown or (fmt((value, unit, "good"), 2) if not isinstance(value, str) else f"{value} {unit}".strip())
-        text = _("Write {new} to «{tag}»?\nNow: {old}\n({address})").format(
-            new=new, tag=p.get("description") or name, old=fmt(self.get(f"{conn}/{name}"), 2),
-            address=f"{conn}/{name}")
-        self.app.push_screen(ConfirmDialog(text), lambda ok: self._write(conn, name, value, new) if ok else None)
-
-    @work(group="systems-write")
-    async def _write(self, conn: str, name: str, value: Any, shown: str) -> None:
-        try:
-            await self.scada.client.request("point_write", conn=conn, tag=name, value=value)
-        except Exception as exc:  # noqa: BLE001 - the server's message is shown as it is
-            self.scada.notify(f"{conn}/{name}: {exc}", severity="error")
-            return
-        self.scada.notify(_("Written: {tag} = {value}").format(tag=f"{conn}/{name}", value=shown))
-
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Settings tab shown: fill the table if it belongs to another unit. Overview shown: redraw everything."""
         if event.pane.id == "sys-tab-settings" and self._table_unit != self.index:
             self._fill_tags()
         elif event.pane.id == "sys-tab-overview":
@@ -835,15 +921,23 @@ class SystemsView(View):
 
     # -- drawing ----------------------------------------------------------------------------------
     def on_theme_changed(self) -> None:
+        """Ctrl+T: colours are baked into the drawing, the section titles and the charts – redraw all of them."""
         self._dirty = True
         self._table_unit = -1
         self.replot()
 
     def on_resize(self) -> None:
+        """The width decides between the wide and the narrow drawing: redraw after the new size is known."""
         self._dirty = True           # wide or narrow drawing
         self.call_after_refresh(self.replot)
 
     def _refresh_if_dirty(self) -> None:
+        """Timer (1 s): redraw what changed since the last tick.
+
+        Live values only mark the view dirty (:meth:`on_points`); drawing here at most once a second keeps a
+        burst of values from redrawing the card for each one. On the Settings tab only the changed cells are
+        updated. The charts are redrawn at most every 30 s, since one value hardly changes a 24 h chart.
+        """
         if not self.display or (s := self.vent) is None:
             return
         if self._settings_shown():
@@ -864,6 +958,7 @@ class SystemsView(View):
         card.set_class(bool(on(self.get(s.key("alarm")))), "bad")
 
     def _update_table(self, s: Vent) -> None:
+        """Update the value cells of the tags that changed (filling the table first if it shows another unit)."""
         if self._table_unit != self.index:
             self._fill_tags()
         table = self.query_one("#sys-tags", FastTable)

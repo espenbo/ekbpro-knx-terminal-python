@@ -29,16 +29,21 @@ pytestmark_bacnet = pytest.mark.skipif(not installed("bacnet"), reason="bacpypes
     ("accumulator,1", ("accumulator", 1)),
 ])
 def test_parse_object(text, expected):
+    """Object identifiers are accepted in the common spellings (av:3, AV3, 'bi 1', analog-input,12, camelCase)."""
     assert parse_object(text) == expected
 
 
 @pytest.mark.parametrize("text", ["", "av", "3", "av:4194303", "Ute.Temp"])
 def test_parse_object_refuses(text):
+    """Texts without type or instance, instances above the BACnet maximum and plain names are refused."""
     with pytest.raises(ValueError):
         parse_object(text)
 
 
 def test_object_text_and_values():
+    """Objects are written back in the short form where one exists, and values are converted to what each object type
+    expects.
+    """
     assert object_text("analog-value", 3) == "av:3"
     assert object_text("accumulator", 1) == "acc:1"
     assert object_text("trend-log", 1) == "trend-log,1"
@@ -50,7 +55,11 @@ def test_object_text_and_values():
 
 
 def test_validate_bacnet():
+    """Validation accepts a client with tags and a server with device_instance, and explains a missing instance, a bad
+    object and a non-numeric setting.
+    """
     def errors(conn):
+        """Validation errors for one BACnet connection."""
         return validate({"connections": {"b": {"protocol": "bacnet", **conn}}, "gateways": []})
 
     assert errors({"address": "192.0.2.20", "tags": {"t": {"object": "av:1"}}}) == []
@@ -61,6 +70,7 @@ def test_validate_bacnet():
 
 
 def _hub(tmp_path, data, mems):
+    """A hub with the given protocols.yaml data and memory drivers added (not started)."""
     hub = Hub(FakeServer(tmp_path))
     hub.data, hub.load = data, (lambda: None)
     for drv in mems:
@@ -70,11 +80,13 @@ def _hub(tmp_path, data, mems):
 
 
 def _device(port, **extra):
+    """Settings for our own BACnet device (server role) on localhost."""
     return {"protocol": "bacnet", "role": "server", "device_instance": 1001, "device_name": "Test gateway",
             "local_address": "127.0.0.1/8", "local_port": port, **extra}
 
 
 def _client(port, tags, **extra):
+    """Settings for a BACnet client that reads our device on localhost, with short poll and timeout."""
     return {"protocol": "bacnet", "address": f"127.0.0.1:{port}", "local_address": "127.0.0.1/8",
             "poll_ms": 200, "timeout_s": 1, "tags": tags, **extra}
 
@@ -85,6 +97,7 @@ def test_device_and_client_through_gateways(tmp_path):
     port = free_port()
 
     async def run():
+        """Publish memory tags through our device, read them with a client, then write back from the client."""
         src = Mem("src", {"tags": {"t": {"type": "float", "unit": "°C"}, "on": {"type": "bool"},
                                    "mode": {"type": "int"}, "txt": {"type": "str"}}}, None, server=False)
         sink = Mem("sink", {}, None)
@@ -146,9 +159,11 @@ def test_device_and_client_through_gateways(tmp_path):
 
 @pytestmark_bacnet
 def test_client_follows_changes_with_cov(tmp_path):
+    """With cov: true the client gets changes by subscription, long before the next poll."""
     port = free_port()
 
     async def run():
+        """Poll only once a minute, so the second value can only arrive by COV."""
         src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False)
         data = {"connections": {"bac": _device(port)},
                 "gateways": [{"name": "g", "from": "src", "to": "bac", "map": [{"from": "t", "to": "T", "object": "av:1"}]}]}
@@ -175,6 +190,7 @@ def test_instance_numbers_are_kept(tmp_path):
     port = free_port()
 
     async def start(targets):
+        """Start the device with these gateway targets and return the object each got."""
         src = Mem("src", {"tags": {n: {"type": "float"} for n in targets}}, None, server=False)
         hub = _hub(tmp_path, {"connections": {"bac": _device(port)},
                               "gateways": [{"name": "g", "from": "src", "to": "bac", "map": list(targets)}]}, (src,))
@@ -186,6 +202,7 @@ def test_instance_numbers_are_kept(tmp_path):
         return numbers
 
     async def run():
+        """Start twice with different targets and check the numbers and the saved file."""
         assert await start(["a", "b", "c"]) == {"a": "av:1", "b": "av:2", "c": "av:3"}
         assert await start(["c", "d"]) == {"c": "av:3", "d": "av:4"}       # b's number 2 is not reused
         saved = json.loads((tmp_path / "var" / "bacnet" / "bac.json").read_text(encoding="utf-8"))
@@ -196,9 +213,11 @@ def test_instance_numbers_are_kept(tmp_path):
 
 @pytestmark_bacnet
 def test_client_without_answer_is_not_connected(tmp_path):
+    """A client whose device does not answer is shown as not connected with 'no answer', not as ready."""
     port = free_port()
 
     async def run():
+        """Point a client at a port where nothing listens and wait for its error."""
         hub = _hub(tmp_path, {"connections": {"cli": _client(port, {"T": {"object": "av:1"}}, timeout_s=0.2)},
                               "gateways": []}, ())
         await hub.start()
@@ -223,6 +242,7 @@ def test_scan_objects_and_yaml(tmp_path, capsys):
     port = free_port()
 
     async def run():
+        """Scan our device directly, then run the bacnet-scan command against it."""
         src = Mem("src", {"tags": {"t": {"type": "float", "unit": "°C"}, "on": {"type": "bool"}}}, None, server=False)
         data = {"connections": {"bac": _device(port)},
                 "gateways": [{"name": "g", "from": "src", "to": "bac", "map": [
@@ -263,6 +283,7 @@ def test_scan_objects_and_yaml(tmp_path, capsys):
 
 
 def test_scan_without_module(monkeypatch, capsys):
+    """bacnet-scan without bacpypes3 tells how to install the module instead of failing."""
     from knxscada import __main__, protocols
 
     monkeypatch.setattr(protocols, "installed", lambda name: False)
@@ -272,6 +293,7 @@ def test_scan_without_module(monkeypatch, capsys):
 
 @pytestmark_bacnet
 def test_from_bacnet():
+    """Values from BACnet become plain Python values: float32 rounded to 7 digits, Double kept, BinaryPV as bool."""
     from bacpypes3.basetypes import BinaryPV
     from bacpypes3.primitivedata import Double, Real
 
@@ -289,3 +311,48 @@ def test_route_source():
     assert route_source("127.0.0.1") == "127.0.0.1/32"
     assert route_source("127.0.0.1:47809") == "127.0.0.1/32"
     assert route_source("2:5") is None and route_source("not-an-address") is None
+
+
+@pytestmark_bacnet
+def test_client_write_priority_and_release(tmp_path):
+    """WriteProperty gets the chosen priority, else the connection's; a release sends Null at that priority.
+    Our own BACnet device (server role) has no priority array: a release there is refused."""
+    from bacpypes3.primitivedata import Null
+
+    port = free_port()
+
+    async def run():
+        """Replace the client's WriteProperty with a recorder and write, write with priority and release."""
+        src = Mem("src", {"tags": {"on": {"type": "bool"}}}, None, server=False)
+        data = {"connections": {"bac": _device(port)}, "gateways": [
+            {"name": "to-bacnet", "from": "src", "to": "bac", "map": [{"from": "on", "to": "Lys", "direction": "both"}]}]}
+        hub = _hub(tmp_path, data, (src,))
+        await asyncio.sleep(0.05)
+        await hub.start()
+        try:
+            bac = hub.drivers["bac"]
+            await until(lambda: bac.connected, 10)
+            hub.update("src", "on", False)
+            hub._make("cli", _client(port, {"Lys": {"object": "bv:1"}}, priority=16))
+            hub._build_engine()
+            cli = hub.drivers["cli"]
+            await until(lambda: cli.ready, 10)
+            sent = []
+
+            async def record(address, objid, prop, value, priority=None):
+                """Keep what would have been written, instead of sending it."""
+                sent.append((objid, prop, value, priority))
+
+            cli.app.write_property = record
+            assert hub.points("cli")[0]["priority"] == 16            # the default the TUI shows
+            await hub.write("cli", "Lys", True)
+            await hub.write("cli", "Lys", False, priority=8)
+            await hub.write("cli", "Lys", None, priority=8, release=True)
+            assert [(s[2], s[3]) for s in sent[:2]] == [(1, 16), (0, 8)]
+            assert isinstance(sent[2][2], Null) and sent[2][3] == 8
+            with pytest.raises(ValueError, match="no priority array"):
+                await hub.write("bac", "Lys", None, priority=8, release=True)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

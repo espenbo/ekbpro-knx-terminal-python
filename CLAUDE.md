@@ -24,7 +24,7 @@ Det du må vite for å endre og programmere i prosjektet. Status, beslutninger o
 ./scada -c sites/<anlegg>/config.yaml …   # mot et anlegg: server | tui | info | gateway | modules | bacnet-scan …
 ./scada server --demo                     # simulert buss, egen database (…-demo.db)
 venv/bin/python -m pytest -q              # hele pakken, ~2 min; skal være grønn før commit og før omstart
-venv/bin/ruff check knxscada/ tests/      # ~55 merknader finnes fra før (SIM103, RUF012, S112 …) – ikke lag nye
+venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null merknader siden 2026-11-01)
 ```
 
 - `./scada` setter `PYTHONSAFEPATH=1` og bruker `venv/`. Protokollmodulene installeres med
@@ -95,6 +95,9 @@ venv/bin/ruff check knxscada/ tests/      # ~55 merknader finnes fra før (SIM10
 
 - **Kode, kommentarer, docstrings og commit-meldinger på engelsk. TODO.md, anleggsfiler og svar til brukeren på norsk.**
   Linjelengde opptil ~120.
+- **Ruff:** null merknader. Retter du ikke en merknad, skal `# noqa: REGEL` ha en begrunnelse på samme linje
+  (eksempel: `raise ValueError(...)  # noqa: TRY004` med kommentar om at det er en konfigurasjonsfeil). Textual-
+  klassenes `BINDINGS` skrives `BINDINGS: ClassVar[list[BindingType]] = [...]`.
 - **All kode kommenteres grundig, på engelsk** (brukerens krav 2026-11-01). Det gjelder ny kode og kode du endrer:
   - Hver modul har en docstring øverst: hva den gjør, hvordan den henger sammen med resten (server, hub, TUI) og
     hvilke filer eller nøkler den leser.

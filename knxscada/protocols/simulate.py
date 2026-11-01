@@ -33,18 +33,21 @@ class _Hub:
     """What a driver needs of the hub, without a server: values are kept, events printed."""
 
     def __init__(self) -> None:
+        """No values yet."""
         self.values: dict[str, dict[str, Any]] = {}
 
     def update(self, conn: str, tag: str, value: Any, quality: str = "good") -> None:
+        """Keep a value the slave received from a master (there are no gateways to pass it to)."""
         self.values[f"{conn}/{tag}"] = {"v": value, "q": quality}
 
     def connection_state(self, conn: str, connected: bool) -> None:
-        pass
+        """Ignored: there are no clients to tell."""
 
     def connection_ready(self, conn: str) -> None:
-        pass
+        """Ignored: there is no gateway engine."""
 
     def event(self, level: str, text: str, user: str | None = None) -> None:
+        """Print a driver message (errors, retries) on the simulator's terminal."""
         print(text)
 
 
@@ -73,6 +76,7 @@ def value_at(name: str, unit: str, start: float, now: float) -> float:
         return base + rate * (now - start)
     if not base:
         return 0.0
+    # A slow sine (period ~6 min) with a per-tag phase plus a little noise, so trends look alive.
     wave = math.sin((now - start) / 60 + (hash(name) % 100))
     spread = 0.02 if u in ("v", "hz") or base < 1 else 0.3
     return base * (1 + spread * wave * 0.5 + random.uniform(-spread, spread) * 0.05)
@@ -126,7 +130,10 @@ def build(model: str, host: str = "127.0.0.1", port: int = 5020, unit: int = 1, 
             answers[(table, index, len(words))] = words
 
     class SimStore(Store):
+        """The slave's store, answering the template's identify reads before the normal tables."""
+
         async def async_getValues(self, device_id, func_code, address, count=1):
+            """An exact read of an identify register gets the identify answer; anything else the tag tables."""
             table = self.FC.get(func_code)
             words = answers.get((table, address, count))
             if words is not None and table in ("hr", "ir"):

@@ -57,6 +57,8 @@ def parse_payload(payload: bytes | str, json_key: str = "") -> Any:
 
 
 def make_payload(value: Any, fmt: str) -> str:
+    """Value → payload text: ``{"value", "ts"}`` for ``payload: json``, else plain text (``true``/``false``,
+    numbers as Python prints them, None as an empty payload, dicts and lists as JSON)."""
     if fmt == "json":
         return json.dumps({"value": value, "ts": round(time.time(), 3)}, ensure_ascii=False)
     if isinstance(value, bool):
@@ -84,22 +86,29 @@ RETAINED_S = 1.0
 
 
 class Driver(BaseDriver):
+    """One MQTT broker connection. There is no client/server split: tags follow topics, gateway targets are
+    topics we publish (retained) under the prefix."""
+
     protocol = "mqtt"
+    # Retained messages after a (re)connect are statuses, not changes: nothing is passed on for them.
     reads_first = True   # ready RETAINED_S after subscribing
 
     def __init__(self, name: str, settings: dict[str, Any], hub) -> None:
+        """Set up the connection *name* (attributes used by :meth:`make_tag` first, then the base class builds
+        the tags). ``subscribe`` filters are taken relative to ``topic_prefix``."""
         self.prefix = str(settings.get("topic_prefix") or "")
         self.fmt = str(settings.get("payload") or "plain")
         self.qos = int(settings.get("qos") or 0)
         self.retain = bool(settings.get("retain", True))
         subs = settings.get("subscribe") or []
         self.filters = [self.prefix + f for f in ([subs] if isinstance(subs, str) else subs) if f]
-        self.by_topic: dict[str, list[Tag]] = {}
-        self.by_set: dict[str, Tag] = {}
+        self.by_topic: dict[str, list[Tag]] = {}   # state topic → tags following it (several may share one)
+        self.by_set: dict[str, Tag] = {}           # "<target>/set" → gateway target written back to its source
         self.client = None
         super().__init__(name, settings, hub)
 
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
+        """A tag from its ``tags:`` entry, following ``topic`` (default: prefix + name)."""
         typ = str(spec.get("type") or "")
         topic = str(spec.get("topic") or self.prefix + name)
         tag = Tag(name=name, address=topic, type=typ if typ in TYPES else "", writable=bool(spec.get("writable", True)),
@@ -109,11 +118,13 @@ class Driver(BaseDriver):
         return tag
 
     def initial_default(self, tag: Tag) -> bool:
+        """Initial values go only to gateway targets (our own retained state topics), never to device topics."""
         # The state topics a gateway made are ours; other topics belong to devices.
         return bool(tag.extra.get("target"))
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """A gateway target: published under the prefix; with ``direction: both`` also listening to ``/set``."""
+        # "+" and "#" are wildcards in MQTT and may not appear in a topic we publish to.
         name = name.replace("+", "_").replace("#", "_")
         typ = str(spec.get("type") or "")
         tag = Tag(name=name, address=self.prefix + name, type=typ if typ in TYPES else "",
@@ -125,6 +136,7 @@ class Driver(BaseDriver):
         return tag
 
     def _listen_set(self, tag: Tag) -> None:
+        """Listen to ``<target>/set`` for *tag* (subscribed at once when connected, else on the next connect)."""
         topic = tag.address + "/set"
         self.by_set[topic] = tag
         if self.client is not None and self.connected:
@@ -133,6 +145,12 @@ class Driver(BaseDriver):
             asyncio.get_running_loop().create_task(self.client.subscribe(topic, qos=self.qos))
 
     async def session(self) -> None:
+        """Connect to the broker, subscribe to every tag, ``/set`` and filter topic, then handle messages.
+
+        The connection is *ready* :data:`RETAINED_S` after subscribing: the retained messages arriving before
+        that are statuses and are not passed on as changes. A lost broker ends the ``async for`` with an error,
+        and :meth:`Driver.run` reconnects.
+        """
         import aiomqtt
 
         s = self.settings
@@ -162,9 +180,15 @@ class Driver(BaseDriver):
 
 
     async def close(self) -> None:
+        """Forget the client (the ``async with`` in :meth:`session` has already disconnected it)."""
         self.client = None
 
     def _message(self, topic: str, payload: Any) -> None:
+        """One message: a ``/set`` command for a target, a value of a known tag, or a new topic under a filter.
+
+        A command is published back on the target's state topic so subscribers see the new state at once.
+        A new topic that matches a ``subscribe`` filter becomes a tag (``auto``) named without the prefix.
+        """
         tag = self.by_set.get(topic)
         if tag is not None:
             # A command for a gateway target: pass it to the source, and show it as the new state.
@@ -190,11 +214,14 @@ class Driver(BaseDriver):
             self.publish(tag, parse_payload(payload, str(tag.extra.get("json_key") or "")))
 
     async def _publish(self, topic: str, value: Any) -> None:
+        """Publish *value* on *topic* with the connection's payload format, QoS and ``retain``."""
         if self.client is None:
             raise ConnectionError(_("{connection} is not connected").format(connection=self.name))
         await self.client.publish(topic, make_payload(value, self.fmt), qos=self.qos, retain=self.retain)
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
+        """Publish *value*: gateway targets on their state topic; device tags on ``set_topic``, on
+        ``<topic>/set`` for auto tags (from filters), else on the topic itself."""
         raw = tag.to_raw(value)
         if tag.extra.get("target"):
             await self._publish(tag.address, raw)

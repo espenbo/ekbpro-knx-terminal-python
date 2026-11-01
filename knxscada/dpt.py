@@ -19,8 +19,9 @@ the glue the rest of the program needs:
 
 from __future__ import annotations
 
+import contextlib
 from enum import Enum
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 from xknx.dpt import DPTArray, DPTBase, DPTBinary
@@ -89,7 +90,7 @@ def split(dpt: str | None) -> tuple[int | None, int | None]:
     return int(main), (int(sub) if sub else None)
 
 
-@lru_cache(maxsize=None)
+@cache
 def transcoder(dpt: str | None) -> type[DPTBase] | None:
     """Find the xknx transcoder class for a DPT, or None if xknx does not know it.
 
@@ -131,10 +132,9 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (bool, int, float, str)) or value is None:
         return value
     if hasattr(value, "as_dict"):
-        try:
+        # Some xknx values have as_dict() but fail on it in odd states: fall through to the generic conversions.
+        with contextlib.suppress(Exception):
             return value.as_dict()
-        except Exception:  # noqa: BLE001 - fall through to the generic conversions
-            pass
     if hasattr(value, "_asdict"):
         return value._asdict()
     return str(value)

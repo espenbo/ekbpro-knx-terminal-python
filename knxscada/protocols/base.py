@@ -37,6 +37,7 @@ log = logging.getLogger("knxscada.protocols")
 TYPES = ("bool", "int", "float", "str")
 
 #: Words read as true / false (English and Norwegian, as in the rest of the program).
+#: "" counts as false so an empty MQTT payload or text field switches off rather than failing.
 TRUE_WORDS = {"1", "true", "on", "yes", "ja", "på", "pa", "sann", "high"}
 FALSE_WORDS = {"0", "false", "off", "no", "nei", "av", "usann", "low", ""}
 
@@ -207,16 +208,32 @@ class Driver:
     #: True when the device reports a written value back by itself (polling, subscription, bus echo).
     #: Otherwise the hub records a written value as the tag's new value.
     echoes = False
+    #: True when a write can carry a priority (BACnet's priority array, 1 = highest … 16 = lowest) and a written
+    #: value can be released again. :meth:`write` then takes ``priority`` and ``release`` as keyword arguments;
+    #: the hub refuses both for every other driver, so a user never believes a priority was applied when not.
+    priorities = False
 
     def __init__(self, name: str, settings: dict[str, Any], hub: Hub) -> None:
+        """Set up the driver of connection *name* (nothing is opened yet; :meth:`run` does that).
+
+        *settings* is the connection's entry from ``protocols.yaml`` after :func:`.config.settings_of`
+        (defaults and device template applied); *hub* is the :class:`~.hub.Hub` that receives values and
+        events. The tags under ``tags:`` are built here with :meth:`make_tag`, so a bad address raises
+        ValueError and the hub reports the connection as failed instead of starting it.
+        """
         self.name = name
         self.settings = settings
         self.hub = hub
+        #: "client" (we talk to a device) or "server" (others talk to us).
         self.role = str(settings.get("role") or "client")
+        #: The session is up; set only through :meth:`set_state` so the hub is told.
         self.connected = False
         self.ready = False      # connected, and the first read is done
+        #: Text of the last connection error, shown in the TUI ("" while connected).
         self.error = ""
+        #: Tag name → tag. Servers may get more at run time through :meth:`create_tag`.
         self.tags: dict[str, Tag] = {}
+        #: Set by :meth:`stop`; sessions and loops check it to end without reconnecting.
         self._stop = False
         for tname, spec in (settings.get("tags") or {}).items():
             self.tags[str(tname)] = self.make_tag(str(tname), spec or {})
@@ -279,6 +296,11 @@ class Driver:
         """Release the connection (called after every session)."""
 
     async def stop(self) -> None:
+        """Stop for good: no further reconnects, and the connection is closed now.
+
+        Called by the hub when the connection is removed or changed and when the server shuts down.
+        Errors from :meth:`close` are swallowed – a dead connection must not block the shutdown.
+        """
         self._stop = True
         with contextlib.suppress(Exception):
             await self.close()

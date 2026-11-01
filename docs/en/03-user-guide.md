@@ -121,10 +121,28 @@ On top, the connections of the protocol with role, address, number of tags and s
 good) and every **write** (→ value and the user who wrote it), live. Values that do not change are not shown:
 the hub passes on changes only.
 
-- **`/`** filters on connection, tag, description, value or user; `write` lists only writes.
+- **`/`** filters on connection, tag, description, value or user; `write` lists only writes, `released`
+  the releases.
 - **`p`** pauses and resumes, **`c`** clears the view.
 - **Enter, click or `w`** on a line writes a new value to its tag, with confirmation – only for tags with
-  `writable: true`. A BACnet write uses the priority of the connection (`priority`).
+  `writable: true`. For BACnet the dialog also offers the write priority (see "Writing to BACnet" below).
+
+### Writing to BACnet: priority and release
+
+A BACnet value is written into one of 16 slots of the device's priority array; the highest active slot (the
+lowest number) decides the value. The write dialog (Monitor, Systems › Settings, F11 `w`) shows a **Priority**
+field preset to the tag's or connection's `priority` (16 when none is set):
+
+- **16** is the usual slot for automatic control. A write there is overwritten the next time the controller
+  writes.
+- **8** (manual operator) and other numbers below the default **override the automatic control until the value
+  is released**. The dialog warns about this, and the confirmation names the priority.
+- **Release** writes "nothing" into the chosen slot, so the value with the next lower priority takes over again.
+  Release the same priority you wrote with.
+- 1, 2 and 5 (life safety and critical equipment) are never offered, and the server refuses them.
+
+The event log shows each write with the priority when it was not the default, and releases as
+"released (priority 8)".
 
 The monitor shows what has happened since the TUI was started (up to 10,000 entries for all protocols).
 

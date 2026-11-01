@@ -36,6 +36,11 @@ from .i18n import LANGUAGES, _, set_language
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The ``./scada`` command line: parse *argv* (default ``sys.argv``), run the sub-command, return the exit code.
+
+    Without a sub-command the TUI starts. ``server`` runs the SCADA server in the foreground (systemd runs it
+    so); the other commands are one-off tools (project import, PLC map, protocol modules, scans, simulators).
+    """
     ap = argparse.ArgumentParser(prog="knxscada", description=f"{PRODUCT} – terminal SCADA for KNX")
     ap.add_argument("-c", "--config", help="path to config.yaml (or set KNXSCADA_CONFIG)")
     sub = ap.add_subparsers(dest="cmd")
@@ -305,6 +310,10 @@ def bacnet_scan(args) -> int:
     wait = args.timeout + 5
 
     async def run() -> int:
+        """Do the scan with a temporary BACnet device of our own (instance 4194302) and print the result.
+
+        Only reads (Who-Is, ReadProperty/ReadPropertyMultiple) – nothing is written to any device.
+        """
         app = bacnet.make_app(local, bacnet.MAX_INSTANCE, "knxscada scan", args.timeout, args.bbmd)
         try:
             await asyncio.sleep(0)   # let the UDP endpoint open
@@ -452,6 +461,7 @@ def _server_snapshot(cfg) -> dict | None:
     from .client import ScadaClient
 
     async def ask():
+        """Connect to the server's socket (3 s at most) and ask for the ``protocols`` snapshot."""
         c = ScadaClient(cfg.socket_path, lambda _m: None)
         await asyncio.wait_for(c.connect(), 3)
         try:

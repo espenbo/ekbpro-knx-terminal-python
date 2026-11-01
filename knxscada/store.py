@@ -102,6 +102,10 @@ class Store:
     """Thin wrapper around the SQLite database."""
 
     def __init__(self, path: Path) -> None:
+        """Open (or create) the database at *path*, set WAL mode, create missing tables and migrate old ones.
+
+        WAL lets reads run alongside writes without locking each other out; commits are batched (:meth:`commit`).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.db = sqlite3.connect(path)
@@ -126,6 +130,7 @@ class Store:
             self._dirty = False
 
     def close(self) -> None:
+        """Commit what is pending and close the database (server shutdown)."""
         self.commit()
         self.db.close()
 

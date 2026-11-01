@@ -48,6 +48,7 @@ class CachedPlot(PlotextPlot):
     KEEP = 8
 
     def __init__(self, **kw) -> None:
+        """No figure built yet; *kw* goes to ``PlotextPlot`` (``id``, ``classes`` …)."""
         super().__init__(**kw)
         self._version = 0
         self._data_key: Hashable | None = None
@@ -70,6 +71,11 @@ class CachedPlot(PlotextPlot):
         return (key, self.size, self.app.theme) in self._kept
 
     def render(self) -> RenderResult:
+        """Textual render hook: the cached figure, rebuilt only for a new version, size or theme.
+
+        When :meth:`changed` was given a data key, the figure is also kept in a small cache (at most :attr:`KEEP`), so
+        switching back to an earlier unit does not rebuild it.
+        """
         key = (self._version, self.size, self.app.theme)
         if key != self._cache_key or self._cache is None:
             kept = (self._data_key, self.size, self.app.theme) if self._data_key is not None else None
@@ -136,6 +142,7 @@ def decimate(points: Sequence[tuple[float, float]], start: float, end: float, bu
     group: list[tuple[float, float]] = []
 
     def flush() -> None:
+        """Append the points of the current column: all if four or fewer, else first, lowest, highest and last."""
         if len(group) <= 4:
             out.extend(group)
             return

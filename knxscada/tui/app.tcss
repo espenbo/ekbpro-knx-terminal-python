@@ -600,3 +600,23 @@ SplashScreen {
 #en-detail { height: 5; padding: 0 1; }
 #en-charts { height: 1fr; min-height: 8; }
 #en-charts .chart { width: 1fr; height: 1fr; }
+
+/* ---------- write dialog: BACnet priority (gateways.PointDialog) ---------- */
+.dialog-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.dialog-label {
+    width: 12;
+    padding: 1 1 0 0;
+}
+
+.dialog-row Select {
+    width: 1fr;
+}
+
+.dialog-note {
+    height: auto;
+    margin-bottom: 1;
+}

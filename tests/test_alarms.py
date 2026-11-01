@@ -8,6 +8,7 @@ from knxscada.alarms import Rule, build_rules, is_critical, normalize_severity
 
 
 def ga(address, name, dpt="1.001", used=True, placeholder=False):
+    """A group address entry as the project model gives it."""
     return {"address": address, "name": name, "dpt": dpt, "used": used, "placeholder": placeholder}
 
 
@@ -16,6 +17,7 @@ SMOKE = {"match_address": "0/6/*", "match_name": "(?i)alarm$", "exclude_name": "
 
 
 def test_matches_address_glob_and_name():
+    """A rule selects addresses by address glob and name regex, and exclude_name removes e.g. acknowledge objects."""
     rule = Rule.from_dict(SMOKE)
     assert rule.matches(ga("0/6/1", "Kitchen smoke alarm"))
     assert not rule.matches(ga("0/5/1", "Kitchen smoke alarm"))         # wrong address
@@ -24,18 +26,21 @@ def test_matches_address_glob_and_name():
 
 
 def test_unused_and_placeholder_addresses_are_never_monitored():
+    """Addresses that are unused or placeholders in ETS never get an alarm rule, so they cannot raise false alarms."""
     rule = Rule.from_dict(SMOKE)
     assert not rule.matches(ga("0/6/1", "Smoke alarm", used=False))
     assert not rule.matches(ga("0/6/1", "Smoke alarm", placeholder=True))
 
 
 def test_dpt_main_filter():
+    """dpt_main limits a rule to one DPT main type, so a matching name with another type is left out."""
     rule = Rule.from_dict({"match_name": "temp", "dpt_main": 9, "condition": "> 30"})
     assert rule.matches(ga("3/0/1", "temp living", "9.001"))
     assert not rule.matches(ga("3/0/2", "temp living alarm", "1.001"))
 
 
 def test_address_alias():
+    """'address' in a rule is accepted as an alias of match_address."""
     assert Rule.from_dict({"address": "1/2/3"}).matches(ga("1/2/3", "x"))
 
 
@@ -64,10 +69,14 @@ def test_address_alias():
     ],
 )
 def test_conditions(condition, value, expected):
+    """Conditions on bools and numbers (also decimal comma and negatives); values that cannot be judged and invalid
+    conditions give None, never an alarm.
+    """
     assert Rule.from_dict({"condition": condition}).active(value) is expected
 
 
 def test_first_matching_rule_wins():
+    """With several matching rules the first one in config.yaml decides severity and text."""
     rules = [
         {"match_name": "(?i)smoke", "severity": "critical", "text": "specific"},
         {"match_name": "(?i)alarm", "severity": "warning", "text": "general"},
@@ -82,22 +91,26 @@ def test_first_matching_rule_wins():
 @pytest.mark.parametrize(("given", "expected"), [("kritisk", "critical"), ("advarsel", "warning"),
                                                   ("Critical", "critical"), (None, "warning"), ("info", "info")])
 def test_severity_names(given, expected):
+    """Severities are normalised; the old Norwegian names still work and the default is warning."""
     assert normalize_severity(given) == expected
 
 
 def test_old_norwegian_severity_in_rule():
+    """Rules and stored alarms with the old Norwegian severity are still treated as critical/warning."""
     assert Rule.from_dict({"severity": "kritisk"}).severity == "critical"
     assert is_critical({"severity": "kritisk"})
     assert not is_critical({"severity": "advarsel"})
 
 
 def test_alarm_text():
+    """The alarm text fills in {name}, {value} and {address}."""
     rule = Rule.from_dict({"text": "High temperature: {name} = {value} ({address})"})
     assert rule.format_text(name="Living", address="3/0/1", value="31.0 °C") == "High temperature: Living = 31.0 °C (3/0/1)"
 
 
 @pytest.mark.parametrize("text", ["Alarm {room}", "Broken {", "Index {0}"])
 def test_bad_alarm_text_does_not_crash(text):
+    """A broken or unknown placeholder in the alarm text still gives a text with the name."""
     # A typo in config.yaml must not stop the alarm from being raised.
     out = Rule.from_dict({"text": text}).format_text(name="Pump", address="0/4/1", value="On")
     assert "Pump" in out
@@ -108,6 +121,9 @@ VENT = {"match_point": "vent_360_00?/*", "match_name": "_AL[12]?$", "exclude_nam
 
 
 def test_point_rules_select_protocol_tags_only():
+    """Rules with match_point select protocol tags (conn/tag) only and carry delay_s; KNX rules and point rules never
+    cross over.
+    """
     from knxscada.alarms import point_rule
 
     rule = Rule.from_dict(VENT)
