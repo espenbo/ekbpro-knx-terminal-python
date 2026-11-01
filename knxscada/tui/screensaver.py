@@ -120,6 +120,7 @@ def heat_color(temp: float, setpoint: float | None) -> str:
 
 
 def hhmm(hours: float) -> str:
+    """Hours as a clock time: 7.5 → "07:30" (wraps at midnight, for sunrise/sunset)."""
     hours %= 24
     return f"{int(hours):02d}:{round(hours % 1 * 60) % 60:02d}"
 
@@ -140,9 +141,11 @@ class Canvas:
                 self.cells[y][x + i] = (ch, style)
 
     def get(self, x: int, y: int) -> str:
+        """The character at (x, y); "" outside the canvas (so callers need not check the edges)."""
         return self.cells[y][x][0] if 0 <= y < self.h and 0 <= x < self.w else ""
 
     def markup(self) -> str:
+        """The canvas as Textual markup: one tag per run of equal style, keeps the markup short to parse."""
         lines = []
         for row in self.cells:
             out: list[str] = []
@@ -363,6 +366,7 @@ class ScreenSaver(Screen):
         return self._spark_of(self.scada.history.get(ga, []), width, hours)
 
     def _spark_of(self, points: list[tuple[float, float]], width: int, hours: float = 24) -> str:
+        """Sparkline of *points* over the last *hours* with *width* characters ("" without data)."""
         now = time.time()
         return sparkline(resample(points, now - hours * 3600, now, width), self.scada.ascii) if points else ""
 
@@ -381,6 +385,7 @@ class ScreenSaver(Screen):
 
     @staticmethod
     def _date(now: time.struct_time) -> str:
+        """ "Sunday 1 November 2026", translated (weekday and month names from DAYS/MONTHS)."""
         return _("{weekday} {day} {month} {year}").format(
             weekday=_(DAYS[now.tm_wday]), day=now.tm_mday, month=_(MONTHS[now.tm_mon - 1]), year=now.tm_year)
 

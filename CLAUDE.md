@@ -81,6 +81,9 @@ venv/bin/ruff check knxscada/ tests/      # ~55 merknader finnes fra før (SIM10
   `consumption`), så de testes uten terminal. Nye visninger legges i
   `MENU`, `KEYBAR_LABELS`, `VIEW_HINTS` og `compose()` i `app.py`, og får `points` via `_handle`.
   Ledige taster: F1–F12 er brukt; Ctrl+T/L/E/G er brukt (Ctrl-taster har `priority`, så de virker også i Input).
+  Monitor (F4) har undermenyer per protokoll (`("monitor", proto)`): KNX er `MonitorView`, de andre deler
+  `ProtocolMonitorView` (`protomon.py`), som filtrerer appens buffer `point_log` (fra `points` og
+  skrivehendelsene `conn/tag ← verdi`) etter `conn_protocol`. Protokollene kommer fra hubens status.
   Skjermspareren (F9, `screensaver.py`) har sider som rene funksjoner av app-tilstanden; sider uten data hoppes over.
   Rom med protokolltagger (`project.point_rooms`) får pseudoadresser `pt:conn/tag` i `model["point_gas"]`.
   Huben sender `points` bare når det finnes klienter (`server.clients`); i TUI-tester: `hub.server.clients = {object()}`.
@@ -91,7 +94,19 @@ venv/bin/ruff check knxscada/ tests/      # ~55 merknader finnes fra før (SIM10
 ## Konvensjoner
 
 - **Kode, kommentarer, docstrings og commit-meldinger på engelsk. TODO.md, anleggsfiler og svar til brukeren på norsk.**
-  Linjelengde opptil ~120. Kommentarene forklarer hvorfor, ikke hva.
+  Linjelengde opptil ~120.
+- **All kode kommenteres grundig, på engelsk** (brukerens krav 2026-11-01). Det gjelder ny kode og kode du endrer:
+  - Hver modul har en docstring øverst: hva den gjør, hvordan den henger sammen med resten (server, hub, TUI) og
+    hvilke filer eller nøkler den leser.
+  - Hver klasse og hver funksjon eller metode (også private) har en docstring: hva den gjør, hva argumentene og
+    returverdien betyr, og når den kalles (for eksempel «once per second», «after connecting»).
+  - Kommentarer inne i koden forklarer **hvorfor**: valg og avveininger, sikkerhetsregler (ingenting sendes ved
+    oppstart, `writable`, PLS-vaktene), særheter ved utstyr og protokoller (grenser, ordrekkefølge, 0- eller 1-baserte
+    adresser), ytelse (hvorfor noe hurtigbufres eller kjøres i en tråd) og grensetilfeller (None, tapt forbindelse,
+    gamle verdier).
+  - Konstanter og attributter får en kommentar med enhet og betydning (`#: Seconds between …`).
+  - Testene har en docstring som sier hva de sjekker.
+  - Ikke gjenta koden med ord. Skriv det en ny utvikler trenger for å forstå og trygt endre koden.
 - **Brukertekster oversettes:** marker dem med `_()` (eller `N_()` for tekst som oversettes ved visning) og legg den
   norske teksten i `knxscada/locale/nb.py`. `tests/test_i18n.py` feiler ved manglende og ubrukte oppføringer og ved
   ulike `{plassholdere}`. Den fanger ikke doble nøkler (den siste vinner stille): sjekk med grep før du legger inn.

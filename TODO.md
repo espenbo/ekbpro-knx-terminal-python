@@ -20,22 +20,31 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
-- 2026-11-01 kveld: 409 tester grønne (1 hoppet over), ruff 55. Ingenting fra Runde 2 er committet ennå.
+- 2026-11-01 kveld: 412 tester grønne (1 hoppet over), ruff 55. Ingenting fra Runde 2 er committet ennå.
 
 ## Neste (ønsker fra brukeren 2026-11-01 kveld)
 
 - [x] Skjermsparer: flere og morsommere sider (2026-11-01, se «Ferdig»).
-- [ ] Oversikt: flisen UTE viser utetemperaturen også når den kommer fra en protokolltagg (ikke bare en
-      gruppeadresse). Flisen EFFEKT roterer gjennom alle energimålerne i `ui.systems` og viser navnet på måleren.
-- [ ] Oversikt: romkort og «Lys på» skal også ta med rommene fra `project.point_rooms` (temperatur og lys).
-      Kontroller at alle rom og lys i et bygg bak en gateway kommer med.
-- [ ] Ny hovedmeny «Monitor» med undermenyer KNX, Modbus, OPC UA og BACnet (bare de protokollene prosjektet
-      bruker). Under hver ligger monitoren for den protokollen (trafikk/verdier per tilkobling). Dagens
-      busmonitor (F4) blir Monitor › KNX.
+- [x] Oversikt (2026-11-01): uten KNX-adresse for ute/effekt registrerer appen `outdoor`-taggen til første aggregat
+      og effekten til hver måler i `ui.systems` som `pt:`-punkter (`ScadaApp._add_system_points`, `HomeModel.meters`).
+      EFFEKT roterer hvert 5. s (`OverviewView.METER_ROTATE_S`) med målernavnet i tittelen («EFFEKT · Felles», «6/6»).
+      Skjermspareren bruker det samme. Soltider: standard Fredrikstad (`ui.latitude`/`longitude`). Test, dok 03/04/12.
+- [x] Oversikt: rom fra `project.point_rooms` var allerede med. Lys teller bare kort med `usage: light` og et
+      skrivbart på/av-punkt – det som manglet, var anleggsoppsett (se `sites/<anlegg>/TODO.md`).
+- [x] Hovedmenyen «Monitor» (2026-11-01): undermenyer KNX + én per protokoll i bruk med antall tilkoblinger
+      (fra hubens status). F4 åpner den første og går videre til neste ved nytt trykk. `ProtocolMonitorView`
+      (`tui/protomon.py`): tilkoblingene øverst, under hver verdiendring (←) og skriving (→ med bruker), filter,
+      pause, Enter/`w` = skriv med bekreftelse (bare `writable`). Buffer `app.point_log` (10 000). Test
+      `tests/test_protomon.py`, dok 03 og 08 (en+nb). Prøvd uten skjerm mot et anlegg: OPC UA, Modbus, BACnet.
+  - [ ] Mulig senere: vise lesinger/pollinger og feil per tilkobling (krever at huben sender mer enn endringer),
+        og skjule tagger som endrer seg hvert sekund (PLS-klokke `Act_Time`) med et eget filter.
+- [x] BACnet-skriving mot ekte utstyr (2026-11-01): brukeren slo av to lys via en KNX→BACnet-gateway med
+      prioritet 16 – status bekreftet.
 - [ ] BACnet-skriving: velge prioritet ved skriving. `priority` finnes allerede per tilkobling og per tagg
       (tom = enhetens standard). Mangler: valg i skrivedialogen (Anlegg › Innstillinger, romkort), med
       tilkoblingens prioritet som forvalg, og at prioriteten logges sammen med skrivingen.
-- [ ] Skrivbare punkter på romkort fra `point_rooms` (f.eks. et varsellys som må kunne slås av).
+- [x] Skrivbare punkter på romkort fra `point_rooms`: virket allerede (skrivbar bool → bryter); kortet må ha
+      `usage: light` for å telle som lys og komme i «Lys på».
 - [ ] MQTT Sparkplug B (ny modul).
 - [ ] Matter (ny modul).
 - [ ] Modulært per prosjekt: gjøre xknx valgfri (`./scada modules install knx`), slik at et prosjekt med bare
@@ -44,7 +53,7 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Runde 2 – åpent
 
-- [ ] BACnet mot ekte utstyr: skriving med prioritet, og at et ekte SD-anlegg leser vår BACnet-enhet
+- [ ] BACnet mot ekte utstyr: at et ekte SD-anlegg leser vår BACnet-enhet
       (Who-Is, objektliste, COV, skriving tilbake). Lesing, COV og `bacnet-scan` er prøvd.
 - [ ] Skriving av tabeller (ukeprogram fra CODESYS-kalendere) er ikke prøvd.
 - [ ] Anlegg › Innstillinger: forbruk «i går» / per måned i Energimålere.

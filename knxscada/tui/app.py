@@ -55,6 +55,7 @@ from .energy import EnergyView
 from .gateways import GatewayView
 from .home import HomeModel
 from .plan_view import PlanView
+from .protomon import ProtocolMonitorView, entries_from_points, entry_from_event
 from .screensaver import DAYS, ScreenSaver
 from .splash import AboutDialog, SplashScreen
 from .systems import SystemsView, parse_systems
@@ -76,7 +77,7 @@ MENU = [
     ("overview", "▣", N_("Overview"), "f1"),
     ("rooms", "⌂", N_("Floors and rooms"), "f2"),
     ("gas", "☰", N_("Group addresses"), "f3"),
-    ("monitor", "⇄", N_("Bus monitor"), "f4"),
+    ("monitor", "⇄", N_("Monitor"), "f4"),
     ("alarms", "⚠", N_("Alarms"), "f5"),
     ("events", "✎", N_("Event log"), "f6"),
     ("trends", "∿", N_("Trends"), "f7"),
@@ -106,6 +107,7 @@ VIEW_HINTS = {
     "rooms": N_("Tab: next control  Space: operate"),
     "gas": N_("/: search  u: show unused  Enter: read/write/trend"),
     "monitor": N_("/: filter  p: pause  c: clear  Enter: open"),
+    "protomon": N_("/: filter  p: pause  c: clear  Enter/w: write"),
     "alarms": N_("k: acknowledge  K: acknowledge all"),
     "events": N_("/: filter"),
     "trends": N_("/: search  Enter: add/remove  Del: remove all"),
@@ -157,6 +159,9 @@ class ScadaApp(App):
         self.alarms: list[dict] = []
         self.events: deque[dict] = deque(maxlen=3000)
         self.telegrams: deque[dict] = deque(maxlen=6000)  # buffer for monitor/activity
+        self.point_log: deque[dict] = deque(maxlen=10000)  # value changes and writes of protocol tags (Monitor)
+        self.protocol_status: list[dict] = []             # one line per connection, from the hub
+        self.conn_protocol: dict[str, str] = {}           # connection → protocol
         self.demo = False
         self._watchers: dict[str, set] = {}  # GA → widgets that want on_state()
         self._known_alarms: set[int] = set()
@@ -184,6 +189,7 @@ class ScadaApp(App):
                 yield RoomView(id="rooms")
                 yield GroupAddressView(id="gas")
                 yield MonitorView(id="monitor")
+                yield ProtocolMonitorView(id="protomon")
                 yield AlarmView(id="alarms")
                 yield EventView(id="events")
                 yield TrendView(id="trends")
@@ -309,6 +315,11 @@ class ScadaApp(App):
                     fnode = parent.add(_(floor["name"]), data=("floor", floor), expand=False)
                     for room in floor["rooms"]:
                         fnode.add_leaf(_(room["name"]), data=("room", room, floor))
+            elif vid == "monitor":
+                # Monitor → KNX, Modbus, OPC UA …: the protocols in use (filled when the server tells which).
+                node = root.add(text, data=("view", "monitor"), expand=True)
+                self.menu_nodes["monitor"] = node
+                self._monitor_menu()
             elif vid == "systems":
                 # One entry per air handling unit: Systems → 360.001, 360.002 …
                 vents = parse_systems(self.ui.get("systems"))[0]
@@ -412,6 +423,7 @@ class ScadaApp(App):
             self.main.query_one("#gas", GroupAddressView).rebuild()
             if self.model.get("point_gas"):
                 self._load_point_states()   # "hello" replaced the state: fetch the tags of the room cards again
+            self._load_protocols()
             # Without KNX the overview is empty: start on the gateways (F11) instead.
             if msg.get("knx") is False and self.main.query_one("#views", ContentSwitcher).current == "overview":
                 self._show("gateways")
@@ -435,12 +447,16 @@ class ScadaApp(App):
         elif kind == "points":
             for key, (v, ts, q) in msg["values"].items():
                 self._set_point(key, v, ts, q)
+            entries = entries_from_points(msg["values"])
+            self.point_log.extend(entries)
+            self.main.query_one("#protomon", ProtocolMonitorView).on_entries(entries)
             self.main.query_one("#gateways", GatewayView).on_points(msg["values"])
             self.main.query_one("#trends", TrendView).on_points(msg["values"])
             self.main.query_one("#systems", SystemsView).on_points(msg["values"])
             self.main.query_one("#energy", EnergyView).on_points(msg["values"])
         elif kind == "protocols":
             self.main.query_one("#gateways", GatewayView).on_protocols(msg["status"])
+            self._set_protocol_status(msg["status"])
         elif kind == "stats":
             self.stats = msg["stats"]
         elif kind == "alarms":
@@ -448,6 +464,9 @@ class ScadaApp(App):
         elif kind == "event":
             ev = msg["event"]
             self.events.append(ev)
+            if ev.get("kind") == "gateway" and (entry := entry_from_event(ev, self.conn_protocol)):
+                self.point_log.append(entry)
+                self.main.query_one("#protomon", ProtocolMonitorView).on_entries([entry])
             self.main.query_one("#events", EventView).add_event(ev)
         elif kind == "disconnected":
             self.server_ok = False
@@ -585,6 +604,18 @@ class ScadaApp(App):
                     tree = self.main.query_one("#menu", Tree)
                     self.call_after_refresh(tree.move_cursor, first.children[0])
             return
+        if vid == "monitor":
+            # F4: the first protocol's monitor; pressed again, the next protocol (KNX → Modbus → OPC UA …).
+            protos = [p for p, _title, _n in self._monitor_protocols()] or ["knx"]
+            current = self.main.query_one("#views", ContentSwitcher).current
+            shown = "knx" if current == "monitor" else (
+                self.main.query_one("#protomon", ProtocolMonitorView).protocol if current == "protomon" else None)
+            proto = protos[(protos.index(shown) + 1) % len(protos)] if shown in protos else protos[0]
+            self._show_monitor(proto)
+            tree = self.main.query_one("#menu", Tree)
+            self.call_after_refresh(tree.move_cursor, self.menu_nodes.get(f"monitor:{proto}", self.menu_nodes[vid]))
+            self.call_after_refresh(self._focus_view, "monitor" if proto == "knx" else "protomon")
+            return
         self._show(vid)
         tree = self.main.query_one("#menu", Tree)
         self.call_after_refresh(tree.move_cursor, self.menu_nodes[vid])
@@ -633,9 +664,10 @@ class ScadaApp(App):
 
     def _update_keybar(self, vid: str) -> None:
         t = Text()
+        active = "monitor" if vid == "protomon" else vid
         for v, _icon, label, key in MENU:
-            t.append(f" {key_label(key)} ", style="bold reverse" if v == vid else "bold")
-            t.append(_(KEYBAR_LABELS.get(v, label)) + " ", style="" if v == vid else "dim")
+            t.append(f" {key_label(key)} ", style="bold reverse" if v == active else "bold")
+            t.append(_(KEYBAR_LABELS.get(v, label)) + " ", style="" if v == active else "dim")
         t.append(" F9 ", style="bold")
         t.append(_("Saver") + " ", style="dim")
         hint = VIEW_HINTS.get(vid)
@@ -660,7 +692,8 @@ class ScadaApp(App):
         # Moving the cursor over views and rooms shows them directly (no Enter needed),
         # but actions (quit, theme, about) require Enter.
         data = event.node.data
-        if data and (data[0] == "system" or (data[0] in ("room", "view") and data[1] not in ("rooms", *ACTIONS))):
+        if data and (data[0] in ("system", "monitor") or
+                     (data[0] in ("room", "view") and data[1] not in ("rooms", *ACTIONS))):
             self._select(data)
 
     def _select(self, data: tuple | None) -> None:
@@ -671,6 +704,8 @@ class ScadaApp(App):
         elif data[0] == "view":
             if data[1] != "rooms":
                 self._show(data[1])
+        elif data[0] == "monitor":
+            self._show_monitor(data[1])
         elif data[0] == "system":
             self._show("systems")
             self.main.query_one("#systems", SystemsView).select(data[1])
@@ -684,6 +719,60 @@ class ScadaApp(App):
             title = _("{floor} – all rooms").format(floor=_(floor["name"]))
             self.run_worker(self.main.query_one("#rooms", RoomView).show(title, funcs, show_room=True),
                             exclusive=True, group="room")
+
+    def _monitor_protocols(self) -> list[tuple[str, str, int]]:
+        """(protocol, title, number of connections) for the Monitor menu: KNX first, then in the hub's order."""
+        out: dict[str, list] = {}
+        if self.cfg.knx_enabled:
+            out["knx"] = ["KNX", 1]
+        for s in self.protocol_status:
+            proto = s.get("protocol") or ""
+            if proto == "knx":
+                continue
+            entry = out.setdefault(proto, [s.get("title") or proto, 0])
+            entry[1] += 1
+        return [(p, title, n) for p, (title, n) in out.items()]
+
+    def _monitor_menu(self) -> None:
+        """(Re)build the entries under Monitor: one per protocol in use."""
+        node = self.menu_nodes.get("monitor")
+        if node is None:
+            return
+        node.remove_children()
+        for proto, title, n in self._monitor_protocols():
+            label = title if proto == "knx" else f"{title} ({n})"
+            self.menu_nodes[f"monitor:{proto}"] = node.add_leaf(label, data=("monitor", proto))
+
+    def _set_protocol_status(self, status: list[dict]) -> None:
+        """Keep the hub's connection states (from "protocols" or the first snapshot) and pass them on.
+
+        The Monitor menu is rebuilt only when the set of protocols changed (a connection added or removed in
+        F11), not at every state change – rebuilding the tree would move the user's cursor.
+        """
+        before = self._monitor_protocols()
+        self.protocol_status = status
+        self.conn_protocol = {s["name"]: s.get("protocol") or "" for s in status}
+        if self._monitor_protocols() != before:
+            self._monitor_menu()
+        self.main.query_one("#protomon", ProtocolMonitorView).on_protocols()
+
+    @work(exclusive=True, group="protocols")
+    async def _load_protocols(self) -> None:
+        """After connecting: the connections and their protocols (later changes arrive with "protocols")."""
+        snap = await self.request("protocols")
+        if snap:
+            self._set_protocol_status(snap.get("status") or [])
+
+    def _show_monitor(self, proto: str | None = None) -> None:
+        """Monitor › *proto*: the KNX bus monitor, or the monitor of another protocol (default: the first one)."""
+        protos = [p for p, _title, _n in self._monitor_protocols()]
+        proto = proto or (protos[0] if protos else "knx")
+        if proto == "knx":
+            self._show("monitor")
+            return
+        view = self.main.query_one("#protomon", ProtocolMonitorView)
+        self._show("protomon")
+        view.select(proto)
 
     def _show_room(self, room: dict, floor: dict) -> None:
         if self._current_room == room["id"] and self.main.query_one("#views", ContentSwitcher).current == "rooms":

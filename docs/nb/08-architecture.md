@@ -44,6 +44,8 @@ knxscada/
     charts.py     hjelpere for plotext (palett fra temaet, tidsakse, diagramtyper)
     graphics.py   sparklines, søyler, store sifre
     gateways.py   F11 Gatewayer: tilkoblinger, tagger, gatewayer og skjemaene for dem
+    protomon.py   Monitor › Modbus/OPC UA/BACnet/MQTT: verdiendringer og skrivinger per protokoll (app.point_log)
+    systems.py, energy.py   Anlegg (Ctrl+E) og Energimålere (Ctrl+G) fra ui.systems
     home.py       sammendrag per rom (temperatur, lys, varme, alarm)
     themes.py     fargetemaer
     app.tcss      stilark

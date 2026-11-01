@@ -28,7 +28,7 @@ innlogget bruker med IP, og en klokke. I demomodus vises et gult **DEMO**-merke.
 | `F1` | Oversikt |
 | `F2` | Etasjer og rom |
 | `F3` | Gruppeadresser |
-| `F4` | Busmonitor |
+| `F4` | Monitor: KNX-busmonitoren; trykket igjen, monitoren for neste protokoll |
 | `F5` | Alarmer |
 | `F6` | Hendelseslogg |
 | `F7` | Trender |
@@ -110,7 +110,27 @@ Alle gruppeadresser med navn, DPT, levende verdi, tid og kilde.
 Når du skriver verdier, tolkes de etter DPT-en, for eksempel `21.5` (eller `21,5`), `on`, `Comfort`
 eller `75`. Er DPT-en ukjent, skriver du råbytes i heks, for eksempel `0C 33`.
 
-## F4 Busmonitor
+## F4 Monitor
+
+Menyvalget **Monitor** har ett valg per protokoll som er i bruk: **KNX**, og for eksempel **OPC UA (2)**,
+**Modbus (4)** og **BACnet/IP (1)** (antall tilkoblinger). `F4` åpner det første (KNX, eller den første
+protokollen i en installasjon uten KNX); trykket igjen går den videre til neste protokoll.
+
+### Monitor › Modbus, OPC UA, BACnet, MQTT
+
+Øverst tilkoblingene for protokollen med rolle, adresse, antall tagger og tilstand (som i F11). Under vises hver
+**verdiendring** i taggene deres (← tid, tilkobling, tagg, beskrivelse, verdi med enhet, kvalitet når den ikke er
+god) og hver **skriving** (→ verdi og brukeren som skrev), live. Verdier som ikke endrer seg, vises ikke: huben
+sender bare endringer videre.
+
+- **`/`** filtrerer på tilkobling, tagg, beskrivelse, verdi eller bruker; `skriv` viser bare skrivinger.
+- **`p`** setter på pause og fortsetter, **`c`** tømmer visningen.
+- **Enter, klikk eller `w`** på en linje skriver en ny verdi til taggen, med bekreftelse – bare for tagger med
+  `writable: true`. En BACnet-skriving bruker prioriteten til tilkoblingen (`priority`).
+
+Monitoren viser det som har skjedd siden TUI-en ble startet (opptil 10 000 linjer for alle protokollene).
+
+### Monitor › KNX (busmonitor)
 
 Alle telegrammer på bussen, live. Hver linje viser tid, retning (← inn, → ut), kilde, mål, navn,
 type (Skriv, Svar, Les), DPT, rådata og dekodet verdi. Med flere KNX IP-grensesnitt viser en **Via**-kolonne

@@ -26,7 +26,7 @@ the logged-in user with IP, and a clock. In demo mode a yellow **DEMO** label is
 | `F1` | Overview |
 | `F2` | Floors and rooms |
 | `F3` | Group addresses |
-| `F4` | Bus monitor |
+| `F4` | Monitor: KNX bus monitor; pressed again, the monitor of the next protocol |
 | `F5` | Alarms |
 | `F6` | Event log |
 | `F7` | Trends |
@@ -108,7 +108,27 @@ All group addresses with name, DPT, live value, time and source.
 When you write values, they are interpreted according to the DPT, for example `21.5` (or `21,5`), `on`, `Comfort`
 or `75`. If the DPT is unknown, enter raw bytes in hex, for example `0C 33`.
 
-## F4 Bus monitor
+## F4 Monitor
+
+The menu entry **Monitor** has one entry per protocol in use: **KNX**, and for example **OPC UA (2)**,
+**Modbus (4)** and **BACnet/IP (1)** (the number of connections). `F4` opens the first one (KNX, or the first
+protocol in an installation without KNX); pressed again, it moves on to the next protocol.
+
+### Monitor › Modbus, OPC UA, BACnet, MQTT
+
+On top, the connections of the protocol with role, address, number of tags and state (as in F11). Below, every
+**value change** of their tags (← time, connection, tag, description, value with unit, quality when it is not
+good) and every **write** (→ value and the user who wrote it), live. Values that do not change are not shown:
+the hub passes on changes only.
+
+- **`/`** filters on connection, tag, description, value or user; `write` lists only writes.
+- **`p`** pauses and resumes, **`c`** clears the view.
+- **Enter, click or `w`** on a line writes a new value to its tag, with confirmation – only for tags with
+  `writable: true`. A BACnet write uses the priority of the connection (`priority`).
+
+The monitor shows what has happened since the TUI was started (up to 10,000 entries for all protocols).
+
+### Monitor › KNX (bus monitor)
 
 All telegrams on the bus, live. Each line shows time, direction (← in, → out), source, destination, name,
 type (Write, Response, Read), DPT, raw data and decoded value. With several KNX IP interfaces a **Via** column

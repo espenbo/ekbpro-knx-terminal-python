@@ -42,6 +42,17 @@ if TYPE_CHECKING:
 STATE_STYLE = {"connected": "bold green", "reading": "bold yellow", "error": "bold red", "off": "dim"}
 
 
+def conn_state(s: dict[str, Any]) -> Text:
+    """The state of a connection (one line of the hub's status) as coloured text."""
+    if s["connected"] and not s.get("ready", True):
+        return Text(_("reading …"), style=STATE_STYLE["reading"])
+    if s["connected"]:
+        return Text(_("connected"), style=STATE_STYLE["connected"])
+    if not s.get("running"):
+        return Text(s.get("error") or _("off"), style=STATE_STYLE["error"])
+    return Text(s.get("error") or _("connecting …"), style=STATE_STYLE["error" if s.get("error") else "off"])
+
+
 def show_value(value: Any) -> str:
     """A tag value as text for the table."""
     if value is None:
@@ -506,15 +517,7 @@ class GatewayView(View):
         row = t.cursor_row
         t.clear()
         for s in status:
-            if s["connected"] and not s.get("ready", True):
-                state = Text(_("reading …"), style=STATE_STYLE["reading"])
-            elif s["connected"]:
-                state = Text(_("connected"), style=STATE_STYLE["connected"])
-            elif not s.get("running"):
-                state = Text(s.get("error") or _("off"), style=STATE_STYLE["error"])
-            else:
-                state = Text(s.get("error") or _("connecting …"), style=STATE_STYLE["error" if s.get("error") else "off"])
-            t.add_row(s["name"], s["title"], _(s["role"]), s.get("where") or "", str(s.get("tags", "")), state,
+            t.add_row(s["name"], s["title"], _(s["role"]), s.get("where") or "", str(s.get("tags", "")), conn_state(s),
                       key=s["name"])
         if t.row_count:
             t.move_cursor(row=min(max(row, 0), t.row_count - 1))
