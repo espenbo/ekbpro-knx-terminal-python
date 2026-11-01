@@ -387,7 +387,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `latitude`, `longitude` | tall | `59.22`, `10.93` | desimalgrader, for siden `sky` |
 | `plan` | sti | `plan.yaml` | |
 | `export_dir` | sti | `~` | |
-| `outdoor_ga`, `power_ga`, `energy_ga` | gruppeadresse | finnes ut fra navn og DPT | |
+| `outdoor_ga`, `power_ga`, `energy_ga` | gruppeadresse | finnes ut fra navn og DPT | uten dem: aggregatets `outdoor`-tagg og målerne i `ui.systems` |
 | `setpoint_step`, `dim_step` | tall | `0.5`, `10` | |
 
 ### `plc`

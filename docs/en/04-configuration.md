@@ -347,8 +347,8 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `latitude`, `longitude` | `59.22`, `10.93` (Fredrikstad) | Position for sunrise, sunset and the moon on the screensaver page `sky` (decimal degrees) |
 | `plan` | `plan.yaml` | The floor plan file |
 | `export_dir` | `~` | Where the bus monitor export (`e`: ETS XML, CSV or JSON) is saved. In Docker: e.g. `/data/export`. |
-| `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". |
-| `power_ga` | auto | Power (DPT 14.056) for the status tile. Auto finds a name ending in "power" or "W", or containing "effekt". |
+| `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". Without one, the `outdoor` tag of the first unit in `ui.systems` is used. |
+| `power_ga` | auto | Power (DPT 14.056) for the status tile. Auto finds a name ending in "power" or "W", or containing "effekt". Without one, the tile rotates through the energy meters of `ui.systems`. |
 | `energy_ga` | auto | Energy meter (DPT 13.x). Auto finds a name containing "kwh" or "energy". |
 | `setpoint_step` | `0.5` | Step for − / + on setpoints |
 | `dim_step` | `10` | Step for − / + on dimmers |

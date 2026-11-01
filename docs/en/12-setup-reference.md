@@ -385,7 +385,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `latitude`, `longitude` | number | `59.22`, `10.93` | decimal degrees, for the page `sky` |
 | `plan` | path | `plan.yaml` | |
 | `export_dir` | path | `~` | |
-| `outdoor_ga`, `power_ga`, `energy_ga` | group address | found by name and DPT | |
+| `outdoor_ga`, `power_ga`, `energy_ga` | group address | found by name and DPT | without them: the unit's `outdoor` tag and the meters in `ui.systems` |
 | `setpoint_step`, `dim_step` | number | `0.5`, `10` | |
 
 ### `plc`

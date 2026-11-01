@@ -348,8 +348,8 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `latitude`, `longitude` | `59.22`, `10.93` (Fredrikstad) | Posisjonen for soloppgang, solnedgang og månen på skjermsparersiden `sky` (desimalgrader) |
 | `plan` | `plan.yaml` | Fila med plantegningen |
 | `export_dir` | `~` | Hvor eksporten fra busmonitoren (`e`: ETS XML, CSV eller JSON) lagres. I Docker: f.eks. `/data/export`. |
-| `outdoor_ga` | auto | Gruppeadressen til utetemperaturen. Auto finner en DPT 9-adresse der navnet begynner med "ute temp", "outdoor" eller "outside". |
-| `power_ga` | auto | Effekt (DPT 14.056) til statusflisen. Auto finner et navn som slutter på "power" eller "W", eller som inneholder "effekt". |
+| `outdoor_ga` | auto | Gruppeadressen til utetemperaturen. Auto finner en DPT 9-adresse der navnet begynner med "ute temp", "outdoor" eller "outside". Finnes den ikke, brukes `outdoor`-taggen til det første aggregatet i `ui.systems`. |
+| `power_ga` | auto | Effekt (DPT 14.056) til statusflisen. Auto finner et navn som slutter på "power" eller "W", eller som inneholder "effekt". Finnes den ikke, roterer flisen gjennom energimålerne i `ui.systems`. |
 | `energy_ga` | auto | Energimåler (DPT 13.x). Auto finner et navn som inneholder "kwh" eller "energy". |
 | `setpoint_step` | `0.5` | Steg for − / + på settpunkter |
 | `dim_step` | `10` | Steg for − / + på dimmere |

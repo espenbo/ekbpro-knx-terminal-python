@@ -57,8 +57,10 @@ The terminal is cleared when you quit.
 
 - **Status tiles:**
   - **Outdoor** and **Indoor avg** show the temperature; outdoor has a sparkline for the last 24 hours, indoor
-    shows the min–max range of the rooms.
-  - **Power** shows W or kW, with a sparkline.
+    shows the min–max range of the rooms. Without a KNX outdoor address, Outdoor shows the outdoor sensor of the
+    first air handling unit in `ui.systems`.
+  - **Power** shows W or kW, with a sparkline. Without a KNX power address, it shows the energy meters of
+    `ui.systems` one at a time (5 seconds each), with the meter's name in the title and "2/6" below.
   - **Lights on** shows how many of the lights are on.
   - **KNX tlg/s** shows the traffic.
   - **Alarms** shows active and unacknowledged alarms.

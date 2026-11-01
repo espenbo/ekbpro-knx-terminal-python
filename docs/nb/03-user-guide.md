@@ -59,8 +59,10 @@ Terminalen tømmes når du avslutter.
 
 - **Statusfliser:**
   - **Ute** og **Inne snitt** viser temperaturen; ute har en minigraf for siste døgn, inne
-    viser spennet min–maks for rommene.
-  - **Effekt** viser W eller kW, med minigraf.
+    viser spennet min–maks for rommene. Uten en KNX-adresse for utetemperaturen viser Ute utetemperaturføleren til
+    det første ventilasjonsaggregatet i `ui.systems`.
+  - **Effekt** viser W eller kW, med minigraf. Uten en KNX-adresse for effekt viser den energimålerne i `ui.systems`
+    én om gangen (5 sekunder hver), med navnet på måleren i tittelen og «2/6» under.
   - **Lys på** viser hvor mange av lysene som er på.
   - **KNX tlg/s** viser trafikken.
   - **Alarmer** viser aktive og ukvitterte alarmer.
