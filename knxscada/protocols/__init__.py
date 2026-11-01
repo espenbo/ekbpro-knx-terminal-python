@@ -96,6 +96,18 @@ _OFFSET = Field("offset", N_("Offset"), "float", None)
 _UNIT = Field("unit", N_("Unit"), "str", "", help=N_("Shown in the TUI, e.g. °C"))
 _WRITABLE = Field("writable", N_("Writable"), "bool", True)
 _DESCRIPTION = Field("description", N_("Description"), "str", "")
+_LOG = Field("log", N_("Log"), "bool", None,
+             help=N_("Store the values in the database for trends (empty = the connection's log setting)"))
+#: Logging to the database (trends, F11) – the same for every protocol.
+_LOG_SETTINGS = (
+    Field("log", N_("Log tags"), "list", [],
+          help=N_("Tags whose values are stored for trends: names or patterns (* ?), * = all. "
+                  "A tag's own log: true/false wins")),
+    Field("log_deadband", N_("Log deadband"), "float", 0,
+          help=N_("Store a number only when it has changed at least this much")),
+    Field("log_min_s", N_("Log interval (s)"), "float", 10,
+          help=N_("At most one stored value per tag in this time (on/off changes are always stored)")),
+)
 
 MODBUS_TYPES = ("bool", "int16", "uint16", "int32", "uint32", "float32", "int64", "uint64", "float64")
 
@@ -136,6 +148,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
                   show={"role": ("client",)}),
             Field("word_order", N_("Word order (32/64 bit)"), "choice", "big", ("big", "little"),
                   N_("big: high word first (most devices) · little: low word first")),
+            *_LOG_SETTINGS,
         ),
         tag_fields=(
             Field("address", N_("Address"), "str", "", help=N_("hr:100 holding register · ir:5 input register · "
@@ -151,7 +164,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("heartbeat_s", N_("Heartbeat (s)"), "float", None,
                   help=N_("Write a counter (1, 2, 3 …) to the tag at this interval – for a device watchdog. "
                           "Empty = off")),
-            _DESCRIPTION,
+            _DESCRIPTION, _LOG,
         ),
     ),
     Protocol(
@@ -172,6 +185,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
                   N_("plain: 21.5 · json: {\"value\": 21.5, \"ts\": …}")),
             Field("qos", N_("QoS"), "choice", "0", ("0", "1", "2")),
             Field("retain", N_("Retain published values"), "bool", True),
+            *_LOG_SETTINGS,
         ),
         tag_fields=(
             Field("topic", N_("Topic"), "str", "", help=N_("Empty = topic prefix + tag name")),
@@ -179,7 +193,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("json_key", N_("JSON key"), "str", "", help=N_("Take the value from this key of a JSON payload")),
             Field("set_topic", N_("Topic for writing"), "str", "",
                   help=N_("Empty = the topic itself (tags found through subscribe: <topic>/set)")),
-            _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION,
+            _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION, _LOG,
         ),
     ),
     Protocol(
@@ -198,11 +212,12 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
                    "Aes128Sha256RsaOaep,SignAndEncrypt", "Aes256Sha256RsaPss,SignAndEncrypt")),
             Field("namespace", N_("Namespace URI"), "str", "urn:ekbpro:gateway", show={"role": ("server",)}),
             Field("publish_interval_ms", N_("Publish interval (ms)"), "int", 500, show={"role": ("client",)}),
+            *_LOG_SETTINGS,
         ),
         tag_fields=(
             Field("node", N_("Node id"), "str", "", help=N_("Client: e.g. ns=4;s=|var|PLC.Application.GVL.rTemp · "
                                                      "server: empty = the tag name"), required=False),
-            _TYPE, _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION,
+            _TYPE, _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION, _LOG,
         ),
     ),
     Protocol(
@@ -239,6 +254,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("bbmd", N_("BBMD"), "str", "",
                   help=N_("Register as a foreign device with this BBMD (ip:port) to reach another subnet")),
             Field("bbmd_ttl", N_("BBMD registration (s)"), "int", 300),
+            *_LOG_SETTINGS,
         ),
         tag_fields=(
             Field("object", N_("Object"), "str", "",
@@ -249,7 +265,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             Field("states", N_("Number of states"), "int", None, help=N_("Our multi-state objects (msv/msi), default 16")),
             Field("cov_increment", N_("COV increment"), "float", None,
                   help=N_("Our analog objects: the change that is sent to COV subscribers, default 0.1")),
-            _WRITABLE, _DESCRIPTION,
+            _WRITABLE, _DESCRIPTION, _LOG,
         ),
     ),
     Protocol("sparkplug", "MQTT Sparkplug B", None, planned=True, description=N_("Planned")),

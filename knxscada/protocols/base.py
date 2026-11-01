@@ -44,10 +44,13 @@ FALSE_WORDS = {"0", "false", "off", "no", "nei", "av", "usann", "low", ""}
 def coerce(value: Any, typ: str) -> Any:
     """Convert *value* to the tag type *typ* (ValueError when that is not possible).
 
-    ``None`` stays ``None``; an empty *typ* returns the value unchanged.
+    ``None`` stays ``None``; an empty *typ* returns the value unchanged. A list (an OPC UA array,
+    e.g. a week program with one value per day) is converted element by element.
     """
     if value is None or not typ:
         return value
+    if isinstance(value, (list, tuple)):
+        return [coerce(v, typ) for v in value]
     if typ == "bool":
         if isinstance(value, bool):
             return value
@@ -89,13 +92,20 @@ def type_of(value: Any) -> str:
     return ""
 
 
-def same_value(a: Any, b: Any) -> bool:
-    """Equal for change detection and echo suppression (floats compared loosely: 32-bit values round)."""
+def same_value(a: Any, b: Any, rel: float = 1e-4) -> bool:
+    """Equal for change detection and echo suppression (floats compared loosely: 32-bit values round).
+
+    *rel* is the relative tolerance. The default suits echo suppression (a KNX 2-byte float comes back
+    coarser than it was sent); for a large counter it hides real changes – 1e-4 of 147 912 kWh is 15 kWh.
+    """
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        return isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)) and len(a) == len(b) and \
+            all(same_value(x, y, rel) for x, y in zip(a, b))
     if isinstance(a, bool) or isinstance(b, bool):
         return a is b or (a == b and type(a) is type(b))
     if isinstance(a, float) or isinstance(b, float):
         try:
-            return abs(float(a) - float(b)) <= 1e-4 * max(1.0, abs(float(a)), abs(float(b)))
+            return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(a)), abs(float(b)))
         except (TypeError, ValueError):
             return False
     return a == b

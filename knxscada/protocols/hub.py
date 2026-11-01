@@ -8,10 +8,12 @@ The server owns one hub. It
   KNX is set up), importing a protocol module only when it is used;
 * keeps the latest value of every tag (``values["conn/tag"]``) and hands new
   values to the gateway engine;
+* logs the values of the tags chosen with ``log`` to the database (trends) and
+  hands them to the server's alarm rules for tags (``match_point``);
 * tells the TUI clients about values (``points`` messages, at most twice a
   second) and connection states (``protocols`` messages);
-* answers the client commands ``protocols``, ``points``, ``point_write``,
-  ``protocols_save`` and ``protocols_reload`` (see :meth:`command`).
+* answers the client commands ``protocols``, ``points``, ``logged_points``,
+  ``point_write``, ``protocols_save`` and ``protocols_reload`` (see :meth:`command`).
 
 A connection that cannot start (module not installed, bad setting) is
 reported in the event log and shown in the TUI; the others run anyway.
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -55,6 +58,8 @@ class Hub:
                                                      # (Driver.first_value_is_status)
         self._dirty: dict[str, dict[str, Any]] = {}  # values not yet sent to the clients
         self._flusher: asyncio.Task | None = None
+        self._logged: dict[str, tuple[float, Any]] = {}   # "conn/tag" → (ts, value) last stored in the database
+        self._log_wait: dict[str, tuple[str, str, Any]] = {}   # changes held back by log_min_s: key → (conn, tag, value)
         self.engine = GatewayEngine(self, [])
         self.started = False
 
@@ -166,13 +171,72 @@ class Hub:
         initial = drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
         self._seen.add(key)
         old = self.values.get(key)
-        if old is not None and old["q"] == quality and same_value(old["v"], value):
+        # Tighter than the echo check: float32 rounds at ~6e-8, and energy counters must not move in 15 kWh steps.
+        if old is not None and old["q"] == quality and same_value(old["v"], value, rel=1e-6):
             return
         rec = {"v": value, "ts": time.time(), "q": quality}
         self.values[key] = rec
         self._dirty[key] = rec
         if quality == "good":
             self.engine.on_value(conn, tag, value, initial)
+            if drv is not None:
+                self._log(drv, tag, value, rec["ts"])
+        if hasattr(self.server, "point_value"):
+            self.server.point_value(key, value, quality)
+
+    # -- logging ----------------------------------------------------------------------------------
+    def logs(self, drv: Driver, tag: str) -> bool:
+        """Whether the values of *tag* are stored: the tag's own ``log``, else the connection's patterns."""
+        t = drv.tags.get(tag)
+        own = t.extra.get("log") if t is not None else None
+        if own is not None and own != "":
+            return bool(own)
+        patterns = drv.settings.get("log")
+        if patterns is True:
+            return True
+        if not patterns:
+            return False
+        if isinstance(patterns, str):
+            patterns = [p.strip() for p in patterns.split(",")]
+        return any(fnmatch.fnmatchcase(tag, str(p)) for p in patterns)
+
+    def _setting(self, drv: Driver, tag: str, key: str, default: float) -> float:
+        t = drv.tags.get(tag)
+        for value in ((t.extra.get(key) if t is not None else None), drv.settings.get(key)):
+            if value not in (None, ""):
+                try:
+                    return float(str(value).replace(",", "."))
+                except ValueError:
+                    break
+        return default
+
+    def _log(self, drv: Driver, tag: str, value: Any, ts: float) -> None:
+        """Store a new value of a logged tag (``log_deadband``, ``log_min_s``; on/off changes always)."""
+        store = getattr(self.server, "store", None)
+        if store is None or value is None or not self.logs(drv, tag):
+            return
+        key = f"{drv.name}/{tag}"
+        last = self._logged.get(key)
+        if last is not None and not isinstance(value, bool):
+            if ts - last[0] < self._setting(drv, tag, "log_min_s", 10):
+                self._log_wait[key] = (drv.name, tag, value)   # stored when the interval is over (flush_log)
+                return
+            if isinstance(value, (int, float)) and isinstance(last[1], (int, float)) and \
+                    abs(value - last[1]) < self._setting(drv, tag, "log_deadband", 0):
+                return
+        self._log_wait.pop(key, None)
+        store.add_point_value(key, value, ts)
+        self._logged[key] = (ts, value)
+
+    def flush_log(self, now: float | None = None) -> None:
+        """Store the held-back changes whose ``log_min_s`` is over (the last value of a burst is not lost)."""
+        now = time.time() if now is None else now
+        for key, (conn, tag, value) in list(self._log_wait.items()):
+            drv = self.drivers.get(conn)
+            if drv is None:
+                self._log_wait.pop(key, None)
+            elif now - self._logged.get(key, (0.0, None))[0] >= self._setting(drv, tag, "log_min_s", 10):
+                self._log(drv, tag, value, now)
 
     def connection_state(self, conn: str, connected: bool) -> None:
         """A driver connected or lost its connection."""
@@ -215,6 +279,8 @@ class Hub:
     async def _flush_loop(self) -> None:
         while True:
             await asyncio.sleep(FLUSH_S)
+            if self._log_wait:
+                self.flush_log()
             if not self._dirty:
                 continue
             dirty, self._dirty = self._dirty, {}
@@ -261,6 +327,19 @@ class Hub:
                          "planned": p.planned, "roles": list(p.roles)} for p in PROTOCOLS.values()],
         }
 
+    def logged_points(self) -> list[dict[str, Any]]:
+        """Every logged tag (``log``) of every connection, for the trend view: key ``conn/tag`` and value."""
+        out = []
+        for conn, drv in self.drivers.items():
+            if conn == "knx":
+                continue
+            for t in drv.tags.values():
+                if self.logs(drv, t.name):
+                    rec = self.values.get(f"{conn}/{t.name}") or {}
+                    out.append({**t.info(), "key": f"{conn}/{t.name}", "conn": conn, "value": rec.get("v"),
+                                "q": rec.get("q", "")})
+        return out
+
     def points(self, conn: str, limit: int = 5000) -> list[dict[str, Any]]:
         """The tags of one connection with their values."""
         drv = self.drivers.get(conn)
@@ -280,6 +359,8 @@ class Hub:
         cmd = req.get("cmd")
         if cmd == "protocols":
             return self.snapshot()
+        if cmd == "logged_points":
+            return self.logged_points()
         if cmd == "points":
             return self.points(str(req.get("conn") or ""), int(req.get("limit") or 5000))
         if cmd == "point_write":

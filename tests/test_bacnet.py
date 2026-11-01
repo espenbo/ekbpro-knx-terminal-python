@@ -280,3 +280,12 @@ def test_from_bacnet():
     assert from_bacnet(Real(1.688)) == 1.688                  # float32 is rounded to 7 digits
     assert from_bacnet(Double(1.687999963760376)) == 1.687999963760376
     assert from_bacnet(BinaryPV("active")) is True
+
+
+def test_route_source():
+    """The client binds to the address the system routes from (over Tailscale: the VPN address, not the LAN)."""
+    from knxscada.protocols.bacnet import route_source
+
+    assert route_source("127.0.0.1") == "127.0.0.1/32"
+    assert route_source("127.0.0.1:47809") == "127.0.0.1/32"
+    assert route_source("2:5") is None and route_source("not-an-address") is None

@@ -52,7 +52,7 @@ from xknx.telegram import GroupAddress, Telegram, TelegramDirection
 from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
 
 from . import dpt as dptlib
-from .alarms import build_rules, normalize_severity
+from .alarms import Rule, build_rules, normalize_severity, point_rule
 from .config import Config
 from .i18n import N_, _
 from .knx_interfaces import (
@@ -84,7 +84,7 @@ MAX_HOURS = 24 * 400
 USER_RE = re.compile(r"[^\w@.:\-]+")
 
 #: Client commands handled by the protocol hub (connections and gateways, see knxscada/protocols/hub.py).
-HUB_COMMANDS = ("protocols", "points", "point_write", "protocols_save", "protocols_reload")
+HUB_COMMANDS = ("protocols", "points", "logged_points", "point_write", "protocols_save", "protocols_reload")
 
 #: Telegrams older than the retention time are deleted in batches of this size, with a
 #: pause for the event loop in between, so a large purge never blocks the server.
@@ -153,6 +153,10 @@ class ScadaServer:
         # The demo uses its own database so simulated data never mixes with real history.
         self.store = Store(db.with_name(db.stem + "-demo" + db.suffix) if demo else db)
         self.rules = build_rules(cfg.alarms, self.gas)
+        # Rules for the tags of protocols.yaml (match_point); bound per tag on its first value.
+        self.point_rules = [Rule.from_dict(r) for r in cfg.alarms if isinstance(r, dict) and r.get("match_point")]
+        self._point_rule: dict[str, tuple[Any, Rule | None]] = {}   # "conn/tag" → (driver, rule)
+        self._alarm_delay: dict[str, asyncio.TimerHandle] = {}       # alarms waiting for their delay_s
         self.state: dict[str, dict] = {}  # GA → {"value", "text", "raw", "ts", "src"}
         self.clients: set[asyncio.StreamWriter] = set()
         self.alarms: dict[int, dict] = {}  # open alarms (active or unacknowledged) by id
@@ -527,39 +531,80 @@ class ScadaServer:
         self.status["plc"] = N_("connected") if n == total else N_("partly connected") if n else N_("disconnected")
         self._broadcast({"type": "status", "status": self.status})
 
-    def _check_alarm(self, addr: str, value: Any) -> None:
+    def _check_alarm(self, addr: str, value: Any, rule: Rule | None = None, name: str | None = None,
+                     text_value: str | None = None) -> None:
         """Raise or clear the alarm bound to *addr* according to its rule.
 
         An alarm has two independent properties: active/cleared (the
         condition) and acknowledged/unacknowledged (the operator). It stays
         in the open list until it is both cleared and acknowledged.
+        *addr* is a group address, or ``connection/tag`` with *rule*, *name* and
+        *text_value* given (a tag of protocols.yaml). With ``delay_s`` the alarm is
+        raised only when the condition has lasted that long.
         """
-        rule = self.rules[addr]
+        rule = rule or self.rules[addr]
         active = rule.active(value)
         if active is None:
             return  # value cannot be judged – keep the current state
-        ga = self.gas[addr]
         current = next((a for a in self.alarms.values() if a["ga"] == addr and a["cleared_ts"] is None), None)
-        changed = False
-        if active and current is None:
-            text = rule.format_text(name=ga["name"], address=addr, value=dptlib.fmt(ga["dpt"], value))
-            aid = self.store.raise_alarm(addr, text, rule.severity, value)
-            self.alarms[aid] = {
-                "id": aid, "ga": addr, "text": text, "severity": rule.severity, "raised_ts": time.time(),
-                "cleared_ts": None, "acked_ts": None, "acked_by": None, "value": json.dumps(value),
-            }
-            self.event("alarm", "alarm", _("ALARM {severity}: {text} ({address})").format(
-                severity=_(rule.severity).upper(), text=text, address=addr))
-            changed = True
-        elif not active and current is not None:
+        if active:
+            if current is not None or addr in self._alarm_delay:
+                return
+            if rule.delay_s > 0:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    self._alarm_delay[addr] = loop.call_later(
+                        rule.delay_s, self._raise_alarm, addr, rule, value, name, text_value)
+                    return
+            self._raise_alarm(addr, rule, value, name, text_value)
+            return
+        pending = self._alarm_delay.pop(addr, None)
+        if pending is not None:
+            pending.cancel()   # the condition ended before the delay was over
+        if current is not None:
             self.store.clear_alarm(current["id"])
             current["cleared_ts"] = time.time()
             self.event("info", "alarm", _("Alarm cleared: {text} ({address})").format(text=current["text"], address=addr))
             if current["acked_ts"]:
                 del self.alarms[current["id"]]  # cleared and acknowledged: no longer open
-            changed = True
-        if changed:
             self._broadcast_alarms()
+
+    def _raise_alarm(self, addr: str, rule: Rule, value: Any, name: str | None, text_value: str | None) -> None:
+        self._alarm_delay.pop(addr, None)
+        if name is None:
+            ga = self.gas[addr]
+            name, text_value = ga["name"], dptlib.fmt(ga["dpt"], value)
+        text = rule.format_text(name=name, address=addr, value=text_value if text_value is not None else str(value))
+        aid = self.store.raise_alarm(addr, text, rule.severity, value)
+        self.alarms[aid] = {
+            "id": aid, "ga": addr, "text": text, "severity": rule.severity, "raised_ts": time.time(),
+            "cleared_ts": None, "acked_ts": None, "acked_by": None, "value": json.dumps(value),
+        }
+        self.event("alarm", "alarm", _("ALARM {severity}: {text} ({address})").format(
+            severity=_(rule.severity).upper(), text=text, address=addr))
+        self._broadcast_alarms()
+
+    def point_value(self, key: str, value: Any, quality: str) -> None:
+        """Called by the hub for every new value of a protocol tag: evaluate its alarm rule (match_point)."""
+        if not self.point_rules or quality != "good":
+            return
+        conn, _sep, tag = key.partition("/")
+        drv = self.hub.drivers.get(conn)
+        cached = self._point_rule.get(key)
+        if cached is None or cached[0] is not drv:   # first value, or the connection was set up again
+            t = drv.tags.get(tag) if drv is not None else None
+            cached = (drv, point_rule(self.point_rules, key, tag, t.description if t else ""))
+            self._point_rule[key] = cached
+        rule = cached[1]
+        if rule is None:
+            return
+        t = drv.tags.get(tag) if drv is not None else None
+        unit = f" {t.unit}" if t is not None and t.unit else ""
+        self._check_alarm(key, value, rule, (t.description if t is not None and t.description else tag),
+                          f"{value}{unit}")
 
     def _broadcast_alarms(self) -> None:
         self._broadcast({"type": "alarms", "alarms": list(self.alarms.values())})
@@ -682,9 +727,11 @@ class ScadaServer:
             return await self.hub.command(req, user)
         if cmd == "history":
             # In a worker thread: a 30-day trend of a busy address must not stop the telegram handling.
+            # {"point": "connection/tag"} instead of {"ga": …}: a logged tag of protocols.yaml.
             return await asyncio.to_thread(
-                self.store.read_history, req["ga"], time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
-                _bounded(req.get("max_points", 4000), 20000))
+                self.store.read_history, req.get("point") or req["ga"],
+                time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
+                _bounded(req.get("max_points", 4000), 20000), bool(req.get("point")))
         raise ValueError(_("Unknown command {cmd}").format(cmd=repr(cmd)))
 
 

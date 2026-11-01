@@ -900,3 +900,64 @@ def test_tui_gateway_view_edits_protocols_yaml(tmp_path, monkeypatch):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def test_logging_of_tags(tmp_path):
+    """log: patterns on the connection, the tag's own log wins; deadband, interval and held-back changes."""
+    from knxscada.store import Store
+
+    async def run():
+        src = Mem("src", {"tags": {"T": {"type": "float"}, "On": {"type": "bool"}, "Quiet": {"log": False},
+                                   "Own": {"log": True}, "Other": {}},
+                          "log": ["T", "On", "Q*"], "log_deadband": 0.2, "log_min_s": 10}, None, server=False)
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []}, {"src": src})
+        hub.server.store = store = Store(tmp_path / "db.sqlite")
+        try:
+            assert [t for t in ("T", "On", "Quiet", "Own", "Other") if hub.logs(src, t)] == ["T", "On", "Own"]
+            hub._log(src, "T", 20.0, 1000.0)
+            hub._log(src, "T", 21.0, 1005.0)     # 5 s after the last stored value: held back …
+            assert hub._log_wait
+            hub.flush_log(1008.0)
+            hub.flush_log(1010.0)                # … and stored when the 10 s are over
+            hub._log(src, "T", 21.1, 1030.0)     # inside the deadband
+            hub._log(src, "On", True, 1031.0)
+            hub._log(src, "On", False, 1032.0)   # on/off: always
+            hub._log(src, "Other", 5, 1033.0)
+            hub.update("src", "Own", 7)          # through the hub as from a driver
+            store.commit()
+            assert store.history("src/T", 0, point=True) == [(1000.0, 20.0), (1010.0, 21.0)]
+            assert [v for _ts, v in store.history("src/On", 0, point=True)] == [1.0, 0.0]
+            assert store.logged_points() == ["src/On", "src/Own", "src/T"]
+        finally:
+            await hub.stop()
+            store.close()
+
+    asyncio.run(run())
+
+
+def test_alarm_on_protocol_tag_with_delay(knx_server):
+    """match_point rules raise alarms from tags of protocols.yaml; delay_s waits; a short blip raises nothing."""
+    from knxscada.alarms import Rule
+
+    s, _port = knx_server
+    s.point_rules = [Rule.from_dict({"match_point": "vent/*_AL", "condition": "true", "severity": "critical",
+                                     "delay_s": 0.2, "text": "Vent: {name} = {value}"})]
+
+    async def run():
+        vent = Mem("vent", {"tags": {"Fan_AL": {"type": "bool", "description": "Tilluftsvifte alarm"},
+                                     "Fan_PV": {"type": "float", "unit": "%"}}}, s.hub, server=False)
+        s.hub.drivers["vent"] = vent
+        s.point_value("vent/Fan_PV", 50.0, "good")             # no rule for it
+        s.point_value("vent/Fan_AL", True, "good")
+        s.point_value("vent/Fan_AL", False, "good")            # cleared before the delay: nothing
+        await asyncio.sleep(0.3)
+        assert not [a for a in s.alarms.values() if a["ga"].startswith("vent/")]
+        s.point_value("vent/Fan_AL", True, "good")
+        s.point_value("vent/Fan_AL", None, "bad")              # bad quality changes nothing
+        await asyncio.sleep(0.3)
+        (alarm,) = [a for a in s.alarms.values() if a["ga"] == "vent/Fan_AL"]
+        assert alarm["text"] == "Vent: Tilluftsvifte alarm = True" and alarm["severity"] == "critical"
+        s.point_value("vent/Fan_AL", False, "good")
+        assert alarm["cleared_ts"] is not None
+
+    asyncio.run(run())

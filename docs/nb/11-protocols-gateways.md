@@ -62,7 +62,7 @@ connections:
 ```
 
 Innstillinger alle tagger kan ha: `type`, `scale` og `offset` (verdi = rå × scale + offset), `unit`, `writable`,
-`description`.
+`description`, `log` (lagre verdiene for trender, se [Logging og trender](#logging-og-trender)).
 
 ### Modbus
 
@@ -231,6 +231,11 @@ Som server blir hvert gateway-mål en variabel, og punktum eller skråstrek i na
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. Node-id-en er navnet, så den blir
 den samme når serveren starter på nytt. Mål med `direction: both` er skrivbare.
 
+Klienten leser høyst så mange noder per forespørsel som serveren tillater (`OperationLimits`; WAGO PFC: 100), så
+lange tagglister virker. En REAL (float32) rundes til 7 siffer (16.6, ikke 16.600000381469727). En tabell (f.eks.
+et ukeprogram med én verdi per dag) blir en liste; den kan vises og logges, men ikke sendes gjennom en gateway
+til én enkelt verdi.
+
 ### BACnet/IP
 
 | Innstilling | Standard | |
@@ -240,7 +245,7 @@ den samme når serveren starter på nytt. Mål med `direction: both` er skrivbar
 | `device_id` | | Klient: enhetens instans; med tom `address` blir enheten funnet med Who-Is |
 | `device_instance` | påkrevd | Server: instansen til vår enhet, 0–4194302, unik på BACnet-nettet |
 | `device_name` | `knxscada <tilkobling>` | Server |
-| `local_address` | denne maskinen | Vår IP-adresse med prefiks, f.eks. `192.168.1.10/24` (prefikset gir kringkastingsadressen) |
+| `local_address` | denne maskinen | Vår IP-adresse med prefiks, f.eks. `192.168.1.10/24` (prefikset gir kringkastingsadressen). Tom på en klient med `address`: adressen systemet ruter til enheten fra – over VPN (Tailscale) VPN-adressen, så svaret kommer samme vei tilbake |
 | `local_port` | server `47808`, klient en ledig port | Vår UDP-port. To BACnet-tilkoblinger kan ikke dele én |
 | `poll_ms` | `5000` | Klient |
 | `timeout_s` | `3` | Klient: ett nytt forsøk, så en enhet som er av, merkes etter rundt 6 s |
@@ -386,6 +391,48 @@ kjører. I TUI-en viser **F11 Gatewayer** tilkoblingene (øverst), taggene til d
 | `g` / `G` eller Enter | Ny gateway / endre den valgte gatewayen |
 | `w` eller Enter | Skriv en verdi til den valgte taggen |
 | `r` | Les `protocols.yaml` på nytt |
+
+### Logging og trender
+
+Verdiene til Modbus-, OPC UA-, MQTT- og BACnet-tagger lagres i databasen (tabellen `point_values`, slettes etter
+`server.retention_days` som telegrammene) når taggen er valgt med `log`:
+
+```yaml
+connections:
+  aggregat1:
+    protocol: opcua
+    endpoint: opc.tcp://192.168.1.100:4840
+    log: ["*_PV", "*_SP", "*_AL"]   # navn eller mønstre (* ?) på taggene som skal lagres, "*" = alle
+    log_deadband: 0.1               # lagre et tall bare når det har endret seg minst så mye (standard 0)
+    log_min_s: 60                   # høyst én lagret verdi per tagg i denne tiden (standard 10 s)
+    tags:
+      Tilluft: {node: "ns=4;s=|var|PLC.Application.GVL.Supply_PV", unit: °C}
+      Settpunkt: {node: "ns=4;s=|var|PLC.Application.GVL.Supply_SP", log: false}   # taggens egen log gjelder først
+```
+
+Bare verdier med kvalitet Good lagres. Av/på-endringer lagres alltid. Et tall som endrer seg igjen innenfor
+`log_min_s`, holdes tilbake og lagres når intervallet er over, så den siste verdien går aldri tapt. `log_deadband`
+og `log_min_s` kan også settes på én tagg. **F7 Trender** viser de loggede taggene sammen med gruppeadressene
+(tilkoblingen vises som adresse) – søk, perioder og opptil seks kurver virker på samme måte.
+
+### Alarmer på tagger
+
+Alarmregler i `config.yaml` med `match_point` (et mønster på `tilkobling/tagg`) gjelder taggene i `protocols.yaml`.
+`match_name` og `exclude_name` testes mot taggnavnet og mot `description`. Alarmene vises, kvitteres og logges som
+KNX-alarmene (F5); `{name}` i teksten er beskrivelsen (eller taggnavnet).
+
+```yaml
+alarms:
+  - match_point: "aggregat1/*"
+    match_name: "_AL$"
+    exclude_name: "Reset"
+    condition: "true"
+    severity: warning
+    delay_s: 60                     # tilstanden må vare i 60 s (et kortere blink gir ingen alarm)
+    text: "Aggregat 1: {name}"
+```
+
+Regler med `match_point` gjelder aldri gruppeadresser, og regler uten gjelder aldri tagger.
 
 ## 5. Uten KNX
 

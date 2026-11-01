@@ -34,6 +34,8 @@ the logged-in user with IP, and a clock. In demo mode a yellow **DEMO** label is
 | `F9` | Screensaver |
 | `F10` | Quit |
 | `F11` | Gateways (connections, tags and gateways – see [Protocols and gateways](11-protocols-gateways.md)) |
+| `Ctrl+E` | Systems: one air handling unit at a time (`ui.systems`) |
+| `Ctrl+G` | Energy meters: table, power curve and consumption (`ui.systems`) |
 | `F12` | About |
 | `Ctrl+T` | Colour theme |
 | `Ctrl+L` | Language |
@@ -159,7 +161,39 @@ The texts are stored in the language the server was running with when the event 
 `Del` removes all curves. The curves update live.
 
 Trends are based on the telegram log, so they go back as far as `server.retention_days`, and only as far back
-as the server has been running.
+as the server has been running. Logged tags of `protocols.yaml` (`log`) are in the list too, with the connection
+as the address.
+
+## Systems (Ctrl+E)
+
+Every air handling unit has its own entry under **Systems** in the menu (`Systems → 360.001`, `360.002` …);
+`PgUp` / `PgDn` move to the next or previous unit. A unit page has two tabs (`←` / `→` on the tab bar):
+
+- **Overview:** running/stopped, alarm, mode, status text, setpoint and the power of its meter, and the unit
+  drawn with boxes – supply air from outdoor air through filter, heat recovery, heating, cooling and fan to
+  supply air at the bottom, extract air through filter and fan to exhaust at the top – with temperatures,
+  outputs, air flows and pressures. A filter alarm shows `⚠ Alarm` in the filter box, an alarm turns the card
+  red, and values from a lost connection are marked as old. On a narrow screen a smaller drawing is used.
+  Below: charts of the last 24 hours – temperatures (outdoor, supply, extract, exhaust, setpoint) and outputs
+  (fans, heat recovery, heating, cooling). The charts need the tags to be logged (`log` in `protocols.yaml`).
+- **Settings:** the tags of the unit's connection in sections – the `groups` of `ui.systems`, else one section
+  per component (TFM code such as `JV401`, or the first part of the name), the rest under «Other». Each row shows
+  the description without the section name, the live value, the tag (without `prefix`) and whether it is
+  writable (`✎`). Type in the field to filter. **Enter** (or `w`) on a `✎` row opens a dialog for the new value;
+  after a confirmation showing the old and the new value it is written, and the event log records who did it.
+  Only tags with `writable: true` in `protocols.yaml` can be written.
+
+`m` opens the system switch of the unit: one button per `mode_texts` entry, then a confirmation. It needs the
+`mode` role to be a writable tag.
+
+What is shown is set up in [`ui.systems`](04-configuration.md#systems-view-ctrle).
+
+## Energy meters (Ctrl+G)
+
+A table of the meters: power, energy, current and voltage per phase, cos φ, frequency and the last 24 hours of
+power. The meter under the cursor (`↑` / `↓`) gets a power curve and the consumption per hour or day, worked out
+from its energy counter, and the consumption today and in the period. `d` / `w` / `m` choose 24 hours, 7 days or
+30 days. The curves need the power and energy tags to be logged (`log` in `protocols.yaml`).
 
 ## F8 Floor plan
 
@@ -173,16 +207,28 @@ Shows the building drawn from [`plan.yaml`](06-floor-plan.md). Each room shows t
 ## F9 Screensaver
 
 Starts automatically after 5 minutes without input (`ui.screensaver_minutes`), or with `F9`.
-It rotates every 20 seconds (`ui.screensaver_rotate_s`) between these pages:
+It rotates every 20 seconds (`ui.screensaver_rotate_s`) between these pages (`ui.screensaver_pages` picks them
+and sets the order; pages without data are skipped):
 
-- clock and outdoor temperature
-- home right now
-- temperatures with setpoint marker
-- energy (only if a power meter is found)
-- indoor climate, CO₂ and humidity (only if such sensors are found)
-- KNX traffic
+| Key | Page |
+|---|---|
+| `clock` | Clock, date and outdoor temperature with the last 24 hours |
+| `home` | Home right now: temperature, heating and lights per room |
+| `sky` | The sky over the buildings: the sun on its arc by day, the moon and stars by night, one window per room, lit when a light in the room is on. Sunrise and sunset are calculated for `ui.latitude`/`ui.longitude` (default Fredrikstad). |
+| `temps` | Temperatures with setpoint marker |
+| `ventilation` | Every air handling unit from `ui.systems` as a line drawing: the air moves along the ducts and the fans turn while the unit runs (moves) |
+| `heatmap` | Every room as a tile coloured by its deviation from the setpoint, floor by floor |
+| `energy` | Power from a KNX power meter (only if one is found) |
+| `meters` | All energy meters from `ui.systems`: power now, the last 24 hours, the counter, and the total |
+| `rain` | Telegrams falling down the screen like digital rain (moves) |
+| `air` | Indoor climate, CO₂ and humidity (only if such sensors are found) |
+| `records` | Today: warmest and coldest room, outdoor min/max, lights on, active alarms and the busiest group addresses |
+| `knx` | KNX traffic |
+| `bounce` | The time in big digits bouncing around the screen (moves) |
 
-The content moves a little at each page change to avoid burn-in. **Unacknowledged alarms take over the whole
+The pages marked "moves" are redrawn twice a second. Over a slow SSH link, leave them out with
+`ui.screensaver_pages`. The outdoor temperature comes from `ui.outdoor_ga`, else from the outdoor sensor of the
+first unit in `ui.systems`. The content moves a little at each page change to avoid burn-in. **Unacknowledged alarms take over the whole
 screen** with a slow red blink. Any key or click returns to the normal view.
 
 ## Colour theme (Ctrl+T)

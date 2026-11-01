@@ -253,6 +253,9 @@ alarms:
     condition: "true"                 # true | false | > x | < x | >= x | <= x | == x | != x
     severity: critical                # critical | warning | any text
     text: "Smoke: {name}"             # {name} {address} {value}
+  - match_point: "aggregat1/*_AL"     # a tag of protocols.yaml (connection/tag glob) instead of a group address
+    severity: warning
+    delay_s: 60                       # optional: the condition must last this long
 
 ui:
   title: My house                     # default: "EKBPRO KNX Terminal Python – <ETS project name>"
@@ -264,6 +267,9 @@ ui:
   ascii: false
   screensaver_minutes: 5              # 0 = off
   screensaver_rotate_s: 20
+  screensaver_pages: [clock, sky, home, heatmap, ventilation, meters, records]   # default: all pages
+  latitude: 59.22                     # sun and moon on the page "sky" (default Fredrikstad)
+  longitude: 10.93
   plan: plan.yaml
   export_dir: "~"
   outdoor_ga: 0/1/0                   # optional; found by name when left out
@@ -336,6 +342,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `files` | list | – | entries: `{file (required), name (p1, p2 …), label (the name), prefix (the name; letters/digits; never on the first), password, rooms}` or just the path |
 | `rooms` | map | – | `pattern` (required), `floors`, `names`, `setpoint`, `read_only`, `exclude`; only used when the project has no ETS functions |
 | `extra_rooms` | list | – | entries: `floor` (`Other`), `name` (`Room N`), `cards[]`: `name`, `addresses`, `status`, `usage` (`light`, `dimmer`, `heating`, `other`; guessed). An address that is not in the project stops the program. |
+| `point_rooms` | list | – | like `extra_rooms` with `building` (groups the menu), and `cards[].rows[]`: `point` (`conn/tag`, required), `status`, `label` (tag description), `role` (`temp`, `setpoint`, `heat`), `kind` (from the tag). Unknown tags are reported, not fatal. See [04](04-configuration.md#point-rooms). |
 
 ### `server`
 
@@ -359,6 +366,8 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `condition` | text | `"true"` | `true`/`on`/`1`, `false`/`off`/`0`, `> x`, `< x`, `>= x`, `<= x`, `== x`, `!= x`. Anything else never fires. |
 | `severity` | text | `warning` | `critical`, `warning` (`kritisk`, `advarsel`), any text |
 | `text` | text | `"{name}"` | `{name}`, `{address}`, `{value}` |
+| `match_point` | glob | – | `"aggregat1/*_AL"`: the rule applies to tags of `protocols.yaml` (`connection/tag`), not to group addresses; `match_name`/`exclude_name` are then matched against the tag name and its description |
+| `delay_s` | float | `0` | seconds the condition must last before the alarm is raised |
 
 ### `ui`
 
@@ -369,7 +378,11 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `theme` | text | `retro` | `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm` |
 | `logo_file` | path | built-in | text file with `█ ▀ ▄ ▒` |
 | `splash`, `big_digits`, `ascii`, `confirm_raw_write` | bool | `true`, `false`, `false`, `true` | |
+| `building` | text | `Main building` | name of the ETS floors' building in the menu when `point_rooms` add another |
+| `systems` | list | – | air handling units for the Systems view (Ctrl+E) and energy meters for the Energy meters view (Ctrl+G), see [04](04-configuration.md#systems-view-ctrle). Per unit: `name`, `short` (menu entry; default `=NNN.NNN` from the name), `type` (`ventilation` / `panel` / `energy`), `connection`, `prefix`, `meter`, `tags` (roles), `mode_texts`, `settings` (glob list for the Settings tab; default all tags), `hide` (glob list without prefix), `groups` (list of `{title, tags}`; globs without prefix); `type: energy`: `meters` (`name`, `connection`, `tags`) |
 | `screensaver_minutes`, `screensaver_rotate_s` | number | `5`, `20` | `0` = no screensaver |
+| `screensaver_pages` | list | all | `clock`, `home`, `sky`, `temps`, `ventilation`, `heatmap`, `energy`, `meters`, `rain`, `air`, `records`, `knx`, `bounce`; `ventilation`, `rain` and `bounce` move (more traffic over SSH) |
+| `latitude`, `longitude` | number | `59.22`, `10.93` | decimal degrees, for the page `sky` |
 | `plan` | path | `plan.yaml` | |
 | `export_dir` | path | `~` | |
 | `outdoor_ga`, `power_ga`, `energy_ga` | group address | found by name and DPT | |
@@ -439,6 +452,9 @@ connections:
     word_order: big                   # big | little
     max_registers: 100                # master; at most this many registers per read
     max_gap: 8                        # master; 0 = only neighbouring registers
+    log: ["Total active power", "Total active energy"]   # tags stored for trends (names/patterns, "*" = all)
+    log_deadband: 0.01                # optional, default 0
+    log_min_s: 60                     # optional, default 10 s
     tags:                             # added to the template's tags
       Day register: {address: 'hr:0x6049', type: float32, unit: kWh, writable: false}
 
@@ -480,7 +496,7 @@ connections:
     protocol: bacnet
     role: client
     address: 192.168.1.40             # or device_id: 40 (Who-Is); 2:5 = MS/TP 5 behind a router on network 2
-    local_address: 192.168.1.10/24    # empty = this machine
+    local_address: 192.168.1.10/24    # empty = this machine (client with address: the route to the device)
     poll_ms: 5000
     timeout_s: 3
     cov: true                         # also COV subscriptions
@@ -526,6 +542,7 @@ Connection settings for **Modbus**, **MQTT**, **OPC UA** and **BACnet**: see the
 | `type` | MQTT, OPC UA | automatic | `bool`, `int`, `float`, `str` |
 | `unit_id`, `word_order` | Modbus | the connection's | |
 | `write_address` | Modbus | – (written where it is read) | `hr` / `co` (same number), or an address `hr:N`, `co:N` |
+| `log`, `log_deadband`, `log_min_s` | all | the connection's | store the tag's values for trends (`log: true`/`false` wins over the connection's `log` patterns) |
 | `heartbeat_s` | Modbus master | – (off) | seconds; writes 1, 2, 3 … to the tag (device watchdog) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefix + name, –, the topic itself | |
 | `node` | OPC UA | the tag name | node id |

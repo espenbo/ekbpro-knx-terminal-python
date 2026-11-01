@@ -60,7 +60,7 @@ connections:
 ```
 
 Settings every tag can have: `type`, `scale` and `offset` (value = raw × scale + offset), `unit`, `writable`,
-`description`.
+`description`, `log` (store the values for trends, see [Logging and trends](#logging-and-trends)).
 
 ### Modbus
 
@@ -229,6 +229,11 @@ As a server, every gateway target becomes a variable, and dots or slashes in the
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. The node id is the name, so it stays
 the same when the server restarts. Targets with `direction: both` are writable.
 
+The client reads at most as many nodes per request as the server allows (`OperationLimits`; WAGO PFC: 100), so
+long tag lists work. A REAL (float32) is rounded to 7 digits (16.6, not 16.600000381469727). An array (e.g. a
+week program with one value per day) becomes a list; it can be shown and logged, but not sent through a gateway
+to a single value.
+
 ### BACnet/IP
 
 | Setting | Default | |
@@ -238,7 +243,7 @@ the same when the server restarts. Targets with `direction: both` are writable.
 | `device_id` | | Client: the device's instance; with an empty `address` the device is found with Who-Is |
 | `device_instance` | required | Server: our device's instance, 0–4194302, unique on the BACnet network |
 | `device_name` | `knxscada <connection>` | Server |
-| `local_address` | this machine | Our IP address with prefix, e.g. `192.168.1.10/24` (the prefix gives the broadcast address) |
+| `local_address` | this machine | Our IP address with prefix, e.g. `192.168.1.10/24` (the prefix gives the broadcast address). Empty on a client with `address`: the address the system routes to the device from – over a VPN (Tailscale) the VPN address, so the answer comes back the same way |
 | `local_port` | server `47808`, client any free port | Our UDP port. Two BACnet connections must not share one |
 | `poll_ms` | `5000` | Client |
 | `timeout_s` | `3` | Client: one retry, so a device that is off is noticed after about 6 s |
@@ -384,6 +389,48 @@ runs. In the TUI, **F11 Gateways** shows the connections (top), the tags of the 
 | `g` / `G` or Enter | New gateway / edit the selected gateway |
 | `w` or Enter | Write a value to the selected tag |
 | `r` | Re-read `protocols.yaml` |
+
+### Logging and trends
+
+Values of Modbus, OPC UA, MQTT and BACnet tags are stored in the database (table `point_values`, kept for
+`server.retention_days` like the telegrams) when the tag is chosen with `log`:
+
+```yaml
+connections:
+  aggregat1:
+    protocol: opcua
+    endpoint: opc.tcp://192.168.1.100:4840
+    log: ["*_PV", "*_SP", "*_AL"]   # names or patterns (* ?) of the tags to store, "*" = all
+    log_deadband: 0.1               # store a number only when it has changed at least this much (default 0)
+    log_min_s: 60                   # at most one stored value per tag in this time (default 10 s)
+    tags:
+      Supply_temp: {node: "ns=4;s=|var|PLC.Application.GVL.Supply_PV", unit: °C}
+      Setpoint: {node: "ns=4;s=|var|PLC.Application.GVL.Supply_SP", log: false}   # the tag's own log wins
+```
+
+Only values with Good quality are stored. On/off changes are always stored; a number that changes again within
+`log_min_s` is held back and stored when the interval is over, so the last value is never lost. `log_deadband`
+and `log_min_s` can also be set on a single tag. **F7 Trends** lists the logged tags next to the group addresses
+(the connection is shown as the address) – search, periods and up to six curves work the same way.
+
+### Alarms on tags
+
+Alarm rules in `config.yaml` with `match_point` (a glob on `connection/tag`) apply to the tags of `protocols.yaml`.
+`match_name` and `exclude_name` are matched against the tag name and against its `description`. The alarms are
+shown, acknowledged and logged like KNX alarms (F5); `{name}` in the text is the description (or the tag name).
+
+```yaml
+alarms:
+  - match_point: "aggregat1/*"
+    match_name: "_AL$"
+    exclude_name: "Reset"
+    condition: "true"
+    severity: warning
+    delay_s: 60                     # the condition must last 60 s (a shorter blip raises nothing)
+    text: "Unit 1: {name}"
+```
+
+Rules with `match_point` never apply to group addresses, and rules without it never apply to tags.
 
 ## 5. Without KNX
 

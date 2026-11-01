@@ -299,7 +299,7 @@ def bacnet_scan(args) -> int:
     from .protocols import bacnet
 
     port = args.port if args.port is not None else (0 if args.address else 47808)
-    local = args.local or "host"
+    local = args.local or (args.address and bacnet.route_source(args.address)) or "host"
     local = local if ":" in local.rsplit("/", 1)[-1] else f"{local}:{port}"
     # bacpypes3 tries to open the UDP port until it succeeds: give up when it never does.
     wait = args.timeout + 5

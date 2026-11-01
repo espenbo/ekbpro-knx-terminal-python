@@ -49,15 +49,26 @@ from ..client import ScadaClient
 from ..config import Config
 from ..i18n import N_, _, get_language
 from ..prefs import save_prefs, save_site_theme, site_theme
-from ..project import load_project
+from ..project import POINT, add_point_rooms, load_project
 from .dialogs import ConfirmDialog, GADialog, LanguageDialog, ThemeDialog, ValueDialog
+from .energy import EnergyView
+from .gateways import GatewayView
 from .home import HomeModel
 from .plan_view import PlanView
 from .screensaver import DAYS, ScreenSaver
-from .gateways import GatewayView
 from .splash import AboutDialog, SplashScreen
+from .systems import SystemsView, parse_systems
 from .themes import THEMES, resolve_theme
-from .views import AlarmView, EventView, GroupAddressView, MonitorView, OverviewView, RoomView, TrendView, View
+from .views import (
+    AlarmView,
+    EventView,
+    GroupAddressView,
+    MonitorView,
+    OverviewView,
+    RoomView,
+    TrendView,
+    View,
+)
 from .widgets import LineLog, LiveStatic
 
 #: Menu entries: (id, icon, English label, key). Order = order in the menu.
@@ -70,6 +81,8 @@ MENU = [
     ("events", "✎", N_("Event log"), "f6"),
     ("trends", "∿", N_("Trends"), "f7"),
     ("plan", "▦", N_("Floor plan"), "f8"),
+    ("systems", "≋", N_("Systems"), "ctrl+e"),
+    ("energy", "ϟ", N_("Energy meters"), "ctrl+g"),
     ("gateways", "⇌", N_("Gateways"), "f11"),
     ("theme", "◐", N_("Colour theme"), "ctrl+t"),
     ("language", "⚑", N_("Language"), "ctrl+l"),
@@ -83,7 +96,7 @@ ACTIONS = ("quit", "theme", "language", "about")
 #: Short labels for the key bar at the bottom (the full labels do not fit).
 KEYBAR_LABELS = {
     "overview": N_("Overview"), "rooms": N_("Rooms"), "gas": N_("Addresses"), "monitor": N_("Monitor"),
-    "alarms": N_("Alarms"), "events": N_("Log"), "trends": N_("Trends"), "plan": N_("Plan"), "gateways": N_("Gateways"),
+    "alarms": N_("Alarms"), "events": N_("Log"), "trends": N_("Trends"), "plan": N_("Plan"), "systems": N_("Systems"), "energy": N_("Energy"), "gateways": N_("Gateways"),
     "theme": N_("Colours"), "language": N_("Lang."), "about": N_("About"), "quit": N_("Quit"),
 }
 
@@ -97,6 +110,8 @@ VIEW_HINTS = {
     "events": N_("/: filter"),
     "trends": N_("/: search  Enter: add/remove  Del: remove all"),
     "plan": N_("←→/PgUp/PgDn/1–9: floor  ↑↓: room  Enter: open"),
+    "systems": N_("PgUp/PgDn: unit  m: operating mode  Settings: Enter = write ✎"),
+    "energy": N_("↑↓: meter  d/w/m: 24 hours / 7 days / 30 days"),
     "gateways": N_("a: connection  g: gateway  w: write  r: re-read"),
 }
 
@@ -133,6 +148,7 @@ class ScadaApp(App):
         self.cfg = cfg
         self.ui: dict[str, Any] = cfg.ui
         self.model = load_project(cfg)
+        self.point_problems = self._add_point_rooms()
         self.title = self.ui.get("title") or f"{PRODUCT} – {self.model['info'].get('name', '')}"
         # Local copy of the server state (filled by the "hello" message).
         self.state: dict[str, dict] = {}
@@ -171,6 +187,8 @@ class ScadaApp(App):
                 yield EventView(id="events")
                 yield TrendView(id="trends")
                 yield PlanView(id="plan")
+                yield SystemsView(id="systems")
+                yield EnergyView(id="energy")
                 yield GatewayView(id="gateways")
         yield KeyBar(id="keybar")
 
@@ -196,6 +214,54 @@ class ScadaApp(App):
         self.connect()
         if self.ui.get("splash", True):
             self.push_screen(SplashScreen())
+        for problem in self.point_problems:
+            self.notify(problem, severity="warning", timeout=15)
+
+    def _add_point_rooms(self) -> list[str]:
+        """Rooms whose cards show protocol tags (``project.point_rooms``), e.g. a building behind a BACnet gateway."""
+        rooms = self.cfg.project.get("point_rooms")
+        if not rooms:
+            return []
+        from ..protocols import config as pconf
+
+        try:
+            data = pconf.load_data(pconf.protocols_path(self.cfg))
+        except Exception as exc:  # noqa: BLE001 - shown as a notification; the KNX rooms still work
+            return [f"protocols.yaml: {exc}"]
+        tags = {f"{c}/{n}": spec or {} for c, conn in (data.get("connections") or {}).items() if isinstance(conn, dict)
+                for n, spec in (pconf.settings_of(conn).get("tags") or {}).items()}
+        return add_point_rooms(self.model, rooms, tags)
+
+    def _point_text(self, ga: str, value: Any) -> str:
+        if value is None:
+            return "–"
+        if isinstance(value, bool):
+            return _("on") if value else _("off")
+        unit = self.ga(ga).get("unit", "")
+        if isinstance(value, (int, float)):
+            text = f"{value:.1f}" if unit in ("°C", "lx", "m/s") or (isinstance(value, float) and unit not in ("%", "ppm")) \
+                else f"{value:.0f}"
+            return f"{text} {unit}".strip()
+        return str(value)
+
+    def _set_point(self, key: str, value: Any, ts: float | None, quality: str) -> None:
+        """A protocol tag shown on a room card changed (``key`` = ``conn/tag``)."""
+        ga = POINT + key
+        if ga not in self.model.get("point_gas", {}):
+            return
+        self.state[ga] = {"value": value, "text": self._point_text(ga, value), "ts": ts or time.time(),
+                          "old": quality not in ("good", "")}
+        if ga in self.history and isinstance(value, (int, float)) and not isinstance(value, bool):
+            self.history[ga].append((ts or time.time(), float(value)))
+        self._notify_watchers(ga)
+
+    @work(exclusive=True, group="point-states")
+    async def _load_point_states(self) -> None:
+        """The current values of the tags on room cards (later changes arrive with "points")."""
+        conns = sorted({g["point"].split("/", 1)[0] for g in self.model.get("point_gas", {}).values()})
+        for conn in conns:
+            for p in await self.request("points", conn=conn, limit=5000) or []:
+                self._set_point(f"{conn}/{p['name']}", p.get("value"), p.get("ts"), p.get("q") or "")
 
     def _build_menu(self) -> None:
         """Fill the menu tree: views, and floors → rooms under "Floors and rooms"."""
@@ -208,10 +274,22 @@ class ScadaApp(App):
             text = f"{icon} {_(label)}"
             if vid == "rooms":
                 node = root.add(text, data=("view", "rooms"), expand=True)
+                # Several buildings (floors with "building", e.g. from project.point_rooms): building → floors.
+                main = str(self.ui.get("building") or _("Main building"))
+                buildings = list(dict.fromkeys(f.get("building") or main for f in self.model["floors"]))
+                parents = {b: node.add(b, data=("building", b), expand=True) for b in buildings} \
+                    if len(buildings) > 1 else {}
                 for floor in self.model["floors"]:
-                    fnode = node.add(_(floor["name"]), data=("floor", floor), expand=False)
+                    parent = parents.get(floor.get("building") or main, node)
+                    fnode = parent.add(_(floor["name"]), data=("floor", floor), expand=False)
                     for room in floor["rooms"]:
                         fnode.add_leaf(_(room["name"]), data=("room", room, floor))
+            elif vid == "systems":
+                # One entry per air handling unit: Systems → 360.001, 360.002 …
+                vents = parse_systems(self.ui.get("systems"))[0]
+                node = root.add(text, data=("view", "systems"), expand=bool(vents))
+                for i, vent in enumerate(vents):
+                    self.menu_nodes[f"system{i}"] = node.add_leaf(vent.label(), data=("system", i))
             else:
                 node = root.add_leaf(text, data=("view", vid))
             self.menu_nodes[vid] = node
@@ -256,7 +334,8 @@ class ScadaApp(App):
         self.main.query_one("#overview", OverviewView).load_activity()
         since = time.time() - 86400
         for ga in self.home.trend_gas():
-            pts = await self.request("history", ga=ga, hours=24)
+            where = {"point": ga[len(POINT):]} if ga.startswith(POINT) else {"ga": ga}
+            pts = await self.request("history", **where, hours=24)
             live = [p for p in self.history.get(ga, []) if p[0] >= since]
             self.history[ga] = sorted({p[0]: p for p in [*(tuple(x) for x in pts or []), *live]}.values())
         self.main.query_one("#overview", OverviewView).on_state()
@@ -306,6 +385,8 @@ class ScadaApp(App):
             for ga in list(self._watchers):
                 self._notify_watchers(ga)
             self.main.query_one("#gas", GroupAddressView).rebuild()
+            if self.model.get("point_gas"):
+                self._load_point_states()   # "hello" replaced the state: fetch the tags of the room cards again
             # Without KNX the overview is empty: start on the gateways (F11) instead.
             if msg.get("knx") is False and self.main.query_one("#views", ContentSwitcher).current == "overview":
                 self._show("gateways")
@@ -327,7 +408,12 @@ class ScadaApp(App):
             self.status = msg["status"]
             self._update_topbar()
         elif kind == "points":
+            for key, (v, ts, q) in msg["values"].items():
+                self._set_point(key, v, ts, q)
             self.main.query_one("#gateways", GatewayView).on_points(msg["values"])
+            self.main.query_one("#trends", TrendView).on_points(msg["values"])
+            self.main.query_one("#systems", SystemsView).on_points(msg["values"])
+            self.main.query_one("#energy", EnergyView).on_points(msg["values"])
         elif kind == "protocols":
             self.main.query_one("#gateways", GatewayView).on_protocols(msg["status"])
         elif kind == "stats":
@@ -384,7 +470,9 @@ class ScadaApp(App):
                 w.state_changed()
 
     def ga(self, addr: str | None) -> dict:
-        """Group address record from the model (empty dict if unknown)."""
+        """Group address record from the model (empty dict if unknown); ``pt:conn/tag`` for protocol tags."""
+        if addr and addr.startswith(POINT):
+            return self.model.get("point_gas", {}).get(addr, {})
         return self.model["gas"].get(addr or "", {})
 
     # -- commands to the server ----------------------------------------------------------------
@@ -403,6 +491,10 @@ class ScadaApp(App):
     def write(self, ga: str | None, value: Any, dpt: str | None = None) -> None:
         """Write a value to the bus (via the server, which also logs who did it)."""
         if not ga:
+            return
+        if ga.startswith(POINT):                 # a protocol tag on a room card (project.point_rooms)
+            conn, tag = ga[len(POINT):].split("/", 1)
+            self.run_request("point_write", conn=conn, tag=tag, value=value)
             return
         self.run_request("write", ga=ga, value=value, dpt=dpt)
 
@@ -455,9 +547,12 @@ class ScadaApp(App):
             self.push_screen(AboutDialog())
             return
         if vid == "rooms":
-            # F2: open the first room of the first floor.
+            # F2: open the first room of the first floor (of the first building).
             node = self.menu_nodes["rooms"]
             first = next((c for c in node.children), None)
+            if first is not None and first.data and first.data[0] == "building":
+                first.expand()
+                first = next((c for c in first.children), None)
             if first is not None:
                 first.expand()
                 if first.children:
@@ -474,7 +569,7 @@ class ScadaApp(App):
         """Move focus into the view so its key bindings work immediately."""
         view = self.main.query_one(f"#{vid}", View)
         # The bus monitor's telegram list before its filter, so p/c/e work at once (/ goes to the filter).
-        target = next((w for w in view.query("LineLog") if w.focusable), None)
+        target = view.focus_target() or next((w for w in view.query("LineLog") if w.focusable), None)
         target = target or next((w for w in view.query("DataTable, PlotextPlot, Input") if w.focusable), None)
         if target is not None:
             target.focus()
@@ -540,7 +635,7 @@ class ScadaApp(App):
         # Moving the cursor over views and rooms shows them directly (no Enter needed),
         # but actions (quit, theme, about) require Enter.
         data = event.node.data
-        if data and data[0] in ("room", "view") and data[1] not in ("rooms", *ACTIONS):
+        if data and (data[0] == "system" or (data[0] in ("room", "view") and data[1] not in ("rooms", *ACTIONS))):
             self._select(data)
 
     def _select(self, data: tuple | None) -> None:
@@ -551,6 +646,9 @@ class ScadaApp(App):
         elif data[0] == "view":
             if data[1] != "rooms":
                 self._show(data[1])
+        elif data[0] == "system":
+            self._show("systems")
+            self.main.query_one("#systems", SystemsView).select(data[1])
         elif data[0] == "room":
             _kind, room, floor = data
             self._show_room(room, floor)

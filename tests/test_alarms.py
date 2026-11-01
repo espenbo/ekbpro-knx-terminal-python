@@ -101,3 +101,27 @@ def test_bad_alarm_text_does_not_crash(text):
     # A typo in config.yaml must not stop the alarm from being raised.
     out = Rule.from_dict({"text": text}).format_text(name="Pump", address="0/4/1", value="On")
     assert "Pump" in out
+
+
+VENT = {"match_point": "vent_360_00?/*", "match_name": "_AL[12]?$", "exclude_name": "Reset|String",
+        "condition": "true", "severity": "warning", "delay_s": "60", "text": "360: {name}"}
+
+
+def test_point_rules_select_protocol_tags_only():
+    from knxscada.alarms import point_rule
+
+    rule = Rule.from_dict(VENT)
+    assert rule.delay_s == 60
+    assert rule.matches_point("vent_360_001/BY_360_001_JV401_AL", "BY_360_001_JV401_AL", "Tilluftsvifte alarm")
+    assert rule.matches_point("vent_360_002/BY_360_002_LV001_AL2", "BY_360_002_LV001_AL2")
+    assert not rule.matches_point("vent_360_001/BY_360_001_Reset_AL", "BY_360_001_Reset_AL")
+    assert not rule.matches_point("energi_storm/BY_360_001_JV401_AL", "BY_360_001_JV401_AL")
+    # A point rule never binds a group address, and a KNX rule never a tag.
+    assert not rule.matches(ga("0/6/1", "BY_360_001_JV401_AL"))
+    knx = Rule.from_dict(SMOKE)
+    assert not knx.matches_point("vent_360_001/Smoke alarm", "Smoke alarm")
+    assert build_rules([VENT], {"0/6/1": ga("0/6/1", "x_AL")}) == {}
+    rules = [knx, rule]
+    assert point_rule(rules, "vent_360_001/BY_360_001_SYS_AL", "BY_360_001_SYS_AL") is rule
+    assert point_rule(rules, "vent_360_001/BY_360_001_RT401_PV", "BY_360_001_RT401_PV") is None
+    assert Rule.from_dict(SMOKE).delay_s == 0

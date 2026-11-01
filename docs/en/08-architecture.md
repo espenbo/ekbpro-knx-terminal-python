@@ -14,7 +14,7 @@ knxscada/
                   several projects (address prefix S:1/2/3), rooms from group address names
   dpt.py          decoding and encoding of DPT values, display text, DPT 1 texts
   alarms.py       alarm rules (glob, regex, condition, severity)
-  store.py        SQLite: telegrams, events, alarms
+  store.py        SQLite: telegrams, events, alarms, logged tag values
   server.py       ScadaServer (xknx per interface, logging, alarms, socket API) + Simulator (--demo)
   knx_interfaces.py  several KNX IP interfaces: configuration, Router (outgoing), Deduplicator (incoming)
   client.py       asynchronous client for the socket
@@ -113,7 +113,8 @@ only the SSH address after `@` comes from the client. When the client runs under
 | `telegrams` | `limit` (≤ 5000), `ga?`, `before_id?` | list |
 | `events` | `limit` (≤ 5000) | list |
 | `alarm_history` | `limit` (≤ 5000) | list |
-| `history` | `ga`, `hours`, `max_points?` (4000) | `[[ts, number], …]`. Beyond `max_points` the lowest and highest value per time bucket. Runs in a worker thread. |
+| `history` | `ga` or `point` (`connection/tag`), `hours`, `max_points?` (4000) | `[[ts, number], …]`. Beyond `max_points` the lowest and highest value per time bucket. Runs in a worker thread. |
+| `logged_points` | – | the logged tags of `protocols.yaml` (`key`, `conn`, name, unit, description, value) |
 | `traffic` | `minutes` (≤ 1440) | telegrams per minute |
 
 Example from the shell:
@@ -139,9 +140,12 @@ Clients that do not keep up (write buffer too large) are disconnected by the ser
   - `text` is stored in the server's language at the time of the event.
 - `alarms(id, ga, text, severity, raised_ts, cleared_ts, acked_ts, acked_by, value)`
   - `severity`: `critical` | `warning` | free text. Old rows with `kritisk` / `advarsel` are mapped when loaded.
+  - `ga`: a group address, or `connection/tag` for a tag of `protocols.yaml` (`match_point` rules).
+- `point_values(id, ts, point, value JSON, num REAL)`: values of the tags chosen with `log` in `protocols.yaml`
+  (`point` = `connection/tag`). Indexes on `(point, ts)` and `(ts)`; purged with the telegrams.
 
 Telegram and event inserts are committed once per second; alarm changes are committed immediately. Once an hour
-the server deletes telegrams and events older than `retention_days` in batches (5000 rows per batch), yielding to
+the server deletes telegrams, events and logged tag values older than `retention_days` in batches (5000 rows per batch), yielding to
 the event loop in between, so a large purge does not block the server.
 
 ## Performance in the TUI

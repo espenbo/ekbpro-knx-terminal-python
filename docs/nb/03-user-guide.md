@@ -36,6 +36,8 @@ innlogget bruker med IP, og en klokke. I demomodus vises et gult **DEMO**-merke.
 | `F9` | Skjermsparer |
 | `F10` | Avslutt |
 | `F11` | Gatewayer (tilkoblinger, tagger og gatewayer – se [Protokoller og gatewayer](11-protocols-gateways.md)) |
+| `Ctrl+E` | Anlegg: ett ventilasjonsaggregat om gangen (`ui.systems`) |
+| `Ctrl+G` | Energimålere: tabell, effektkurve og forbruk (`ui.systems`) |
 | `F12` | Om |
 | `Ctrl+T` | Fargetema |
 | `Ctrl+L` | Språk |
@@ -161,7 +163,38 @@ Tekstene lagres på det språket serveren kjørte med da hendelsen skjedde
 `Del` fjerner alle kurver. Kurvene oppdateres live.
 
 Trendene bygger på telegramloggen, så de går så langt tilbake som `server.retention_days`, og bare så langt tilbake
-som serveren har kjørt.
+som serveren har kjørt. Loggede tagger i `protocols.yaml` (`log`) står også i lista, med tilkoblingen som adresse.
+
+## Anlegg (Ctrl+E)
+
+Hvert ventilasjonsaggregat har sin egen oppføring under **Anlegg** i menyen (`Anlegg → 360.001`, `360.002` …);
+`PgUp` / `PgDn` går til neste eller forrige aggregat. Siden for et aggregat har to faner (`←` / `→` på fanelinjen):
+
+- **Oversikt:** i drift/stoppet, alarm, modus, statustekst, settpunkt og effekten fra måleren, og aggregatet
+  tegnet med bokser – tilluft fra uteluft gjennom filter, gjenvinner, varme, kjøl og vifte nederst, avtrekk
+  gjennom filter og vifte til avkast øverst – med temperaturer, pådrag, luftmengder og trykk. Filteralarm vises
+  som `⚠ Alarm` i filterboksen, en alarm gjør kortet rødt, og verdier fra en tapt tilkobling merkes som gamle.
+  På en smal skjerm brukes en mindre tegning. Under: grafer for siste døgn – temperaturer (ute, tilluft,
+  avtrekk, avkast, settpunkt) og pådrag (vifter, gjenvinner, varme, kjøl). Grafene krever at taggene logges
+  (`log` i `protocols.yaml`).
+- **Innstillinger:** taggene i tilkoblingen til aggregatet, delt i grupper – `groups` i `ui.systems`, ellers
+  én gruppe per komponent (TFM-kode som `JV401`, eller første ledd i navnet), resten under «Annet». Hver rad viser
+  beskrivelsen uten gruppenavnet, verdien, taggen (uten `prefix`) og om den kan skrives (`✎`). Skriv i feltet for
+  å filtrere. **Enter** (eller `w`) på en `✎`-rad åpner et vindu for den nye verdien; etter en bekreftelse som
+  viser gammel og ny verdi skrives den, og hendelsesloggen viser hvem som gjorde det. Bare tagger med
+  `writable: true` i `protocols.yaml` kan skrives.
+
+`m` åpner systemvenderen for aggregatet: én knapp per oppføring i `mode_texts`, deretter en bekreftelse. Rollen
+`mode` må være en skrivbar tagg.
+
+Hva som vises, settes opp i [`ui.systems`](04-configuration.md#anleggsvisning-ctrle).
+
+## Energimålere (Ctrl+G)
+
+En tabell over målerne: effekt, energi, strøm og spenning per fase, cos φ, frekvens og effekten siste døgn.
+Måleren under markøren (`↑` / `↓`) får en effektkurve og forbruket per time eller døgn, regnet ut fra
+energitelleren, og forbruket i dag og i perioden. `d` / `w` / `m` velger 24 timer, 7 dager eller 30 dager.
+Kurvene krever at effekt- og energitaggene logges (`log` i `protocols.yaml`).
 
 ## F8 Plantegning
 
@@ -175,16 +208,28 @@ Viser bygget tegnet fra [`plan.yaml`](06-floor-plan.md). Hvert rom viser tempera
 ## F9 Skjermsparer
 
 Starter av seg selv etter 5 minutter uten betjening (`ui.screensaver_minutes`), eller med `F9`.
-Den roterer hvert 20. sekund (`ui.screensaver_rotate_s`) mellom disse sidene:
+Den roterer hvert 20. sekund (`ui.screensaver_rotate_s`) mellom disse sidene (`ui.screensaver_pages` velger dem og
+bestemmer rekkefølgen; sider uten data hoppes over):
 
-- klokke og utetemperatur
-- hjemme nå
-- temperaturer med settpunktmarkør
-- energi (bare hvis en effektmåler blir funnet)
-- inneklima, CO₂ og fuktighet (bare hvis slike følere blir funnet)
-- KNX-trafikk
+| Nøkkel | Side |
+|---|---|
+| `clock` | Klokke, dato og utetemperatur med siste døgn |
+| `home` | Hjemme nå: temperatur, varme og lys per rom |
+| `sky` | Himmelen over byggene: sola i buen sin om dagen, månen og stjernene om natta, ett vindu per rom som lyser når et lys i rommet er på. Soloppgang og solnedgang regnes ut for `ui.latitude`/`ui.longitude` (standard Fredrikstad). |
+| `temps` | Temperaturer med settpunktmarkør |
+| `ventilation` | Hvert ventilasjonsaggregat i `ui.systems` som en strektegning: lufta går gjennom kanalene og viftene snurrer når aggregatet går (beveger seg) |
+| `heatmap` | Hvert rom som en flis farget etter avviket fra settpunktet, etasje for etasje |
+| `energy` | Effekt fra en KNX-effektmåler (bare hvis en blir funnet) |
+| `meters` | Alle energimålerne i `ui.systems`: effekt nå, siste døgn, telleren og summen |
+| `rain` | Telegrammer som faller nedover skjermen som digitalt regn (beveger seg) |
+| `air` | Inneklima, CO₂ og fuktighet (bare hvis slike følere blir funnet) |
+| `records` | I dag: varmeste og kaldeste rom, ute min./maks., lys på, aktive alarmer og de travleste gruppeadressene |
+| `knx` | KNX-trafikk |
+| `bounce` | Klokka med store sifre som spretter rundt på skjermen (beveger seg) |
 
-Innholdet flytter seg litt ved hvert sidebytte for å unngå innbrenning. **Ukvitterte alarmer tar over hele
+Sidene merket «beveger seg» tegnes på nytt to ganger i sekundet. Over en treg SSH-forbindelse kan de utelates med
+`ui.screensaver_pages`. Utetemperaturen kommer fra `ui.outdoor_ga`, ellers fra utetemperaturføleren til det første
+aggregatet i `ui.systems`. Innholdet flytter seg litt ved hvert sidebytte for å unngå innbrenning. **Ukvitterte alarmer tar over hele
 skjermen** med langsom rød blinking. En hvilken som helst tast eller et klikk tar deg tilbake til vanlig visning.
 
 ## Fargetema (Ctrl+T)

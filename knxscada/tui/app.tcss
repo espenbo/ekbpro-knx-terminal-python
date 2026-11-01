@@ -586,3 +586,17 @@ SplashScreen {
 .warning {
     color: $warning;
 }
+
+/* Systems view (Ctrl+E): one card per air handling unit, then the meter table */
+#sys-tabs { height: 1fr; }
+#sys-tabs TabPane { padding: 0 1; }
+#sys-card { height: 15; padding: 0 1; overflow-x: auto; }
+#sys-card.bad { border: heavy $error; }
+#sys-charts { height: 1fr; min-height: 8; }
+#sys-charts .chart { width: 1fr; height: 1fr; }
+#sys-filter { margin-bottom: 1; }
+#sys-tags { height: 1fr; border: round $secondary; }
+#en-meters { height: auto; max-height: 20; border: round $secondary; }
+#en-detail { height: 5; padding: 0 1; }
+#en-charts { height: 1fr; min-height: 8; }
+#en-charts .chart { width: 1fr; height: 1fr; }

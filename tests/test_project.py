@@ -305,3 +305,35 @@ def test_extra_rooms_reject_unknown_addresses():
     model = project.build_model(raw_project())
     with pytest.raises(ValueError, match="31/7/255"):
         project.add_extra_rooms(model, [{"name": "X", "cards": [{"addresses": ["31/7/255"]}]}])
+
+
+def test_point_rooms():
+    """project.point_rooms: cards from protocol tags (pt:conn/tag), grouped under their building."""
+    from knxscada.project import add_point_rooms, empty_model
+    from knxscada.tui.home import HomeModel
+
+    tags = {"gw/Light On/Off": {"object": "bv:4", "writable": True}, "gw/Light Status": {"object": "bv:5"},
+            "gw/RT205_PV": {"object": "av:53", "unit": "°C", "description": "Room temperature"},
+            "gw/RT205_SP": {"object": "av:52", "unit": "°C", "writable": True},
+            "gw/RT205_VP": {"object": "bv:47"}}
+    rooms = [{"building": "Annex", "floor": "2nd floor", "name": "Office 205", "cards": [
+        {"name": "Light", "usage": "light", "rows": [{"point": "gw/Light On/Off", "status": "gw/Light Status"}]},
+        {"name": "Heating", "usage": "heating", "rows": [
+            {"point": "gw/RT205_PV", "role": "temp"}, {"point": "gw/RT205_SP", "role": "setpoint", "label": "SP"},
+            {"point": "gw/RT205_VP", "role": "heat"}, {"point": "gw/missing"}]}]}]
+    model = empty_model()
+    problems = add_point_rooms(model, rooms, tags)
+    assert len(problems) == 1 and "gw/missing" in problems[0]
+    assert [(f["building"], f["name"]) for f in model["floors"]] == [("Annex", "2nd floor")]
+    light, heating = (model["functions"][fid] for fid in model["floors"][0]["rooms"][0]["functions"])
+    assert light["usage"] == "switchable light"
+    assert light["datapoints"][0] == {"label": "Light On/Off", "role": "", "kind": "switch", "ga": "pt:gw/Light On/Off",
+                                      "status": "pt:gw/Light Status", "dpt": "1.001"}
+    kinds = [(d["label"], d["kind"], d["ga"], d["status"]) for d in heating["datapoints"]]
+    assert kinds == [("Room temperature", "value", None, "pt:gw/RT205_PV"), ("SP", "setpoint", "pt:gw/RT205_SP", None),
+                     ("RT205_VP", "bool", None, "pt:gw/RT205_VP")]
+    assert "gw/Light On/Off" not in model["gas"] and model["point_gas"]["pt:gw/RT205_SP"]["dpt"] == "9.001"
+    room = HomeModel(model, {}).rooms[0]
+    assert (room.temp_ga, room.sp_ga, room.heat_ga) == ("pt:gw/RT205_PV", "pt:gw/RT205_SP", "pt:gw/RT205_VP")
+    assert room.lights[0]["status"] == "pt:gw/Light Status"
+    assert add_point_rooms(empty_model(), None, tags) == []

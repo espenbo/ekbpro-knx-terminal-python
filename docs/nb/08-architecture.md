@@ -16,7 +16,7 @@ knxscada/
                   flere prosjekter (adresseprefiks S:1/2/3), rom fra gruppeadressenavn
   dpt.py          dekoding og koding av DPT-verdier, visningstekst, tekster for DPT 1
   alarms.py       alarmregler (glob, regex, betingelse, alvorlighet)
-  store.py        SQLite: telegrammer, hendelser, alarmer
+  store.py        SQLite: telegrammer, hendelser, alarmer, loggede taggverdier
   server.py       ScadaServer (xknx per grensesnitt, logging, alarmer, socket-API) + Simulator (--demo)
   knx_interfaces.py  flere KNX IP-grensesnitt: konfigurasjon, Router (utgående), Deduplicator (innkommende)
   client.py       asynkron klient for socketen
@@ -115,7 +115,8 @@ bare SSH-adressen etter `@` kommer fra klienten. Når klienten kjører under ser
 | `telegrams` | `limit` (≤ 5000), `ga?`, `before_id?` | liste |
 | `events` | `limit` (≤ 5000) | liste |
 | `alarm_history` | `limit` (≤ 5000) | liste |
-| `history` | `ga`, `hours`, `max_points?` (4000) | `[[ts, number], …]`. Over `max_points` laveste og høyeste verdi per tidsintervall. Kjører i en egen arbeidstråd. |
+| `history` | `ga` eller `point` (`tilkobling/tagg`), `hours`, `max_points?` (4000) | `[[ts, number], …]`. Over `max_points` laveste og høyeste verdi per tidsintervall. Kjører i en egen arbeidstråd. |
+| `logged_points` | – | de loggede taggene i `protocols.yaml` (`key`, `conn`, navn, enhet, beskrivelse, verdi) |
 | `traffic` | `minutes` (≤ 1440) | telegrammer per minutt |
 
 Eksempel fra skallet:
@@ -141,9 +142,12 @@ Klienter som ikke henger med (for stor skrivebuffer), kobles fra av serveren.
   - `text` lagres på serverens språk på tidspunktet for hendelsen.
 - `alarms(id, ga, text, severity, raised_ts, cleared_ts, acked_ts, acked_by, value)`
   - `severity`: `critical` | `warning` | fritekst. Gamle rader med `kritisk` / `advarsel` gjøres om ved lasting.
+  - `ga`: en gruppeadresse, eller `tilkobling/tagg` for en tagg i `protocols.yaml` (regler med `match_point`).
+- `point_values(id, ts, point, value JSON, num REAL)`: verdiene til taggene som er valgt med `log` i `protocols.yaml`
+  (`point` = `tilkobling/tagg`). Indekser på `(point, ts)` og `(ts)`; slettes sammen med telegrammene.
 
 Telegrammer og hendelser skrives (commit) én gang i sekundet; alarmendringer skrives straks. Én gang i timen
-sletter serveren telegrammer og hendelser eldre enn `retention_days` i porsjoner (5000 rader om gangen), og gir
+sletter serveren telegrammer, hendelser og loggede taggverdier eldre enn `retention_days` i porsjoner (5000 rader om gangen), og gir
 event-loopen tid mellom hver porsjon, så en stor sletting ikke blokkerer serveren.
 
 ## Ytelse i TUI-en

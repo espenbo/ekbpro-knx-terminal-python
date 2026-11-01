@@ -20,7 +20,10 @@ support it); ``cov: true`` also subscribes to changes of the present values
 (COV), so changes arrive at once. Writes go with the tag's or the connection's
 ``priority`` (empty = the device's default, 16 for commandable objects).
 The client uses its own UDP port (``local_port: 0`` = any free port), so it can
-run on the same machine as our BACnet device on 47808.
+run on the same machine as our BACnet device on 47808. Without ``local_address``
+it binds to the address the system routes to the device from (the VPN address for
+a site reached over Tailscale): bound to the LAN address, the request would carry
+that as its source and the answer would be routed somewhere else.
 
 Server
 ------
@@ -41,8 +44,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import ipaddress
 import json
 import re
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +140,20 @@ def to_bacnet(object_type: str, prop: str, raw: Any) -> Any:
     if object_type == "characterstring-value":
         return "" if raw is None else str(raw)
     return raw
+
+
+def route_source(address: str) -> str | None:
+    """Our IP address towards the device at *address* (``192.168.1.20`` or ``192.168.1.20:47809``), as
+    ``ip/32`` – None for a network address (``2:5``) or a name that does not resolve."""
+    host = address.rsplit(":", 1)[0] if address.count(":") == 1 else address
+    try:
+        ipaddress.IPv4Address(host)          # strict: inet_aton would take "2" (network 2 of "2:5") for 0.0.0.2
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host, 47808))         # no packet is sent: this only asks the routing table
+            ip = s.getsockname()[0]
+    except (OSError, ValueError):
+        return None
+    return f"{ip}/32" if ip and not ip.startswith("0.") else None
 
 
 def make_app(local: str, instance: int, name: str, timeout_s: float = 3, bbmd: str = "", bbmd_ttl: int = 300):
@@ -239,7 +258,10 @@ class Driver(BaseDriver):
 
     def _local_address(self) -> str:
         s = self.settings
-        host = str(s.get("local_address") or "host")
+        host = str(s.get("local_address") or "")
+        if not host and self.role != "server" and s.get("address"):
+            host = route_source(str(s["address"])) or ""
+        host = host or "host"
         default = 47808 if self.role == "server" else 0
         port = s.get("local_port")
         port = default if port in (None, "") else int(port)

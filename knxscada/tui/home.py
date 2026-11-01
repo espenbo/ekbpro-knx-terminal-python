@@ -80,6 +80,8 @@ class HomeModel:
                                 room.temp_ga = d["status"]
                             elif d["role"] == "TempRoomSetpoint" and not room.sp_ga:
                                 room.sp_ga = d["ga"]
+                            elif d["role"] == "HeatOutput" and not room.heat_ga:   # project.point_rooms
+                                room.heat_ga = d["status"] or d["ga"]
                             elif d["kind"] == "mode" and not room.mode_ga:
                                 room.mode_ga = d["status"] or d["ga"]
                             elif re.search(r"(?i)varmeutgang|heating output|heat output", d["label"]) and not room.heat_ga:

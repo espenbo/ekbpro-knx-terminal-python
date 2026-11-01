@@ -16,6 +16,22 @@ and defines when the value counts as an alarm::
 Each group address is bound to the *first* rule that matches it, so more
 specific rules should be listed before general ones. The server evaluates
 the rule every time a new value arrives (see ``ScadaServer._check_alarm``).
+
+Tags of ``protocols.yaml`` (Modbus, OPC UA, MQTT, BACnet) get alarms from rules
+with ``match_point`` – a glob on ``connection/tag``. ``match_name`` and
+``exclude_name`` are then matched against the tag name and against its
+description (a match in either counts)::
+
+    - match_point: "vent_360_00?/*"
+      match_name: "_AL[12]?$"
+      exclude_name: "Reset|String"
+      condition: "true"
+      severity: warning
+      delay_s: 60                # the condition must last 60 s before the alarm is raised
+      text: "{name}"             # {name} = the description (or the tag name), {address} = connection/tag
+
+Rules with ``match_point`` never apply to group addresses, and rules without it
+never apply to tags.
 """
 
 from __future__ import annotations
@@ -64,6 +80,8 @@ class Rule:
     condition: str
     severity: str
     text: str
+    match_point: str | None = None
+    delay_s: float = 0.0
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Rule:
@@ -76,6 +94,8 @@ class Rule:
             condition=str(d.get("condition", "true")).strip().lower(),
             severity=normalize_severity(d.get("severity")),
             text=d.get("text", "{name}"),
+            match_point=str(d["match_point"]) if d.get("match_point") else None,
+            delay_s=max(0.0, float(str(d.get("delay_s") or 0).replace(",", "."))),
         )
 
     def format_text(self, name: str, address: str, value: str) -> str:
@@ -96,7 +116,7 @@ class Rule:
         Placeholder addresses (``"----"``) and addresses without any linked
         communication object are never monitored – they cannot carry traffic.
         """
-        if ga.get("placeholder") or not ga.get("used"):
+        if self.match_point or ga.get("placeholder") or not ga.get("used"):
             return False
         if self.match_address and not fnmatch.fnmatch(ga["address"], self.match_address):
             return False
@@ -107,6 +127,15 @@ class Rule:
         if self.dpt_main is not None and dptlib.split(ga["dpt"])[0] != self.dpt_main:
             return False
         return True
+
+    def matches_point(self, key: str, name: str, description: str = "") -> bool:
+        """True if the protocol tag *key* (``connection/tag``) is selected by this rule."""
+        if not self.match_point or not fnmatch.fnmatchcase(key, self.match_point):
+            return False
+        texts = [t for t in (name, description) if t]   # the tag name and its description, each on its own
+        if self.match_name and not any(self.match_name.search(t) for t in texts):
+            return False
+        return not (self.exclude_name and any(self.exclude_name.search(t) for t in texts))
 
     def active(self, value: Any) -> bool | None:
         """Evaluate the condition for a decoded value.
@@ -126,6 +155,11 @@ class Rule:
         if m and isinstance(value, (int, float)) and not isinstance(value, bool):
             return OPS[m.group(1)](value, float(m.group(2).replace(",", ".")))
         return None
+
+
+def point_rule(rules: list[Rule], key: str, name: str, description: str = "") -> Rule | None:
+    """The first rule with ``match_point`` that selects the protocol tag *key*."""
+    return next((r for r in rules if r.matches_point(key, name, description)), None)
 
 
 def build_rules(cfg_rules: list[dict], gas: dict[str, dict]) -> dict[str, Rule]:

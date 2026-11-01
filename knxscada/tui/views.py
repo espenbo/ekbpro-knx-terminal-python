@@ -66,6 +66,10 @@ class View(Vertical):
     def on_show_view(self) -> None:
         """Called when the view is selected in the menu."""
 
+    def focus_target(self) -> Any:
+        """The widget to focus when the view is opened with its key (None: the first list or input)."""
+        return None
+
     def on_telegram(self, t: dict) -> None:
         """Called for every telegram (also while the view is hidden – keep it cheap)."""
 
@@ -961,8 +965,15 @@ class EventView(View):
 PERIODS = [(N_("1h"), 1), (N_("6h"), 6), (N_("24h"), 24), (N_("7d"), 168), (N_("30d"), 720)]
 
 
+#: Prefix of a logged protocol tag in the trend view (``pt:connection/tag``); group addresses have none.
+POINT = "pt:"
+
+
 class TrendView(View):
-    """F7: search addresses on the left, up to six curves on the right."""
+    """F7: search addresses on the left, up to six curves on the right.
+
+    Logged tags of protocols.yaml (``log``) are in the list too, with the connection as address.
+    """
 
     BINDINGS = [
         Binding("slash", "focus_search", _("Search")),
@@ -974,6 +985,7 @@ class TrendView(View):
         self.hours = 24
         self.kind = "step"
         self.series: dict[str, list[tuple[float, float]]] = {}  # GA → points (insertion order = colour)
+        self.points: dict[str, dict] = {}   # "pt:conn/tag" → tag info (logged tags, from the server)
         self.rows: set[str] = set()
         self._pending: dict[str, str] = {}  # value text per list row, applied in batches by _flush
         self._dirty = False
@@ -1004,10 +1016,11 @@ class TrendView(View):
         ]
         t = self.query_one("#tr-list", DataTable)
         t.add_column("", key="sel", width=1)
-        t.add_column(_("Address"), key="addr", width=8)
+        t.add_column(_("Address"), key="addr", width=12)
         t.add_column(_("Name"), key="name", width=30)
         t.add_column(_("Value"), key="value", width=10)
         self.rebuild_list()
+        self.load_points()
         self.set_interval(2, self._replot_if_dirty)
         self.set_interval(2, self._flush)
         self.replot()
@@ -1025,7 +1038,55 @@ class TrendView(View):
                 st = self.scada.state.get(addr, {})
                 t.add_row(self._mark(addr), addr, g["name"], st.get("text", ""), key=addr)
                 self.rows.add(addr)
+        for key, p in self.points.items():
+            hay = f"{p['key']} {p['description']} {p['unit']}".lower()
+            if all(w in hay for w in words):
+                t.add_row(self._mark(key), p["conn"], p["description"] or p["name"], self._point_text(p["value"], p),
+                          key=key)
+                self.rows.add(key)
         t.border_title = _("{n} matches – Enter adds/removes").format(n=len(self.rows))
+
+    @work(exclusive=True, group="trend-points")
+    async def load_points(self) -> None:
+        """The logged tags of protocols.yaml (they can be plotted like group addresses)."""
+        if not self.scada.client.connected:
+            return              # called at start-up too; on_show_view asks again
+        try:
+            rows = await self.scada.request("logged_points")
+        except Exception:  # noqa: BLE001 - an older server without the command
+            return
+        points = {POINT + p["key"]: p for p in rows or [] if p.get("type") != "str"}
+        if points.keys() != self.points.keys():
+            self.points = points
+            self.rebuild_list()
+
+    @staticmethod
+    def _point_text(value: Any, p: dict) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float):
+            value = f"{value:.2f}".rstrip("0").rstrip(".")
+        return f"{value} {p.get('unit') or ''}".strip()
+
+    def on_points(self, values: dict[str, list]) -> None:
+        """Live values of protocol tags (``points`` messages)."""
+        for key, (v, ts, q) in values.items():
+            k = POINT + key
+            if k in self.points:
+                self.points[k]["value"] = v
+                if k in self.rows:
+                    self._pending[k] = self._point_text(v, self.points[k])
+                if k in self.series and q == "good" and isinstance(v, (int, float)):
+                    self.series[k].append((ts, float(v)))
+                    self._dirty = True
+
+    def _label(self, key: str) -> tuple[str, str, str]:
+        """(address, name, unit) of a curve: a group address or a logged tag."""
+        if key.startswith(POINT):
+            p = self.points.get(key) or {}
+            return p.get("conn", ""), p.get("description") or p.get("name") or key[len(POINT):], p.get("unit", "")
+        g = self.scada.ga(key)
+        return key, g.get("name", ""), dptlib.unit(g.get("dpt"))
 
     def _color(self, addr: str) -> tuple[int, int, int]:
         """Series colour: position in self.series → palette entry."""
@@ -1081,7 +1142,10 @@ class TrendView(View):
     @work(exclusive=True, group="trend")
     async def load(self) -> None:
         for ga in list(self.series):
-            pts = await self.scada.request("history", ga=ga, hours=self.hours)
+            if ga.startswith(POINT):
+                pts = await self.scada.request("history", point=ga[len(POINT):], hours=self.hours)
+            else:
+                pts = await self.scada.request("history", ga=ga, hours=self.hours)
             if ga in self.series:
                 self.series[ga] = [tuple(p) for p in pts or []]
         self.replot()
@@ -1128,15 +1192,14 @@ class TrendView(View):
             first = next((i for i, p in enumerate(pts) if p[0] >= start), len(pts))
             if first > 1:
                 del pts[: first - 1]
-            g = self.scada.ga(ga)
-            unit = dptlib.unit(g.get("dpt"))
+            addr, name, unit = self._label(ga)
             units.add(unit)
             color = self._color(ga)
-            series.append((f"{ga} {g.get('name', '')[:30]}", pts, color))
+            series.append((f"{addr} {name[:30]}", pts, color))
             r, gg, b = color
             n = sum(1 for p in pts if p[0] >= start)
             unit_txt = escape(f"[{unit}]") if unit else ""
-            names.append(f"[rgb({r},{gg},{b})]●[/] {ga} {escape(g.get('name', ''))} "
+            names.append(f"[rgb({r},{gg},{b})]●[/] {escape(addr)} {escape(name)} "
                          f"[dim]{unit_txt} {_('{n} pts').format(n=n)}[/dim]")
         draw(plt, series, self.kind, start, now, plot.size.width)
         units.discard("")
@@ -1185,5 +1248,6 @@ class TrendView(View):
 
     def on_show_view(self) -> None:
         self._flush()
+        self.load_points()
         if self.series:
             self.load()

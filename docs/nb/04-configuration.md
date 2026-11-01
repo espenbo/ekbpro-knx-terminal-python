@@ -93,6 +93,7 @@ tilkoblet; betjening virker så lenge grensesnittet for den aktuelle adressen er
 | `files` | – | Flere ETS-prosjekter i ett anlegg, i stedet for `file` (se under). `password` oppgis da per oppføring. |
 | `rooms` | – | Rom fra navnene på gruppeadressene (se under) |
 | `extra_rooms` | – | Egne rom for adresser som ikke ligger i noe ETS-rom (se [Ekstra rom](#extra-rooms)) |
+| `point_rooms` | – | Rom med kort fra protokolltagger, f.eks. et sidebygg bak en gateway (se [Rom fra protokolltagger](#point-rooms)) |
 
 `.knxprojarchive`-filer fra ETS 6 kan også brukes direkte.
 
@@ -176,6 +177,41 @@ Hvert kort bygges som kortene fra ETS: styre- og statusadresser pares etter navn
 DPT-en avgjør om det blir bryter, dimmer, settpunkt eller verdi. Et kort med temperatur regnes som
 romtemperaturen. Adresser som ikke finnes i prosjektet, stopper oppstarten med en feil. Rommene leses fra
 `config.yaml` ved hver oppstart – du trenger ikke `./scada import`.
+
+<a id="point-rooms"></a>
+
+### Rom fra protokolltagger (et annet bygg bak en gateway)
+
+Rom kan også vise tagger fra `protocols.yaml` – for eksempel et sidebygg der KNX kommer til oss gjennom en
+KNX→BACnet-gateway. `project.point_rooms` bygges som `extra_rooms`, men hvert kort har `rows` med `point`
+(`tilkobling/tagg`). Med `building` grupperer menyen etasjene per bygg: «Etasjer og rom → Hovedbygg / Sidebygg →
+etasjer → rom»; `ui.building` gir navnet på bygget med ETS-etasjene (standard «Hovedbygg»).
+
+```yaml
+project:
+  point_rooms:
+    - building: Sidebygg
+      floor: 2. etg
+      name: Kontor 205
+      cards:
+        - name: Lys
+          usage: light                # light | dimmer | heating | other
+          rows:
+            - {point: "gateway/Lys 205 On/Off", status: "gateway/Lys 205 Status", label: Lys}
+        - name: Varme
+          usage: heating
+          rows:
+            - {point: "gateway/RT205_PV", role: temp, label: Temperatur}
+            - {point: "gateway/RT205_SP", role: setpoint, label: Settpunkt}
+            - {point: "gateway/RT205_VP", role: heat, label: Varme}
+ui:
+  building: Hovedbygg
+```
+
+Radtypen følger av taggen: skrivbar av/på → bryter, skrivbar med `role: setpoint` → settpunkt (− / +), skrivbar %
+→ dimmer, alt annet en verdi (`kind:` overstyrer). `role` `temp`, `setpoint` og `heat` gir romtemperatur, settpunkt
+og varme på romkortet i oversikten. Skriving går til taggen (`writable: true` i `protocols.yaml`) og logges som
+annen skriving. En tagg som ikke finnes, meldes når TUI-en starter; de andre rommene virker.
 
 ### Flere ETS-prosjekter i ett anlegg
 
@@ -264,6 +300,10 @@ der `condition` ikke har noen av formene under, blir aldri aktiv – og du får 
 `condition` bruker `"true"`, uten `text` brukes GA-navnet. Plassholderadresser og adresser uten noe tilknyttet
 kommunikasjonsobjekt overvåkes aldri.
 
+`delay_s: 60` gir alarm først når tilstanden har vart i 60 sekunder. Taggene i `protocols.yaml` (Modbus, OPC UA,
+MQTT, BACnet) får alarmer fra regler med `match_point: "tilkobling/tagg-mønster"` – se
+[Alarmer på tagger](11-protocols-gateways.md#alarmer-på-tagger).
+
 | `condition` | Aktiv når |
 |---|---|
 | `true` / `on` / `1` | verdien er sann, for eksempel DPT 1 = 1 |
@@ -295,6 +335,7 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | Nøkkel | Standard | Beskrivelse |
 |---|---|---|
 | `title` | prosjektnavnet | Tittel i toppfeltet |
+| `building` | `Hovedbygg` | Navnet på ETS-bygget i menyen når `project.point_rooms` legger til et annet bygg |
 | `language` | `en` | Språk: `en` (engelsk) eller `nb` (norsk bokmål; `no` godtas som alias). Også språket i tekstene serveren lager til hendelsesloggen og alarmene. Hver brukers eget valg (Ctrl+L) og `./scada tui --language` går foran i visualiseringen. |
 | `theme` | `retro` | Standard fargetema: `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm`. Brukerens eget valg for denne installasjonen (Ctrl+T) går foran. De gamle navnene `retro-klassisk` og `moderne` godtas fortsatt. |
 | `logo_file` | – | En egen logo til oppstartsbildet og Om (en tekstfil). Temaet `storm` viser alltid Storm Automasjon-logoen i stedet. Tegnes med `█ ▀ ▄` (heltrukket, i hovedfargen til temaet) og `▒` (skygge); blokker skilles med en tom linje – når logoen er for stor for vinduet, vises bare den første blokken. |
@@ -303,6 +344,8 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `ascii` | `false` | Bare ASCII-tegn i grafer, for eldre terminaler |
 | `screensaver_minutes` | `5` | Minutter uten betjening før skjermspareren starter. `0` slår den av. |
 | `screensaver_rotate_s` | `20` | Sekunder per side i skjermspareren |
+| `screensaver_pages` | alle | Sidene i skjermspareren og rekkefølgen, f.eks. `[clock, sky, heatmap, meters, records]`. Nøkler: `clock`, `home`, `sky`, `temps`, `ventilation`, `heatmap`, `energy`, `meters`, `rain`, `air`, `records`, `knx`, `bounce` (se brukerveiledningen). Ukjente nøkler ignoreres. |
+| `latitude`, `longitude` | `59.22`, `10.93` (Fredrikstad) | Posisjonen for soloppgang, solnedgang og månen på skjermsparersiden `sky` (desimalgrader) |
 | `plan` | `plan.yaml` | Fila med plantegningen |
 | `export_dir` | `~` | Hvor eksporten fra busmonitoren (`e`: ETS XML, CSV eller JSON) lagres. I Docker: f.eks. `/data/export`. |
 | `outdoor_ga` | auto | Gruppeadressen til utetemperaturen. Auto finner en DPT 9-adresse der navnet begynner med "ute temp", "outdoor" eller "outside". |
@@ -313,6 +356,60 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `confirm_raw_write` | `true` | Bekreftelse før skriving fra gruppeadressevisningen |
 
 Et ukjent `language` faller tilbake til engelsk.
+
+### Anleggsvisning (Ctrl+E)
+
+`ui.systems` beskriver ventilasjonsaggregatene i `protocols.yaml` for visningen **Anlegg** og målerne for
+visningen **Energimålere** (Ctrl+G). Hvert aggregat peker på en tilkobling og knytter taggene til roller; `prefix`
+settes foran hvert taggnavn. Hvert aggregat får en oppføring under Anlegg i menyen: `short`, ellers `360.001`-delen
+av et navn som begynner med `=360.001`, ellers navnet.
+
+```yaml
+ui:
+  systems:
+    - name: "=360.001 Ventilasjon 1. etg"
+      short: "360.001"                  # oppføring i menyen – valgfri
+      type: ventilation
+      connection: vent1                 # en tilkobling i protocols.yaml
+      prefix: BY_360_001_
+      meter: meter1                     # energimåleren til aggregatet (en tilkobling med målermal) – valgfri
+      tags: {outdoor: RT900_PV, supply: RT401_PV, extract: RT501_PV, setpoint: AktReg_SP,
+             supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
+             cooling: LK001_OP, alarm: SYS_AL, filter_supply: QD401_AL, filter_extract: QD501_AL, mode: SD_CMD}
+      mode_texts: {0: Auto, 1: Manuell av, 2: Manuell på}
+      settings: ["*_SP", "*_Set*"]      # tagger i fanen Innstillinger (glob) – valgfri, standard: alle tagger
+      hide: [Act_Time, DayOfWeek]       # aldri i fanen Innstillinger (glob uten prefiks) – valgfri
+      groups:                           # grupper i fanen Innstillinger (glob uten prefiks) – valgfri
+        - {title: "Drift og alarmer", tags: [SYS_*, SD_CMD, QD401_AL, QD501_AL]}
+        - {title: "Tilluftsvifte JV401", tags: [JV401_*]}
+    - name: Energi
+      type: energy
+      meters:
+        - {name: Hovedtavle, connection: meter_main}
+        - {name: Ventilasjon 1. etg, connection: meter1, tags: {pf: "Power factor"}}
+```
+
+Roller for et aggregat: `outdoor` (ute/inntak), `supply` (tilluft), `extract` (avtrekk), `exhaust` (avkast),
+`setpoint`, `supply_fan`, `extract_fan`, `supply_fan_run`, `extract_fan_run`, `recovery` (gjenvinner), `heating`,
+`cooling`, `supply_flow`, `extract_flow`, `supply_pressure`, `extract_pressure`, `running`, `alarm`,
+`filter_supply`, `filter_extract`, `mode`, `status`. Utelat det aggregatet ikke har. «I drift» er `running`,
+ellers `supply_fan_run`, ellers `supply_fan` > 0.
+Ukeprogrammet vises når `week_start_hour` og `week_stop_hour` er satt: tabeller med én verdi per dag, mandag først
+(`week_start_minute`, `week_stop_minute`, `week_enabled` valgfrie), og `overtime` (av/på).
+
+En måler bruker taggnavnene i utstyrsmalene (`Total active power`, `Total active energy`, `L1 current` …,
+`L1 voltage` …, `Power factor`, `Frequency`); `tags:` overstyrer enkeltroller (`power`, `energy`, `i1`–`i3`,
+`u1`–`u3`, `pf`, `freq`). Kurvene for en måler krever at effekt- og energitaggene logges (`log` i
+`protocols.yaml`); grafene for et aggregat krever at temperaturene og pådragene logges.
+
+`type: panel` er et anlegg uten tegning – f.eks. en KNX→BACnet-gateway: det får en oppføring under Anlegg i menyen
+og åpner i fanen Innstillinger med taggene i `groups` (de skrivbare med Enter). Roller brukes ikke.
+
+Fanen Innstillinger: en tagg havner i den første av `groups` den passer med. Tagger utenfor gruppene samles
+automatisk etter TFM-kode (`JV401_OP` → `JV401`) eller første ledd i navnet (`Sequence_Kp1` → `Sequence`) når minst
+to tagger har det samme; gruppen får navn etter ordene beskrivelsene begynner med. Resten havner under «Annet».
+Gruppenavnet – eller tittelen uten TFM-koden til slutt – tas bort fra hver beskrivelse (`Tilluftsvifte pådrag` i
+«Tilluftsvifte JV401» vises som `Pådrag`). Sett titler med komma i anførselstegn.
 
 ### Personlige innstillinger
 

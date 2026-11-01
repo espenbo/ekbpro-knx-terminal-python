@@ -255,6 +255,9 @@ alarms:
     condition: "true"                 # true | false | > x | < x | >= x | <= x | == x | != x
     severity: critical                # critical | warning | hvilken som helst tekst
     text: "Smoke: {name}"             # {name} {address} {value}
+  - match_point: "aggregat1/*_AL"     # en tagg i protocols.yaml (mønster på tilkobling/tagg) i stedet for en gruppeadresse
+    severity: warning
+    delay_s: 60                       # valgfri: så lenge må tilstanden vare
 
 ui:
   title: Mitt hus                     # standard: "EKBPRO KNX Terminal Python – <navnet på ETS-prosjektet>"
@@ -266,6 +269,9 @@ ui:
   ascii: false
   screensaver_minutes: 5              # 0 = av
   screensaver_rotate_s: 20
+  screensaver_pages: [clock, sky, home, heatmap, ventilation, meters, records]   # standard: alle sidene
+  latitude: 59.22                     # sol og måne på siden «sky» (standard Fredrikstad)
+  longitude: 10.93
   plan: plan.yaml
   export_dir: "~"
   outdoor_ga: 0/1/0                   # valgfri; finnes ut fra navnet når den utelates
@@ -338,6 +344,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `files` | liste | – | elementer: `{file (påkrevd), name (p1, p2 …), label (navnet), prefix (navnet; bokstaver/sifre; aldri på det første), password, rooms}` eller bare stien |
 | `rooms` | map | – | `pattern` (påkrevd), `floors`, `names`, `setpoint`, `read_only`, `exclude`; brukes bare når prosjektet ikke har ETS-funksjoner |
 | `extra_rooms` | liste | – | elementer: `floor` (`Other`), `name` (`Room N`), `cards[]`: `name`, `addresses`, `status`, `usage` (`light`, `dimmer`, `heating`, `other`; gjettes). En adresse som ikke finnes i prosjektet, stopper programmet. |
+| `point_rooms` | liste | – | som `extra_rooms` med `building` (grupperer menyen), og `cards[].rows[]`: `point` (`tilk/tagg`, påkrevd), `status`, `label` (taggens beskrivelse), `role` (`temp`, `setpoint`, `heat`), `kind` (fra taggen). Ukjente tagger meldes, stopper ikke. Se [04](04-configuration.md#point-rooms). |
 
 ### `server`
 
@@ -361,6 +368,8 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `condition` | tekst | `"true"` | `true`/`on`/`1`, `false`/`off`/`0`, `> x`, `< x`, `>= x`, `<= x`, `== x`, `!= x`. Alt annet utløses aldri. |
 | `severity` | tekst | `warning` | `critical`, `warning` (`kritisk`, `advarsel`), hvilken som helst tekst |
 | `text` | tekst | `"{name}"` | `{name}`, `{address}`, `{value}` |
+| `match_point` | mønster | – | `"aggregat1/*_AL"`: regelen gjelder tagger i `protocols.yaml` (`tilkobling/tagg`), ikke gruppeadresser; `match_name`/`exclude_name` testes da mot taggnavnet og beskrivelsen |
+| `delay_s` | desimaltall | `0` | sekunder tilstanden må vare før alarmen kommer |
 
 ### `ui`
 
@@ -371,7 +380,11 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `theme` | tekst | `retro` | `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm` |
 | `logo_file` | sti | innebygd | tekstfil med `█ ▀ ▄ ▒` |
 | `splash`, `big_digits`, `ascii`, `confirm_raw_write` | bool | `true`, `false`, `false`, `true` | |
+| `building` | tekst | `Hovedbygg` | navnet på bygget med ETS-etasjene i menyen når `point_rooms` legger til et annet |
+| `systems` | liste | – | ventilasjonsaggregater for Anlegg-visningen (Ctrl+E) og energimålere for visningen Energimålere (Ctrl+G), se [04](04-configuration.md#anleggsvisning-ctrle). Per aggregat: `name`, `short` (oppføring i menyen; standard `=NNN.NNN` fra navnet), `type` (`ventilation` / `panel` / `energy`), `connection`, `prefix`, `meter`, `tags` (roller), `mode_texts`, `settings` (glob-liste for fanen Innstillinger; standard alle tagger), `hide` (glob-liste uten prefiks), `groups` (liste med `{title, tags}`; glob uten prefiks); `type: energy`: `meters` (`name`, `connection`, `tags`) |
 | `screensaver_minutes`, `screensaver_rotate_s` | tall | `5`, `20` | `0` = ingen skjermsparer |
+| `screensaver_pages` | liste | alle | `clock`, `home`, `sky`, `temps`, `ventilation`, `heatmap`, `energy`, `meters`, `rain`, `air`, `records`, `knx`, `bounce`; `ventilation`, `rain` og `bounce` beveger seg (mer trafikk over SSH) |
+| `latitude`, `longitude` | tall | `59.22`, `10.93` | desimalgrader, for siden `sky` |
 | `plan` | sti | `plan.yaml` | |
 | `export_dir` | sti | `~` | |
 | `outdoor_ga`, `power_ga`, `energy_ga` | gruppeadresse | finnes ut fra navn og DPT | |
@@ -441,6 +454,9 @@ connections:
     word_order: big                   # big | little
     max_registers: 100                # master; høyst så mange registre per lesing
     max_gap: 8                        # master; 0 = bare registre inntil hverandre
+    log: ["Total active power", "Total active energy"]   # tagger som lagres for trender (navn/mønstre, "*" = alle)
+    log_deadband: 0.01                # valgfri, standard 0
+    log_min_s: 60                     # valgfri, standard 10 s
     tags:                             # kommer i tillegg til taggene i malen
       Day register: {address: 'hr:0x6049', type: float32, unit: kWh, writable: false}
 
@@ -482,7 +498,7 @@ connections:
     protocol: bacnet
     role: client
     address: 192.168.1.40             # eller device_id: 40 (Who-Is); 2:5 = MS/TP 5 bak en ruter på nett 2
-    local_address: 192.168.1.10/24    # tom = denne maskinen
+    local_address: 192.168.1.10/24    # tom = denne maskinen (klient med address: ruten til enheten)
     poll_ms: 5000
     timeout_s: 3
     cov: true                         # også COV-abonnement
@@ -528,6 +544,7 @@ Tilkoblingsinnstillinger for **Modbus**, **MQTT**, **OPC UA** og **BACnet**: se 
 | `type` | MQTT, OPC UA | automatisk | `bool`, `int`, `float`, `str` |
 | `unit_id`, `word_order` | Modbus | tilkoblingens | |
 | `write_address` | Modbus | – (skrives der den leses) | `hr` / `co` (samme nummer), eller en adresse `hr:N`, `co:N` |
+| `log`, `log_deadband`, `log_min_s` | alle | tilkoblingens | lagre verdiene for trender (`log: true`/`false` gjelder foran mønstrene i tilkoblingens `log`) |
 | `heartbeat_s` | Modbus-master | – (av) | sekunder; skriver 1, 2, 3 … til taggen (watchdog i utstyret) |
 | `topic`, `json_key`, `set_topic` | MQTT | prefiks + navn, –, selve topicen | |
 | `node` | OPC UA | taggnavnet | node id |

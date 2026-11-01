@@ -91,6 +91,7 @@ connected; operation works as long as the interface for that address is connecte
 | `files` | – | Several ETS projects in one site, instead of `file` (see below). `password` is then given per entry. |
 | `rooms` | – | Rooms from the group address names (see below) |
 | `extra_rooms` | – | Rooms of your own for addresses no ETS room holds (see [Extra rooms](#extra-rooms)) |
+| `point_rooms` | – | Rooms whose cards show protocol tags, e.g. an annex behind a gateway (see [Rooms from protocol tags](#point-rooms)) |
 
 `.knxprojarchive` files from ETS 6 can be used directly as well.
 
@@ -174,6 +175,42 @@ Each card is built like the cards from ETS: control and status addresses are pai
 `status`), the DPT decides switch, dimmer, setpoint or value. A card with a temperature counts as the room
 temperature. Addresses that are not in the project stop the start with an error. The rooms are read from
 `config.yaml` at every start – no `./scada import` needed.
+
+<a id="point-rooms"></a>
+
+### Rooms from protocol tags (another building behind a gateway)
+
+Rooms can also show tags of `protocols.yaml` – for example an annex whose KNX reaches us through a KNX→BACnet
+gateway. `project.point_rooms` is built like `extra_rooms`, but each card has `rows` with a `point`
+(`connection/tag`). With `building`, the menu groups the floors by building: «Floors and rooms → Main building /
+Annex → floors → rooms»; `ui.building` names the building of the ETS floors (default «Main building»).
+
+```yaml
+project:
+  point_rooms:
+    - building: Annex
+      floor: 2nd floor
+      name: Office 205
+      cards:
+        - name: Light
+          usage: light                # light | dimmer | heating | other
+          rows:
+            - {point: "gateway/Light 205 On/Off", status: "gateway/Light 205 Status", label: Light}
+        - name: Heating
+          usage: heating
+          rows:
+            - {point: "gateway/RT205_PV", role: temp, label: Temperature}
+            - {point: "gateway/RT205_SP", role: setpoint, label: Setpoint}
+            - {point: "gateway/RT205_VP", role: heat, label: Heating}
+ui:
+  building: Main building
+```
+
+The kind of row follows from the tag: writable on/off → switch, writable with `role: setpoint` → setpoint
+(− / +), writable % → dimmer, everything else a value (`kind:` overrides). `role` `temp`, `setpoint` and `heat`
+make the room temperature, setpoint and heating of the room card in the overview. Writes go to the tag
+(`writable: true` in `protocols.yaml`) and are logged like other writes. A tag that does not exist is reported
+when the TUI starts; the other rooms work.
 
 ### Several ETS projects in one site
 
@@ -262,6 +299,10 @@ whose `condition` is none of the forms below is never active – there is no war
 uses `"true"`, without `text` the GA name. Placeholder addresses and addresses without any linked
 communication object are never monitored.
 
+`delay_s: 60` raises the alarm only when the condition has lasted 60 seconds. Tags of `protocols.yaml` (Modbus,
+OPC UA, MQTT, BACnet) get alarms from rules with `match_point: "connection/tag-glob"` – see
+[Alarms on tags](11-protocols-gateways.md#alarms-on-tags).
+
 | `condition` | Active when |
 |---|---|
 | `true` / `on` / `1` | the value is true, for example DPT 1 = 1 |
@@ -293,6 +334,7 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | Key | Default | Description |
 |---|---|---|
 | `title` | project name | Title in the top bar |
+| `building` | `Main building` | Name of the ETS building in the menu when `project.point_rooms` add another building |
 | `language` | `en` | Language: `en` (English) or `nb` (Norwegian bokmål; `no` is accepted as an alias). Also the language of the event log and alarm texts the server generates. Each user's own choice (Ctrl+L) and `./scada tui --language` take precedence in the visualisation. |
 | `theme` | `retro` | Default theme: `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm`. The user's own choice for this installation (Ctrl+T) takes precedence. The old names `retro-klassisk` and `moderne` are still accepted. |
 | `logo_file` | – | A logo of your own for the start-up screen and About (a text file). The theme `storm` always shows the Storm Automasjon logo instead. Drawn with `█ ▀ ▄` (solid, in the theme's main colour) and `▒` (shade); blocks separated by an empty line – when the logo is too big for the window, only the first block is shown. |
@@ -301,6 +343,8 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `ascii` | `false` | Only ASCII characters in charts, for older terminals |
 | `screensaver_minutes` | `5` | Minutes without input before the screensaver starts. `0` turns it off. |
 | `screensaver_rotate_s` | `20` | Seconds per screensaver page |
+| `screensaver_pages` | all | The screensaver pages and their order, e.g. `[clock, sky, heatmap, meters, records]`. Keys: `clock`, `home`, `sky`, `temps`, `ventilation`, `heatmap`, `energy`, `meters`, `rain`, `air`, `records`, `knx`, `bounce` (see the user guide). Unknown keys are ignored. |
+| `latitude`, `longitude` | `59.22`, `10.93` (Fredrikstad) | Position for sunrise, sunset and the moon on the screensaver page `sky` (decimal degrees) |
 | `plan` | `plan.yaml` | The floor plan file |
 | `export_dir` | `~` | Where the bus monitor export (`e`: ETS XML, CSV or JSON) is saved. In Docker: e.g. `/data/export`. |
 | `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". |
@@ -311,6 +355,59 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `confirm_raw_write` | `true` | Confirmation before writing from the group address view |
 
 An unknown `language` falls back to English.
+
+### Systems view (Ctrl+E)
+
+`ui.systems` describes the air handling units of `protocols.yaml` for the **Systems** view and the meters for
+the **Energy meters** view (Ctrl+G). Each unit names a connection and binds its tags to roles; `prefix` is put in
+front of every tag name. Every unit gets a menu entry under Systems: `short`, else the `360.001` part of a name
+that starts with `=360.001`, else the name.
+
+```yaml
+ui:
+  systems:
+    - name: "=360.001 Ventilation 1st floor"
+      short: "360.001"                  # menu entry – optional
+      type: ventilation
+      connection: vent1                 # a connection in protocols.yaml
+      prefix: BY_360_001_
+      meter: meter1                     # its energy meter (a connection with a meter template) – optional
+      tags: {outdoor: RT900_PV, supply: RT401_PV, extract: RT501_PV, setpoint: AktReg_SP,
+             supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
+             cooling: LK001_OP, alarm: SYS_AL, filter_supply: QD401_AL, filter_extract: QD501_AL, mode: SD_CMD}
+      mode_texts: {0: Auto, 1: Manual off, 2: Manual on}
+      settings: ["*_SP", "*_Set*"]      # tags on the Settings tab (glob) – optional, default: all tags
+      hide: [Act_Time, DayOfWeek]       # never on the Settings tab (glob without prefix) – optional
+      groups:                           # sections of the Settings tab (glob without prefix) – optional
+        - {title: "Operation and alarms", tags: [SYS_*, SD_CMD, QD401_AL, QD501_AL]}
+        - {title: "Supply fan JV401", tags: [JV401_*]}
+    - name: Energy
+      type: energy
+      meters:
+        - {name: Main board, connection: meter_main}
+        - {name: Ventilation 1st floor, connection: meter1, tags: {pf: "Power factor"}}
+```
+
+Roles of a unit: `outdoor`, `supply`, `extract`, `exhaust`, `setpoint`, `supply_fan`, `extract_fan`,
+`supply_fan_run`, `extract_fan_run`, `recovery`, `heating`, `cooling`, `supply_flow`, `extract_flow`,
+`supply_pressure`, `extract_pressure`, `running`, `alarm`, `filter_supply`, `filter_extract`, `mode`, `status`.
+Leave out what the unit does not have. "Running" is `running`, else `supply_fan_run`, else `supply_fan` > 0.
+A week program is shown when `week_start_hour` and `week_stop_hour` are set: arrays with one value per day,
+Monday first (`week_start_minute`, `week_stop_minute`, `week_enabled` optional), and `overtime` (on/off).
+
+A meter uses the tag names of the device templates (`Total active power`, `Total active energy`, `L1 current` …,
+`L1 voltage` …, `Power factor`, `Frequency`); `tags:` overrides single roles (`power`, `energy`, `i1`–`i3`,
+`u1`–`u3`, `pf`, `freq`). The curves of a meter need its power and energy tags to be logged (`log` in
+`protocols.yaml`); the charts of a unit need its temperatures and outputs to be logged.
+
+`type: panel` is a system without a drawing – e.g. a KNX→BACnet gateway: it gets a menu entry under Systems
+and opens on the Settings tab with its tags in `groups` (writable ones with Enter). Roles are not used.
+
+Settings tab: a tag goes into the first of the `groups` it matches. Tags in no group are put into automatic
+sections by TFM code (`JV401_OP` → `JV401`) or by the first part of the name (`Sequence_Kp1` → `Sequence`) when at
+least two tags share it; the section is named after the words their descriptions start with. The rest is «Other».
+The section name – or the title without a trailing TFM code – is left out of each description (`Supply fan output`
+in «Supply fan JV401» shows as `Output`). Put titles with a comma in quotes.
 
 ### Personal settings
 

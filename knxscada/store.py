@@ -22,6 +22,10 @@ Tables
     Operator actions, alarm transitions and system messages (the event log).
 ``alarms``
     One row per alarm occurrence with raise/clear/acknowledge timestamps.
+    ``ga`` is a group address, or ``connection/tag`` for a tag of ``protocols.yaml``.
+``point_values``
+    Logged values of tags from ``protocols.yaml`` (Modbus, OPC UA, MQTT, BACnet) whose
+    ``log`` setting is on; ``point`` is ``connection/tag``. Same ``value``/``num`` as telegrams.
 """
 
 from __future__ import annotations
@@ -81,6 +85,16 @@ CREATE TABLE IF NOT EXISTS alarms (
     value      TEXT               -- value that raised the alarm (JSON)
 );
 CREATE INDEX IF NOT EXISTS idx_alarm_open ON alarms(acked_ts, cleared_ts);
+
+CREATE TABLE IF NOT EXISTS point_values (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts    REAL NOT NULL,
+    point TEXT NOT NULL,          -- connection/tag, e.g. vent_360_001/BY_360_001_RT401_PV
+    value TEXT,                   -- value as JSON
+    num   REAL                    -- numeric value for trends (NULL if not numeric)
+);
+CREATE INDEX IF NOT EXISTS idx_pv_point_ts ON point_values(point, ts);
+CREATE INDEX IF NOT EXISTS idx_pv_ts ON point_values(ts);
 """
 
 
@@ -148,7 +162,19 @@ class Store:
             r["value"] = json.loads(r["value"]) if r["value"] else None
         return rows[::-1]
 
-    def read_history(self, ga: str, since: float, max_points: int = 4000) -> list[tuple[float, float]]:
+    # -- logged tags of protocols.yaml -------------------------------------------
+    def add_point_value(self, point: str, value: Any, ts: float | None = None) -> None:
+        """Log one value of a protocol tag (``connection/tag``); committed with the next :meth:`commit`."""
+        num = float(value) if isinstance(value, (bool, int, float)) else None
+        self.db.execute("INSERT INTO point_values(ts, point, value, num) VALUES (?,?,?,?)",
+                        (time.time() if ts is None else ts, point, json.dumps(value, ensure_ascii=False), num))
+        self._dirty = True
+
+    def logged_points(self) -> list[str]:
+        """Every ``connection/tag`` that has logged values."""
+        return [r[0] for r in self.db.execute("SELECT DISTINCT point FROM point_values ORDER BY point")]
+
+    def read_history(self, ga: str, since: float, max_points: int = 4000, point: bool = False) -> list[tuple[float, float]]:
         """:meth:`history` on a separate read-only connection – safe to run in a worker thread.
 
         A long trend of a busy address reads hundreds of thousands of rows; in a
@@ -158,31 +184,34 @@ class Store:
         db = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
         try:
-            return self.history(ga, since, max_points, db)
+            return self.history(ga, since, max_points, db, point)
         finally:
             db.close()
 
     def history(self, ga: str, since: float, max_points: int = 4000,
-                db: sqlite3.Connection | None = None) -> list[tuple[float, float]]:
+                db: sqlite3.Connection | None = None, point: bool = False) -> list[tuple[float, float]]:
         """``(timestamp, number)`` pairs for a trend chart, oldest first.
 
         A busy address can have hundreds of thousands of values in 30 days. Beyond
         *max_points* the range is split into time buckets, and each bucket gives
         its lowest and its highest value (with their own timestamps) – peaks stay
         visible, and the reply stays small however long the period is.
+        With *point*, *ga* is a logged protocol tag (``connection/tag``).
         """
         db = db or self.db
-        where = "dst = ? AND ts >= ? AND type != 'read' AND num IS NOT NULL"
-        n = db.execute(f"SELECT COUNT(*) FROM telegrams WHERE {where}", (ga, since)).fetchone()[0]
+        table = "point_values" if point else "telegrams"
+        where = "point = ? AND ts >= ? AND num IS NOT NULL" if point else \
+            "dst = ? AND ts >= ? AND type != 'read' AND num IS NOT NULL"
+        n = db.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", (ga, since)).fetchone()[0]
         if n <= max_points:
-            rows = db.execute(f"SELECT ts, num FROM telegrams WHERE {where} ORDER BY ts", (ga, since))
+            rows = db.execute(f"SELECT ts, num FROM {table} WHERE {where} ORDER BY ts", (ga, since))
             return [(r["ts"], r["num"]) for r in rows]
         bucket = max((time.time() - since) / (max_points // 2), 1e-3)
         points: set[tuple[float, float]] = set()
         for agg in ("MIN", "MAX"):
             # SQLite returns the ts of the row that has the MIN/MAX value ("bare column").
             rows = db.execute(
-                f"SELECT ts, {agg}(num) AS num FROM telegrams WHERE {where} GROUP BY CAST((ts - ?) / ? AS INTEGER)",
+                f"SELECT ts, {agg}(num) AS num FROM {table} WHERE {where} GROUP BY CAST((ts - ?) / ? AS INTEGER)",
                 (ga, since, since, bucket),
             )
             points.update((r["ts"], r["num"]) for r in rows)
@@ -225,14 +254,14 @@ class Store:
         return out
 
     def purge_batch(self, cutoff: float, limit: int = 5000) -> int:
-        """Delete up to *limit* telegrams and events older than *cutoff* (unix time).
+        """Delete up to *limit* telegrams, events and logged tag values older than *cutoff* (unix time).
 
-        Returns the larger of the two deleted counts; the caller repeats until
+        Returns the largest deleted count; the caller repeats until
         it is below *limit*. Alarms are kept. Deleting in batches keeps each
         transaction short, so the server stays responsive during a big purge.
         """
         n = 0
-        for table in ("telegrams", "events"):
+        for table in ("telegrams", "events", "point_values"):
             cur = self.db.execute(
                 f"DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE ts < ? ORDER BY ts LIMIT ?)",
                 (cutoff, limit),

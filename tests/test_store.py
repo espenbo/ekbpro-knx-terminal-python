@@ -106,3 +106,20 @@ def test_telegrams_for_one_address_newest_last(store):
     store.add_telegram(tel(now + 10, "1/1/2", True))
     rows = store.telegrams(3, "1/1/1")
     assert [r["ts"] for r in rows] == [now + 2, now + 3, now + 4]
+
+
+def test_logged_tag_values_history_and_purge(store):
+    """Values of protocols.yaml tags (point_values): trend history and purge like telegrams."""
+    now = time.time()
+    store.add_point_value("vent/RT401", 16.5, now - 7200)
+    store.add_point_value("vent/RT401", 17.0, now - 60)
+    store.add_point_value("vent/Drift", True, now - 30)
+    store.add_point_value("vent/Status", "Stoppet av kalender", now - 30)
+    store.add_telegram(tel(now, "vent/RT401", 99.0))   # a group address with the same text is not mixed in
+    store.commit()
+    assert store.history("vent/RT401", now - 3600, point=True) == [(now - 60, 17.0)]
+    assert store.read_history("vent/Drift", now - 3600, point=True) == [(now - 30, 1.0)]
+    assert store.history("vent/Status", now - 3600, point=True) == []      # text: no number
+    assert store.logged_points() == ["vent/Drift", "vent/RT401", "vent/Status"]
+    assert store.purge_batch(now - 3600) == 1
+    assert store.history("vent/RT401", 0, point=True) == [(now - 60, 17.0)]

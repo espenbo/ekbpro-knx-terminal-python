@@ -11,7 +11,7 @@ chart looks right in every colour scheme.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -22,8 +22,7 @@ from ..i18n import N_
 from .graphics import resample
 
 if TYPE_CHECKING:
-    from textual.app import App
-    from textual.app import RenderResult
+    from textual.app import App, RenderResult
 
 #: (id, English label) of the chart types offered in the trend view.
 CHART_KINDS = [("line", N_("Line")), ("step", N_("Step")), ("filled", N_("Filled")), ("bars", N_("Bars"))]
@@ -45,21 +44,43 @@ class CachedPlot(PlotextPlot):
     after drawing new data into :attr:`plt`.
     """
 
+    #: Figures kept for :meth:`cached` (one per unit in the systems view, for instance).
+    KEEP = 8
+
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
         self._version = 0
+        self._data_key: Hashable | None = None
         self._cache_key: tuple | None = None
         self._cache: Text | None = None
+        self._kept: dict[tuple, Text] = {}
 
-    def changed(self) -> None:
-        """The figure was redrawn: rebuild it at the next repaint."""
+    def changed(self, key: Hashable | None = None) -> None:
+        """The figure was redrawn: rebuild it at the next repaint.
+
+        *key* names the data drawn (e.g. ``(unit, number of points)``): a figure built for the same
+        key, size and theme is reused instead of being built again – see :meth:`cached`.
+        """
         self._version += 1
+        self._data_key = key
         self.refresh()
+
+    def cached(self, key: Hashable) -> bool:
+        """A figure for *key* at the current size and theme exists: :meth:`changed` with it needs no drawing."""
+        return (key, self.size, self.app.theme) in self._kept
 
     def render(self) -> RenderResult:
         key = (self._version, self.size, self.app.theme)
         if key != self._cache_key or self._cache is None:
-            self._cache = super().render()  # type: ignore[assignment]
+            kept = (self._data_key, self.size, self.app.theme) if self._data_key is not None else None
+            if kept is not None and kept in self._kept:
+                self._cache = self._kept[kept]
+            else:
+                self._cache = super().render()  # type: ignore[assignment]
+                if kept is not None:
+                    self._kept[kept] = self._cache
+                    while len(self._kept) > self.KEEP:
+                        del self._kept[next(iter(self._kept))]
             self._cache_key = key
         return self._cache
 
