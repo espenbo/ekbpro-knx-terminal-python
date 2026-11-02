@@ -114,6 +114,8 @@ MODBUS_TYPES = ("bool", "int16", "uint16", "int32", "uint32", "float32", "int64"
 PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     Protocol(
         "knx", "KNX", "knxscada.protocols.knx",
+        # xknx talks to the bus, xknxproject reads the ETS project. Installed by default by setup.sh and Docker.
+        packages=("xknx>=3.10", "xknxproject>=3.10"), imports=("xknx", "xknxproject"),
         description=N_("KNX IP tunneling/routing with the ETS project – set up in config.yaml (knx: and project:)"),
     ),
     Protocol(
@@ -198,6 +200,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     ),
     Protocol(
         "opcua", "OPC UA", "knxscada.protocols.opcua",
+        # Also needed by the PLC bridge (plc: in config.yaml, knxscada/opcua_bridge.py).
         packages=("asyncua>=1.1",), imports=("asyncua",),
         roles=("client", "server"),
         description=N_("OPC UA – client of a PLC/server, or our own OPC UA server for SCADA systems"),

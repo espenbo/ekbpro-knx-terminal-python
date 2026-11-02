@@ -24,7 +24,12 @@ from enum import Enum
 from functools import cache
 from typing import Any
 
-from xknx.dpt import DPTArray, DPTBase, DPTBinary
+try:
+    from xknx.dpt import DPTArray, DPTBase, DPTBinary
+except ImportError:          # the KNX module is not installed (./scada modules install knx)
+    # Without xknx there are no KNX telegrams to decode; the formatting helpers still work (no unit, value as is),
+    # so the TUI and the server run for installations with only Modbus, OPC UA, BACnet or MQTT.
+    DPTArray = DPTBase = DPTBinary = None  # type: ignore[assignment,misc]
 
 from .i18n import N_, _
 
@@ -99,7 +104,7 @@ def transcoder(dpt: str | None) -> type[DPTBase] | None:
     The result is cached because the lookup walks xknx's class tree.
     """
     main, sub = split(dpt)
-    if main is None:
+    if main is None or DPTBase is None:      # no DPT, or the KNX module is not installed
         return None
     t = DPTBase.parse_transcoder({"main": main, "sub": sub})
     if t is None and main in _MAIN_FALLBACK:

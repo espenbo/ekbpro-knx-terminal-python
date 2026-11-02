@@ -36,6 +36,21 @@ from .i18n import LANGUAGES, _, set_language
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The ``./scada`` command line (see :func:`_run`), with a missing protocol module reported as a short message.
+
+    A site that needs a module that is not installed – most often KNX, which is optional since 2026-11 – gets the
+    install command (``./scada modules install knx``) instead of a traceback, and exit code 2.
+    """
+    try:
+        return _run(argv)
+    except ModuleNotFoundError as exc:
+        if "./scada modules install" not in str(exc):
+            raise                     # a genuine bug (a missing import of our own), not an optional module
+        print(exc, file=sys.stderr)
+        return 2
+
+
+def _run(argv: list[str] | None = None) -> int:
     """The ``./scada`` command line: parse *argv* (default ``sys.argv``), run the sub-command, return the exit code.
 
     Without a sub-command the TUI starts. ``server`` runs the SCADA server in the foreground (systemd runs it

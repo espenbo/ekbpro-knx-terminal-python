@@ -137,7 +137,14 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # unreadable cache: rebuild below
-    from xknxproject import XKNXProj  # imported lazily: only needed when (re)building
+    # Imported lazily: only needed when (re)building the model.
+    try:
+        from xknxproject import XKNXProj
+    except ImportError:
+        # The KNX module is optional; a site with an ETS project needs it to (re)build the model.
+        from .protocols import missing_message
+
+        raise ModuleNotFoundError(missing_message("knx")) from None
 
     models = []
     for p in projects:

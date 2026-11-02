@@ -47,9 +47,14 @@ from collections import deque
 from functools import partial
 from typing import Any
 
-from xknx.dpt import DPTArray, DPTBinary
-from xknx.telegram import GroupAddress, Telegram, TelegramDirection
-from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+try:
+    from xknx.dpt import DPTArray, DPTBinary
+    from xknx.telegram import GroupAddress, Telegram, TelegramDirection
+    from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+except ImportError:          # the KNX module is not installed: only the protocols of protocols.yaml can run
+    # The names are only used by the KNX parts of the server, which never run without KNX (``knx_enabled``);
+    # ScadaServer refuses a configuration with KNX when the module is missing (see __init__).
+    pass
 
 from . import dpt as dptlib
 from .alarms import Rule, build_rules, normalize_severity, point_rule
@@ -141,6 +146,13 @@ def read_targets(model: dict, gas: dict[str, dict], alarm_addresses, mode: str) 
     return list(wanted)
 
 
+
+def _knx_installed() -> bool:
+    """True when the KNX module's packages (xknx, xknxproject) can be imported."""
+    from .protocols import installed
+
+    return installed("knx")
+
 class ScadaServer:
     """Owns the KNX connection, the database, the alarm state and all client connections."""
 
@@ -174,6 +186,11 @@ class ScadaServer:
         self.tel_times: deque[float] = deque(maxlen=100_000)  # timestamps of the last minute's telegrams (rate)
         # Without KNX (no knx:/project: in config.yaml) only the protocols of protocols.yaml run.
         self.knx_enabled = cfg.knx_enabled
+        if self.knx_enabled and not _knx_installed():
+            # Stop at once with the install hint, instead of failing later in the middle of the KNX start-up.
+            from .protocols import missing_message
+
+            raise ModuleNotFoundError(missing_message("knx"))
         # One entry per KNX IP interface; validated here so a typo stops the server at once.
         self.ifaces: list[dict[str, Any]] = [] if demo or not self.knx_enabled else interface_configs(
             cfg.knx, {p["name"]: p["prefix"] for p in cfg.projects})

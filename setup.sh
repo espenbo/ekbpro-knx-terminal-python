@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install EKBPRO KNX Terminal Python: Python virtual environment and dependencies.
 #
-#   ./setup.sh                  asks which protocol modules to install (Enter = none)
-#   ./setup.sh modbus mqtt      installs these protocol modules too (see docs/en/11-protocols-gateways.md)
+#   ./setup.sh                  asks which protocol modules to install (Enter = knx; without a terminal: knx)
+#   ./setup.sh knx modbus       installs these protocol modules (see docs/en/11-protocols-gateways.md)
+#   ./setup.sh modbus opcua     a site without KNX: the KNX packages are left out
 set -e
 cd "$(dirname "$0")"
 python3 -m venv venv
@@ -14,14 +15,16 @@ modules="$*"
 if [ -z "$modules" ] && [ -t 0 ]; then
     echo
     ./scada modules
-    read -r -p "Protocol modules to install, e.g. modbus mqtt (Enter = none): " modules
+    read -r -p "Protocol modules to install, e.g. knx modbus opcua (Enter = knx): " modules
 fi
+# KNX is what most installations use, and what this program started with: the default when nothing is chosen.
+modules="${modules:-knx}"
 if [ -n "$modules" ]; then
     # shellcheck disable=SC2086 # one word per module
     ./scada modules install $modules
 fi
 
-if [ -f config.yaml ]; then
+if [ -f config.yaml ] && ./scada modules | grep -q "knx.*installed\|knx.*installert"; then
     ./scada import
 else
     echo
