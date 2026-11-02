@@ -83,6 +83,8 @@ UNITS = {"°c": "degreesCelsius", "c": "degreesCelsius", "k": "degreesKelvin", "
 
 #: Highest device / object instance number (4194303 is the wildcard).
 MAX_INSTANCE = 4194302
+#: The wildcard device instance: a device asked for "device,4194303" answers as itself.
+WILDCARD_INSTANCE = 4194303
 
 
 def parse_object(text: str) -> tuple[str, int]:
@@ -377,7 +379,7 @@ class Driver(BaseDriver):
                 iams = await self.app.who_is(address=self.target, timeout=2)
                 if iams:
                     device_id = iams[0].iAmDeviceIdentifier[1]
-        oid = f"device,{int(device_id) if device_id not in (None, '') else 4194303}"
+        oid = f"device,{int(device_id) if device_id not in (None, '') else WILDCARD_INSTANCE}"
         try:
             name = await self.app.read_property(self.target, oid, "object-name")
         except _failures() as exc:
@@ -708,9 +710,17 @@ async def find_device(app, address: str = "", device_id: int | None = None, time
         target = Address(address)
         if device_id is None:
             iams = await app.who_is(address=target, timeout=timeout_s)
-            if not iams:
-                raise ConnectionError(_("no answer from {where}").format(where=address))
-            device_id = int(iams[0].iAmDeviceIdentifier[1])
+            if iams:
+                device_id = int(iams[0].iAmDeviceIdentifier[1])
+            else:
+                # Many devices (Siemens Climatix, Belimo) answer a directed Who-Is with a *broadcast* I-Am, which
+                # never comes back over a VPN or a routed network. Asking the wildcard instance 4194303 ("this
+                # device") for its identifier is a plain unicast request/answer, so it works there too.
+                try:
+                    oid = await app.read_property(target, f"device,{WILDCARD_INSTANCE}", "object-identifier")
+                except _failures():
+                    raise ConnectionError(_("no answer from {where}").format(where=address)) from None
+                device_id = int(oid[1])
         return target, device_id
     if device_id is None:
         raise ValueError(_("give an address or --device"))

@@ -17,6 +17,8 @@ What is shown comes from ``ui.systems`` in ``config.yaml``. Each entry names a c
                  supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
                  cooling: LK001_OP, alarm: SYS_AL, mode: SD_CMD}
           mode_texts: {0: Auto, 1: Manual off, 2: Manual on}
+          status_texts: {1: Service, 12: Time schedule}   # text for the value of the status tag (optional)
+          alarm_normal: 1                 # the alarm tag's value for "no alarm" (multi-state: 1 = Normal)
           settings: ["*_SP", "*Set*"]     # tags on the "Settings" tab (glob, default: every tag)
           hide: [Act_Time]                # tags never shown there (glob, without the prefix)
           groups:                         # sections of the "Settings" tab (glob, without the prefix)
@@ -59,6 +61,14 @@ from textual.widgets import (
 
 from ..i18n import N_, _
 from .charts import CachedPlot, draw, palette
+from .diagram import (
+    DiagramColors,
+    Field,
+    field_keys,
+    parse_fields,
+    placeholders,
+    render_diagram,
+)
 from .gateways import PointDialog, PointWrite, confirm_point_write
 from .views import View
 from .widgets import FastTable, LiveStatic
@@ -111,6 +121,40 @@ class Vent:
     groups: list[tuple[str, list[str]]] = field(default_factory=list)   # (title, glob patterns without prefix)
     hide: list[str] = field(default_factory=list)        # glob patterns without prefix
     kind: str = "ventilation"                            # "panel": no drawing, only the tags in sections
+    #: Text per value of the ``status`` tag – BACnet multi-state values are numbers (Climatix ``ActOpSta`` 12 =
+    #: "Time schedule"); without an entry the number is shown.
+    status_texts: dict[int, str] = field(default_factory=dict)
+    #: The value of the ``alarm`` tag that means "no alarm" when it is not a plain on/off value: a BACnet
+    #: multi-state alarm class is 1 = Normal, 2 = Alarm. None: the usual rule (on/true or a number above 0).
+    alarm_normal: float | None = None
+    #: ``type: diagram``: the drawing (text with ``{field}`` placeholders), its fields and its chart curves
+    #: (chart → {legend: field key}); see :mod:`.diagram`.
+    diagram: str = ""
+    fields: dict[str, Field] = field(default_factory=dict)
+    charts: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def extra_connections(self) -> list[str]:
+        """Connections a diagram reads besides its own (fields with ``connection:``), in order, without duplicates."""
+        return list(dict.fromkeys(f.connection for f in self.fields.values() if f.connection))
+
+    def chart_curves(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """The (``conn/tag`` key, English or configured legend) of the temperature and the output chart.
+
+        An air handling unit uses its roles (:data:`TEMP_CURVES`, :data:`OUTPUT_CURVES`); a diagram the
+        ``charts:`` of its entry (legend → field key, the field's main tag is drawn).
+        """
+        if self.kind != "diagram":
+            return ([(k, n) for r, n in TEMP_CURVES if (k := self.key(r))],
+                    [(k, n) for r, n in OUTPUT_CURVES if (k := self.key(r))])
+        out = []
+        for chart in ("temperatures", "outputs"):
+            curves = []
+            for legend, key in (self.charts.get(chart) or {}).items():
+                f = self.fields.get(key)
+                if f is not None and (keys := field_keys(f, self.conn, self.prefix)):
+                    curves.append((keys[0], legend))
+            out.append(curves)
+        return out[0], out[1]
 
     def key(self, role: str) -> str | None:
         """The hub key ``conn/tag`` of *role*, or None when the role has no tag (it is then left out of the drawing)."""
@@ -173,8 +217,8 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
                 tags = {**METER_ROLES, **{str(k): str(v) for k, v in (m.get("tags") or {}).items() if v}}
                 meters.append(Meter(str(m.get("name") or m["connection"]), str(m["connection"]), tags))
             continue
-        if kind not in ("ventilation", "panel"):
-            problems.append(_("ui.systems[{i}]: unknown type {type} – use ventilation, panel or energy").format(
+        if kind not in ("ventilation", "panel", "diagram"):
+            problems.append(_("ui.systems[{i}]: unknown type {type} – use ventilation, diagram, panel or energy").format(
                 i=i, type=repr(kind)))
             continue
         if not e.get("connection"):
@@ -187,21 +231,44 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
                 problems.append(_("ui.systems[{i}]: unknown role {role}").format(i=i, role=repr(role)))
             elif tag:
                 tags[str(role)] = prefix + str(tag)
-        modes: dict[int, str] = {}
-        for k, v in (e.get("mode_texts") or {}).items():
-            try:
-                modes[int(k)] = str(v)
-            except (TypeError, ValueError):
-                problems.append(_("ui.systems[{i}]: mode_texts: {key} is not a number").format(i=i, key=repr(k)))
+        texts: dict[str, dict[int, str]] = {"mode_texts": {}, "status_texts": {}}
+        for key, out in texts.items():
+            for k, v in (e.get(key) or {}).items():
+                try:
+                    out[int(k)] = str(v)
+                except (TypeError, ValueError):
+                    problems.append(_("ui.systems[{i}]: {setting}: {key} is not a number").format(
+                        i=i, setting=key, key=repr(k)))
+        modes = texts["mode_texts"]
+        alarm_normal = e.get("alarm_normal")
+        if alarm_normal is not None and not isinstance(alarm_normal, (int, float)):
+            problems.append(_("ui.systems[{i}]: alarm_normal must be a number").format(i=i))
+            alarm_normal = None
         groups = []
         for j, g in enumerate(e.get("groups") or [], 1):
             if not isinstance(g, dict) or not g.get("title"):
                 problems.append(_("ui.systems[{i}].groups[{j}]: title is missing").format(i=i, j=j))
                 continue
             groups.append((str(g["title"]), _str_list(g.get("tags"))))
+        diagram, fields, charts = "", {}, {}
+        if kind == "diagram":
+            diagram = str(e.get("diagram") or "")
+            fields, field_problems = parse_fields(e.get("fields"))
+            problems += [f"ui.systems[{i}]: {p}" for p in field_problems]
+            if not diagram.strip():
+                problems.append(_("ui.systems[{i}]: diagram is missing").format(i=i))
+            for key in placeholders(diagram):
+                if key not in fields:
+                    problems.append(_("ui.systems[{i}]: no field {key} for the diagram").format(i=i, key=repr(key)))
+            for chart, curves in (e.get("charts") or {}).items():
+                if chart not in ("temperatures", "outputs") or not isinstance(curves, dict):
+                    problems.append(_("ui.systems[{i}]: charts: use temperatures/outputs with legend: field").format(i=i))
+                    continue
+                charts[chart] = {str(k): str(v) for k, v in curves.items()}
         vents.append(Vent(name, str(e["connection"]), tags, str(e.get("meter") or ""), modes,
                           str(e.get("short") or ""), _str_list(e.get("settings")), prefix, groups,
-                          _str_list(e.get("hide")), kind))
+                          _str_list(e.get("hide")), kind, texts["status_texts"], alarm_normal,
+                          diagram, fields, charts))
     return vents, meters, problems
 
 
@@ -396,6 +463,17 @@ def _join(blocks: list[Block]) -> list[Text]:
     return out
 
 
+def vent_alarm(s: Vent, value: Value | None) -> bool | None:
+    """Whether the unit's ``alarm`` tag says alarm; None when unknown.
+
+    With ``alarm_normal`` set, every other value is an alarm (a multi-state alarm class: 1 = Normal, 2 = Alarm,
+    where :func:`on` would call both "on"); otherwise the usual on/off rule.
+    """
+    if s.alarm_normal is None or value is None or value[0] is None:
+        return on(value)
+    return value[0] != s.alarm_normal
+
+
 def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, meter_power: Value | None = None,
                 width: int = 0) -> Text:
     """The status line, the air-flow drawing and the week program (when set up) of one unit.
@@ -412,7 +490,7 @@ def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, m
         running = on(v["supply_fan_run"])
     if running is None:
         running = on(v["supply_fan"])
-    alarm = on(v["alarm"])
+    alarm = vent_alarm(s, v["alarm"])
 
     t = Text(no_wrap=True, overflow="crop")   # a wrapped line would tear the drawing apart
     if running is None:
@@ -431,7 +509,10 @@ def render_vent(s: Vent, get: Callable[[str | None], Value | None], c: Colors, m
         text = s.mode_texts.get(int(mode), fmt(v["mode"], 0)) if isinstance(mode, (int, float)) else str(mode)
         t.append(f"   {_('Mode')}: {text}")
     if v["status"] is not None and v["status"][0] not in (None, ""):
-        t.append(f"   {v['status'][0]}", style=c.accent)
+        status = v["status"][0]
+        if isinstance(status, (int, float)) and not isinstance(status, bool):
+            status = s.status_texts.get(int(status), fmt(v["status"], 0))
+        t.append(f"   {status}", style=c.accent)
     if v["setpoint"] is not None:
         t.append(f"   {_('Setpoint')} {fmt(v['setpoint'])}")
     if meter_power is not None:
@@ -545,6 +626,14 @@ def theme_colors(app: Any) -> Colors:
     tv = getattr(app, "theme_variables", {}) or {}
     return Colors(ok=tv.get("success", "green"), warn=tv.get("warning", "yellow"), bad=tv.get("error", "red"),
                   dim="dim", accent=tv.get("accent", "cyan"))
+
+
+def diagram_colors(app: Any) -> DiagramColors:
+    """The colours of a piping diagram from the active theme: supply pipes in the error colour (hot), return pipes
+    in the primary colour (cold), states in success/warning/error. Called at every redraw (theme changes)."""
+    tv = getattr(app, "theme_variables", {}) or {}
+    return DiagramColors(hot=tv.get("error", "red"), cold=tv.get("primary", "blue"), ok=tv.get("success", "green"),
+                         warn=tv.get("warning", "yellow"), bad=tv.get("error", "red"), dim="dim", value="bold")
 
 
 class ModeDialog(ModalScreen["int | None"]):
@@ -724,6 +813,7 @@ class SystemsView(View):
         Used by :meth:`on_points` to drop values of connections this view does not show.
         """
         conns = [s.conn for s in self.vents] + [s.meter for s in self.vents if s.meter]
+        conns += [c for s in self.vents for c in s.extra_connections()]
         return list(dict.fromkeys(conns))
 
     def on_show_view(self) -> None:
@@ -755,7 +845,7 @@ class SystemsView(View):
         if s is None or not self.scada.client.connected:
             return
         now = time.time()
-        stale = [c for c in dict.fromkeys(c for c in (s.conn, s.meter) if c)
+        stale = [c for c in dict.fromkeys(c for c in (s.conn, s.meter, *s.extra_connections()) if c)
                  if now - self._tags_at.get(c, 0) > self.POINTS_MAX_AGE]
         for conn, points in zip(stale, await asyncio.gather(
                 *(self.scada.request("points", conn=c, limit=5000) for c in stale))):
@@ -780,7 +870,8 @@ class SystemsView(View):
             s: the unit.
             index: its position, used as the key of :attr:`curves`; the answer is kept even if the user moved on.
         """
-        keys = [k for role, _name in (*TEMP_CURVES, *OUTPUT_CURVES) if (k := s.key(role))]
+        temps, outputs = s.chart_curves()
+        keys = list(dict.fromkeys(k for k, _name in (*temps, *outputs)))
         results = await asyncio.gather(
             *(self.scada.request("history", point=k, hours=24, max_points=600) for k in keys))
         self.curves[index] = {k: [(float(p[0]), float(p[1])) for p in pts or [] if p[1] is not None]
@@ -953,9 +1044,11 @@ class SystemsView(View):
         card = self.query_one("#sys-card", LiveStatic)
         if s.kind == "panel":
             card.set(Text(_("No drawing for this system – its tags are on the Settings tab."), style="dim"))
+        elif s.kind == "diagram":
+            card.set(render_diagram(s.diagram, s.fields, self.get, s.conn, s.prefix, diagram_colors(self.app)))
         else:
             card.set(render_vent(s, self.get, theme_colors(self.app), power, card.size.width - 2))
-        card.set_class(bool(on(self.get(s.key("alarm")))), "bad")
+        card.set_class(bool(vent_alarm(s, self.get(s.key("alarm")))), "bad")
 
     def _update_table(self, s: Vent) -> None:
         """Update the value cells of the tags that changed (filling the table first if it shows another unit)."""
@@ -980,11 +1073,12 @@ class SystemsView(View):
         start = now - 86400
         pal = palette(self.app)
         curves = self.series
-        for plot_id, roles, title in (("#sys-temp-plot", TEMP_CURVES, _("Temperatures – last 24 hours")),
-                                      ("#sys-out-plot", OUTPUT_CURVES, _("Outputs – last 24 hours"))):
+        temps, outputs = s.chart_curves()
+        for plot_id, chart, title in (("#sys-temp-plot", temps, _("Temperatures – last 24 hours")),
+                                      ("#sys-out-plot", outputs, _("Outputs – last 24 hours"))):
             plot = self.query_one(plot_id, CachedPlot)
             # Back on a unit whose curves did not change: its figure is kept, nothing to draw.
-            key = (self.index, tuple(len(curves.get(s.key(r) or "", ())) for r, _n in roles))
+            key = (self.index, tuple(len(curves.get(k, ())) for k, _n in chart))
             if plot.cached(key):
                 plot.changed(key)
                 continue
@@ -992,9 +1086,8 @@ class SystemsView(View):
             plt.clear_data()
             plt.clear_figure()
             series = []
-            for i, (role, name) in enumerate(roles):
-                key = s.key(role)
-                pts = [p for p in curves.get(key or "", []) if p[0] >= start - 3600]
+            for i, (curve_key, name) in enumerate(chart):
+                pts = [p for p in curves.get(curve_key, []) if p[0] >= start - 3600]
                 if pts:
                     series.append((_(name), pts, pal[i % len(pal)]))
             draw(plt, series, "line", start, now, plot.size.width)

@@ -377,6 +377,8 @@ ui:
              supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
              cooling: LK001_OP, alarm: SYS_AL, filter_supply: QD401_AL, filter_extract: QD501_AL, mode: SD_CMD}
       mode_texts: {0: Auto, 1: Manuell av, 2: Manuell på}
+      status_texts: {12: Tidsprogram}   # tekst per verdi av status-taggen – valgfri
+      alarm_normal: 1                   # verdien av alarm-taggen som betyr «ingen alarm» – valgfri
       settings: ["*_SP", "*_Set*"]      # tagger i fanen Innstillinger (glob) – valgfri, standard: alle tagger
       hide: [Act_Time, DayOfWeek]       # aldri i fanen Innstillinger (glob uten prefiks) – valgfri
       groups:                           # grupper i fanen Innstillinger (glob uten prefiks) – valgfri
@@ -394,8 +396,47 @@ Roller for et aggregat: `outdoor` (ute/inntak), `supply` (tilluft), `extract` (a
 `cooling`, `supply_flow`, `extract_flow`, `supply_pressure`, `extract_pressure`, `running`, `alarm`,
 `filter_supply`, `filter_extract`, `mode`, `status`. Utelat det aggregatet ikke har. «I drift» er `running`,
 ellers `supply_fan_run`, ellers `supply_fan` > 0.
+BACnet multi-state-verdier er tall (1, 2, 3 …): `status_texts` viser en tekst for verdien av `status` (Climatix
+`ActOpSta` 12 = «Tidsprogram»), og `alarm_normal` gir verdien av `alarm` som betyr «ingen alarm» (en alarmklasse
+med 1 = Normal, 2 = Alarm – uten den regnes hver verdi over 0 som alarm). Tekstene i en enhet kan leses med
+`property: state-text` på en tagg.
 Ukeprogrammet vises når `week_start_hour` og `week_stop_hour` er satt: tabeller med én verdi per dag, mandag først
 (`week_start_minute`, `week_stop_minute`, `week_enabled` valgfrie), og `overtime` (av/på).
+
+#### Rørskjema (`type: diagram`)
+
+Vannbårne anlegg ser forskjellige ut på hvert anlegg, så tegningen skrives som tekst, slik en HMI-side tegnes, og
+de levende verdiene settes inn i den:
+
+```yaml
+    - name: "=320.002 Gulvvarme"
+      type: diagram
+      connection: pls1
+      prefix: "320_002_"
+      diagram: |2
+         tur   ━━━━ SB501 {ventil} ━━ {p1 } JP401 ━━━━━━━━▶ RT401 {t_tur  }
+         retur ◀══════════════════════════════════════════ RT501 {t_ret  }
+      fields:
+        ventil: {tag: RelPos, connection: ventil1, decimals: 0}   # en tagg i en annen tilkobling
+        p1: {kind: pump, run: JP401_V, alarm: [JP401_AL], safety: JP401_SB}
+        t_tur: {tag: RT401_PV, alarm: [RT401_L_AL, RT401_H_AL]}
+        t_ret: {tag: RT501_PV}
+      charts:                           # grafene for siste døgn: forklaring → felt
+        temperatures: {"Tur": t_tur, "Retur": t_ret}
+        outputs: {"Ventil %": ventil}
+```
+
+- `{nøkkel}` byttes ut med feltet *nøkkel*, like bredt som plassholderen selv (med klammene): mellomrom inne i
+  klammene gjør feltet bredere, så tegningen holder kolonnene. Skriv `diagram: |2`, så kan første linje begynne
+  med mellomrom.
+- Tykke strektegn (`━ ┃ ┏ ┓ ┗ ┛ ┣ ┫ ┳ ┻ ╋`) er tur (rødt), doble (`═ ║ ╔ ╗ ╚ ╝ ╠ ╣ ╦ ╩ ╬`) retur eller kaldtvann
+  (blått); pilene `▶ ◀ ▲ ▼` får fargen til røret foran.
+- Felttyper (`kind`): `value` (standard; `decimals`, `unit: false`), `pump` (`run`, `alarm`, `safety`), `state`
+  (en av/på-tagg vist med tekstene `on`/`off`) og `text` (`texts` for tallene i en multi-state-tagg). `alarm` er
+  en tagg eller en liste: er én av dem på, blir feltet rødt. Taggene får oppføringens `prefix`; et felt med egen
+  `connection` leser den tilkoblingen uten prefiks (eller med egen `prefix`). `align` (`left` / `center` /
+  `right`, standard `center`) plasserer teksten i feltet.
+- `groups`, `settings` og `hide` virker som for et aggregat (fanen Innstillinger).
 
 En måler bruker taggnavnene i utstyrsmalene (`Total active power`, `Total active energy`, `L1 current` …,
 `L1 voltage` …, `Power factor`, `Frequency`); `tags:` overstyrer enkeltroller (`power`, `energy`, `i1`–`i3`,

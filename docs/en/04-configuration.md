@@ -376,6 +376,8 @@ ui:
              supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
              cooling: LK001_OP, alarm: SYS_AL, filter_supply: QD401_AL, filter_extract: QD501_AL, mode: SD_CMD}
       mode_texts: {0: Auto, 1: Manual off, 2: Manual on}
+      status_texts: {12: Time schedule} # text per value of the status tag – optional
+      alarm_normal: 1                   # value of the alarm tag that means "no alarm" – optional
       settings: ["*_SP", "*_Set*"]      # tags on the Settings tab (glob) – optional, default: all tags
       hide: [Act_Time, DayOfWeek]       # never on the Settings tab (glob without prefix) – optional
       groups:                           # sections of the Settings tab (glob without prefix) – optional
@@ -392,8 +394,47 @@ Roles of a unit: `outdoor`, `supply`, `extract`, `exhaust`, `setpoint`, `supply_
 `supply_fan_run`, `extract_fan_run`, `recovery`, `heating`, `cooling`, `supply_flow`, `extract_flow`,
 `supply_pressure`, `extract_pressure`, `running`, `alarm`, `filter_supply`, `filter_extract`, `mode`, `status`.
 Leave out what the unit does not have. "Running" is `running`, else `supply_fan_run`, else `supply_fan` > 0.
+BACnet multi-state values are numbers (1, 2, 3 …): `status_texts` shows a text for the `status` value (a
+Climatix `ActOpSta` 12 = "Time schedule"), and `alarm_normal` gives the `alarm` value that means "no alarm"
+(an alarm class with 1 = Normal, 2 = Alarm – without it every value above 0 counts as an alarm). The texts of a
+device can be read with `property: state-text` on a tag.
 A week program is shown when `week_start_hour` and `week_stop_hour` are set: arrays with one value per day,
 Monday first (`week_start_minute`, `week_stop_minute`, `week_enabled` optional), and `overtime` (on/off).
+
+#### Piping diagrams (`type: diagram`)
+
+Water-borne plants look different on every site, so their drawing is written as text, the way an HMI page is
+drawn, and the live values are put into it:
+
+```yaml
+    - name: "=320.002 Floor heating"
+      type: diagram
+      connection: plc1
+      prefix: "320_002_"
+      diagram: |2
+         supply ━━━━ SB501 {valve } ━━ {p1 } JP401 ━━━━━━━━▶ RT401 {t_sup  }
+         return ◀══════════════════════════════════════════ RT501 {t_ret  }
+      fields:
+        valve: {tag: RelPos, connection: valve1, decimals: 0}   # a tag of another connection
+        p1: {kind: pump, run: JP401_V, alarm: [JP401_AL], safety: JP401_SB}
+        t_sup: {tag: RT401_PV, alarm: [RT401_L_AL, RT401_H_AL]}
+        t_ret: {tag: RT501_PV}
+      charts:                           # the 24 h charts: legend → field
+        temperatures: {"Supply": t_sup, "Return": t_ret}
+        outputs: {"Valve %": valve}
+```
+
+- `{key}` is replaced by the field *key*, as wide as the placeholder itself (braces included): spaces inside the
+  braces widen the field, so the drawing keeps its columns. Write `diagram: |2` so the first line may start
+  with spaces.
+- Heavy box characters (`━ ┃ ┏ ┓ ┗ ┛ ┣ ┫ ┳ ┻ ╋`) are supply pipes (red), double ones (`═ ║ ╔ ╗ ╚ ╝ ╠ ╣ ╦ ╩ ╬`)
+  return or cold water (blue); arrows `▶ ◀ ▲ ▼` take the colour of the pipe before them.
+- Field kinds: `value` (default; `decimals`, `unit: false`), `pump` (`run`, `alarm`, `safety`), `state` (an
+  on/off tag shown as `on`/`off` texts) and `text` (`texts` for the numbers of a multi-state tag). `alarm` is a
+  tag or a list: any of them on draws the field red. Tags get the entry's `prefix`; a field with its own
+  `connection` reads that connection without prefix (or with its own `prefix`). `align` (`left` / `center` /
+  `right`, default `center`) places the text inside the field.
+- `groups`, `settings` and `hide` work as for an air handling unit (the Settings tab).
 
 A meter uses the tag names of the device templates (`Total active power`, `Total active energy`, `L1 current` …,
 `L1 voltage` …, `Power factor`, `Frequency`); `tags:` overrides single roles (`power`, `energy`, `i1`–`i3`,

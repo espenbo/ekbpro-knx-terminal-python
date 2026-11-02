@@ -37,7 +37,7 @@ from ..alarms import is_critical
 from ..i18n import N_, _
 from .graphics import bar, big_text, resample, sparkline
 from .home import HomeModel
-from .systems import Value, Vent, fmt, on, parse_systems
+from .systems import Value, Vent, fmt, on, parse_systems, vent_alarm
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -186,7 +186,7 @@ def vent_lines(s: Vent, get: Callable[[str | None], Value | None], t: int, ascii
         return _num(val[0]) if val else None
 
     running = on(get(s.key("running")))
-    alarm = on(get(s.key("alarm")))
+    alarm = vent_alarm(s, get(s.key("alarm")))
     sf, ef = level("supply_fan"), level("extract_fan")
     supply_on = bool(on(get(s.key("supply_fan_run"))) or (sf or 0) > 0 or (running and sf is None))
     extract_on = bool(on(get(s.key("extract_fan_run"))) or (ef or 0) > 0 or (running and ef is None))

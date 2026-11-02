@@ -75,8 +75,10 @@ venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null
     `./scada simulate MODELL` lager en testslave.
 - `knxscada/tui/`: Textual. `app.py` fordeler servermeldinger (`telegram`, `points`, `protocols`, `alarms` …) til
   visningene. F7 Trender (`views.TrendView`) viser både gruppeadresser og loggede tagger (`pt:conn/tag`).
-  Anlegg (Ctrl+E, `systems.py`) viser ett ventilasjonsaggregat eller panel om gangen (menyen: Anlegg → aggregat, data
-  `("system", i)`), med tegning, grafer og fanen Innstillinger. Energimålere (Ctrl+G, `energy.py`). Begge leser
+  Anlegg (Ctrl+E, `systems.py`) viser ett anlegg om gangen (menyen: Anlegg → anlegg, data `("system", i)`), med
+  tegning, grafer og fanen Innstillinger. Typer: `ventilation` (fast luftveitegning, `render_vent`), `diagram`
+  (rørskjema skrevet som tekst i config.yaml med `{felt}`-plassholdere, `diagram.py`/`render_diagram`; ━ tur, ═ retur;
+  felt kan lese andre tilkoblinger), `panel` (bare Innstillinger) og `energy`. Energimålere (Ctrl+G, `energy.py`). Begge leser
   `ui.systems` (roller → tagger). Tegningen og forbruksberegningen er rene funksjoner (`render_vent`, `meter_cells`,
   `consumption`), så de testes uten terminal. Nye visninger legges i
   `MENU`, `KEYBAR_LABELS`, `VIEW_HINTS` og `compose()` i `app.py`, og får `points` via `_handle`.

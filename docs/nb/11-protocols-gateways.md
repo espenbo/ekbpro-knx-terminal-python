@@ -263,6 +263,10 @@ operatør kan velge en annen prioritet for én skriving, og slippe en prioritet 
 (brukerveiledningen, «Skriving til BACnet»); `point_write` tar `priority` og `release: true` til dette.
 Prioritet 1, 2 og 5 avvises for operatører.
 
+`./scada bacnet-scan ADRESSE` finner enheten med en Who-Is sendt til adressen. Mange enheter (Siemens Climatix,
+Belimo) svarer med en kringkastet I-Am som aldri kommer gjennom en VPN; da leser skanningen jokerinstansen
+4194303 i stedet, og det virker også gjennom rutere.
+
 ```yaml
   aggregat1:
     protocol: bacnet

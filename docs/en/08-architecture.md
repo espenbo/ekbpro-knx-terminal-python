@@ -44,6 +44,7 @@ knxscada/
     gateways.py   F11 Gateways: connections, tags, gateways and their forms
     protomon.py   Monitor › Modbus/OPC UA/BACnet/MQTT: value changes and writes per protocol (app.point_log)
     systems.py, energy.py   Systems (Ctrl+E) and Energy meters (Ctrl+G) from ui.systems
+    diagram.py    piping diagrams for Systems (type: diagram): text drawing with live fields
     home.py       summary per room (temperature, lights, heating, alarm)
     themes.py     colour themes
     app.tcss      style sheet

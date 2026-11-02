@@ -261,6 +261,10 @@ choose another priority for a single write, and release a priority again, in the
 "Writing to BACnet"); `point_write` takes `priority` and `release: true` for this. Priorities 1, 2 and 5 are
 refused for operators.
 
+`./scada bacnet-scan ADDRESS` finds the device with a Who-Is sent to its address. Many devices (Siemens Climatix,
+Belimo) answer with a broadcast I-Am that never crosses a VPN; the scan then reads the wildcard device instance
+4194303 instead, which works across routers too.
+
 ```yaml
   ahu1:
     protocol: bacnet

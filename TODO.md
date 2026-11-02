@@ -20,7 +20,7 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
-- 2026-11-01 kveld: 413 tester grønne (1 hoppet over), ruff 0 (alle 55 gamle merknader rettet eller begrunnet med
+- 2026-11-02: 419 tester grønne (1 hoppet over), ruff 0. Ingenting fra Runde 2 er committet ennå.
   `noqa`). Ingenting fra Runde 2 er committet ennå.
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
       `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
@@ -62,6 +62,14 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 - [ ] KNX → OPC UA via gatewayen (erstatning for `plc_map.yaml` + GVL): først da kan PLS-broen fases ut.
 
 ## Runde 2 – åpent
+
+- [x] BACnet over VPN (2026-11-02): `bacnet-scan ADRESSE` leser jokerinstansen 4194303 når Who-Is ikke får svar
+      (Climatix/Belimo svarer med kringkastet I-Am). `ui.systems`: `status_texts` (multi-state-status som tekst) og
+      `alarm_normal` (alarmklasse 1 = Normal / 2 = Alarm). Tester, dok 04/11/12 (en+nb).
+- [x] Rørskjema i Anlegg (2026-11-02): `type: diagram` – tegningen skrives som tekst i `ui.systems` med
+      `{felt}`-plassholdere (bredden følger plassholderen), ━ = tur (rød), ═ = retur (blå), felttyper value/pump/
+      state/text, alarmtagger per felt, felt fra andre tilkoblinger, `charts` for grafene. `tui/diagram.py`,
+      `tests/test_diagram.py`, dok 03/04/08/12 (en+nb). Første bruk: varmeanleggene i et anlegg, tegnet etter HMI-en.
 
 - [ ] BACnet mot ekte utstyr: at et ekte SD-anlegg leser vår BACnet-enhet
       (Who-Is, objektliste, COV, skriving tilbake). Lesing, COV og `bacnet-scan` er prøvd.

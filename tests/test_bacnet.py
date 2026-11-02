@@ -356,3 +356,33 @@ def test_client_write_priority_and_release(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+@pytestmark_bacnet
+def test_find_device_without_i_am():
+    """A device whose I-Am is a broadcast (lost over a VPN) is found by reading the wildcard device instead."""
+    from knxscada.protocols.bacnet import WILDCARD_INSTANCE, find_device
+
+    class App:
+        """Answers no Who-Is, but the wildcard read like a Siemens Climatix behind Tailscale."""
+
+        def __init__(self, answer: bool):
+            self.answer = answer
+            self.asked: list[str] = []
+
+        async def who_is(self, *args, **kw):
+            """The I-Am goes out as a broadcast and never arrives."""
+            return []
+
+        async def read_property(self, target, oid, prop):
+            """Only the wildcard instance is asked; it answers with the real identifier."""
+            self.asked.append(f"{oid} {prop}")
+            if not self.answer:
+                raise TimeoutError
+            return ("device", 11030)
+
+    app = App(answer=True)
+    _target, device_id = asyncio.run(find_device(app, "192.168.1.76"))
+    assert device_id == 11030 and app.asked == [f"device,{WILDCARD_INSTANCE} object-identifier"]
+    with pytest.raises(ConnectionError, match="no answer"):
+        asyncio.run(find_device(App(answer=False), "192.168.1.76"))

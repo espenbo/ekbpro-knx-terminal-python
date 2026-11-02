@@ -226,6 +226,11 @@ Every air handling unit has its own entry under **Systems** in the menu (`System
 `m` opens the system switch of the unit: one button per `mode_texts` entry, then a confirmation. It needs the
 `mode` role to be a writable tag.
 
+Water-borne plants (boiler room, floor heating, tap water) are shown as a **piping diagram** drawn for the site
+(`type: diagram`): supply pipes in red, return pipes in blue, pumps green when running, red on an alarm and
+yellow when the safety switch is off, values in red when one of their alarms is on. The charts and the Settings
+tab work as for an air handling unit. A `type: panel` entry has no drawing, only the Settings tab.
+
 What is shown is set up in [`ui.systems`](04-configuration.md#systems-view-ctrle).
 
 ## Energy meters (Ctrl+G)

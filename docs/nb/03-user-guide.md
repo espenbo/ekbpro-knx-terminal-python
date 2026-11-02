@@ -226,6 +226,11 @@ Hvert ventilasjonsaggregat har sin egen oppføring under **Anlegg** i menyen (`A
 `m` åpner systemvenderen for aggregatet: én knapp per oppføring i `mode_texts`, deretter en bekreftelse. Rollen
 `mode` må være en skrivbar tagg.
 
+Vannbårne anlegg (varmesentral, gulvvarme, tappevann) vises som et **rørskjema** tegnet for anlegget
+(`type: diagram`): tur i rødt, retur i blått, pumper grønne i drift, røde ved alarm og gule når
+sikkerhetsbryteren er slått av, og verdier i rødt når en av alarmene deres er på. Grafene og fanen Innstillinger
+virker som for et aggregat. En oppføring med `type: panel` har ingen tegning, bare fanen Innstillinger.
+
 Hva som vises, settes opp i [`ui.systems`](04-configuration.md#anleggsvisning-ctrle).
 
 ## Energimålere (Ctrl+G)

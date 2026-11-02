@@ -46,6 +46,7 @@ knxscada/
     gateways.py   F11 Gatewayer: tilkoblinger, tagger, gatewayer og skjemaene for dem
     protomon.py   Monitor › Modbus/OPC UA/BACnet/MQTT: verdiendringer og skrivinger per protokoll (app.point_log)
     systems.py, energy.py   Anlegg (Ctrl+E) og Energimålere (Ctrl+G) fra ui.systems
+    diagram.py    rørskjema i Anlegg (type: diagram): teksttegning med levende felt
     home.py       sammendrag per rom (temperatur, lys, varme, alarm)
     themes.py     fargetemaer
     app.tcss      stilark

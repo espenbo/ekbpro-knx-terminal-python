@@ -466,3 +466,23 @@ def test_tui_overview_tiles_from_systems(tmp_path, monkeypatch):
             assert tile.border_subtitle == "2/2 no data" and tile.has_class("idle")
 
     asyncio.run(run())
+
+
+def test_status_texts_and_multistate_alarm():
+    """A Climatix-style unit: the status is a multi-state number shown as text, and the alarm class is
+    1 = Normal / 2 = Alarm – both values are "on" for :func:`on`, so ``alarm_normal`` decides."""
+    from knxscada.tui.systems import vent_alarm
+
+    vents, _m, problems = parse_systems([{"name": "AHU", "connection": "v", "tags": {"alarm": "AlmCl2", "status": "St"},
+                                          "status_texts": {12: "Time schedule"}, "alarm_normal": 1},
+                                         {"name": "Bad", "connection": "v", "status_texts": {"x": "?"},
+                                          "alarm_normal": "one"}])
+    assert len(problems) == 2                    # a status_texts key that is no number, a text alarm_normal
+    s = vents[0]
+    assert s.status_texts == {12: "Time schedule"} and s.alarm_normal == 1
+    assert vent_alarm(s, (1, "", "good")) is False and vent_alarm(s, (2, "", "good")) is True
+    assert vent_alarm(s, None) is None and vent_alarm(vents[1], (2, "", "good")) is True   # the usual rule
+    text = render_vent(s, {"v/AlmCl2": (2, "", "good"), "v/St": (12, "", "good")}.get, Colors()).plain
+    assert "ALARM" in text and "Time schedule" in text
+    text = render_vent(s, {"v/AlmCl2": (1, "", "good"), "v/St": (7, "", "good")}.get, Colors()).plain
+    assert "no alarm" in text and "   7" in text   # an unknown status value is shown as the number
