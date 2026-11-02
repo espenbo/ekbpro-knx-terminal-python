@@ -183,7 +183,12 @@ class RoomTile(LiveStatic):
                 lit = f"[$text-muted{' i' if 'lights' in old else ''}]○ 0/{st['lights_total']}[/]"
         else:
             lit = "   "
-        self.set(f"[b]{name}[/b]{flag}\n{temp}{sp}{heat}\n{lit}  [$text-muted]{spark}[/]")
+        # The room's other sensors take the place of the sparkline: the card has three lines, and their names are in
+        # the climate table.
+        extra = " ".join(f"[{dim}]{v:.1f}°[/]" if is_old else f"{v:.1f}°"
+                         for _label, v, is_old in st.get("temps", ()) if v is not None)
+        tail = f"[$text-muted]{extra}[/]" if extra else f"[$text-muted]{spark}[/]"
+        self.set(f"[b]{name}[/b]{flag}\n{temp}{sp}{heat}\n{lit}  {tail}")
         for cls, on_ in (
             ("bad", st["alarm"] == "critical"),
             ("warn", st["alarm"] == "warning"),
@@ -286,6 +291,9 @@ class OverviewView(GAWatcher, View):
             c.add_column(_(label), key=key, width=width)
         for r in self.climate_rooms:
             c.add_row(r.name, "", "", "", "", "", key=r.id)
+            # One row per other sensor of the room (switch, smoke detector, CO₂ sensor …) right under it.
+            for i, (label, _ga) in enumerate(r.temps):
+                c.add_row(Text(f" └ {label}", style=app.color("muted")), "", "", "", "", "", key=f"{r.id}#{i}")
 
         grid = self.query_one("#ov-room-grid", ItemGrid)
         self.room_tiles = [RoomTile(r) for r in home.rooms if r.temp_ga or r.lights]
@@ -461,13 +469,19 @@ class OverviewView(GAWatcher, View):
             spark = self._spark(r.temp_ga, 24, now)
             cells = (("temp", temp), ("sp", sp_text), ("mode", mode), ("heat", heat),
                      ("spark", Text(spark, style=app.color("primary"))))
-            for col, val in cells:
-                # update_cell is relatively expensive: only call it on real change.
-                key = (r.id, col)
-                sig = (val.plain, str(val.style)) if isinstance(val, Text) else val
-                if self._cells.get(key) != sig:
-                    self._cells[key] = sig
-                    c.update_cell(r.id, col, val)
+            rows = [(r.id, cells)]
+            for i, ((_label, value, is_old), (_l, ga)) in enumerate(zip(st["temps"], r.temps)):
+                extra = Text(f"{value:.1f}°" if value is not None else "–", style=old_style if is_old else "")
+                rows.append((f"{r.id}#{i}", (("temp", extra),
+                                             ("spark", Text(self._spark(ga, 24, now), style=app.color("muted"))))))
+            for row, row_cells in rows:
+                for col, val in row_cells:
+                    # update_cell is relatively expensive: only call it on real change.
+                    key = (row, col)
+                    sig = (val.plain, str(val.style)) if isinstance(val, Text) else val
+                    if self._cells.get(key) != sig:
+                        self._cells[key] = sig
+                        c.update_cell(row, col, val)
 
         for tile in self.room_tiles:
             st = self._status[tile.room.id]

@@ -35,7 +35,63 @@ class Room:
     mode_ga: str | None = None   # HVAC operating mode
     heat_ga: str | None = None   # heating output on/off (or valve)
     lights: list[dict] = field(default_factory=list)  # {"name", "status", "ga", "dpt", "level"} per light
+    #: The room's other temperature sensors (a switch sensor, a smoke detector, a CO₂ sensor …) as (short label,
+    #: address), besides ``temp_ga``; the overview shows them under the room. See :func:`extra_temps`.
+    temps: list[tuple[str, str]] = field(default_factory=list)
     gas: set[str] = field(default_factory=set)        # every GA of the room (to attribute alarms)
+
+
+#: Temperature rows that are not a measured room temperature: dew points, setpoints and wished temperatures.
+NOT_A_SENSOR = re.compile(r"(?i)dew|dugg|set ?p|settp|setpunkt|ønsket|onsket|wish|min(imum)?\b|max(imum)?\b")
+
+#: Words left out of a sensor's label in the overview (the room name is removed too): "Stue heating current TV
+#: temperature" → "TV".
+LABEL_NOISE = re.compile(r"(?i)\b(heating|current|room|temperature|temperatur|temp|er-?verdi|romverdi|value|"
+                         r"actual|faktisk)\b")
+
+
+def short_label(label: str, room: str) -> str:
+    """A short name for a temperature sensor: the datapoint label without the room name and filler words.
+
+    Args:
+        label: the row label from the project (ETS name or description).
+        room: the room's name, removed when the label starts with it.
+
+    Returns:
+        What is left (e.g. ``bryter``, ``Kjøkken bryter``, ``Smoke``), or ``°C`` when nothing is.
+    """
+    text = label.strip()
+    if room and text.lower().startswith(room.lower()):
+        text = text[len(room):]
+    text = re.sub(r"\s+", " ", LABEL_NOISE.sub(" ", text)).strip(" -–·:")
+    return text or "°C"
+
+
+def extra_temps(functions: list[dict], room: str, main: str | None) -> list[tuple[str, str]]:
+    """Every temperature sensor of a room's functions except the main one, in card order and without duplicates.
+
+    A sensor is a ``value`` row of DPT 9.001 whose label is not a dew point, setpoint or wished temperature.
+    A card from ``extra_rooms`` (usage ``custom``) with one temperature is labelled with the card's name – its row
+    label is only the address name. Called once per room at start-up.
+
+    Args:
+        functions: the room's functions from the project model.
+        room: the room's name (for :func:`short_label`).
+        main: the room temperature already shown (left out).
+    """
+    out: list[tuple[str, str]] = []
+    seen = {main}
+    for f in functions:
+        rows = [d for d in f["datapoints"] if d["kind"] == "value" and dptlib.split(d["dpt"]) == (9, 1)
+                and not NOT_A_SENSOR.search(d["label"])]
+        for d in rows:
+            ga = d["status"] or d["ga"]
+            if ga in seen:
+                continue
+            seen.add(ga)
+            label = f["name"] if f.get("usage") == "custom" and len(rows) == 1 else short_label(d["label"], room)
+            out.append((label, ga))
+    return out
 
 
 def _first_ga(gas: dict, pattern: str, dpt_main: int | None = None, dpt: str | None = None) -> str | None:
@@ -111,6 +167,7 @@ class HomeModel:
                             room.heat_ga = next(
                                 (d["status"] for d in f["datapoints"] if d["kind"] == "value" and d["dpt"] == "5.001"), None
                             )
+                room.temps = extra_temps([model["functions"][fid] for fid in r["functions"]], room.name, room.temp_ga)
                 self.rooms.append(room)
 
         # Building-wide points: configured explicitly, or found by name.
@@ -128,6 +185,7 @@ class HomeModel:
     def trend_gas(self) -> list[str]:
         """Addresses whose 24 h history the overview needs (room temperatures, outdoor, power)."""
         out = [r.temp_ga for r in self.rooms if r.temp_ga]
+        out += [ga for r in self.rooms for _label, ga in r.temps]
         out += [g for g in (self.outdoor_ga, self.power_ga) if g]
         return out + [ga for _name, ga in self.meters]
 
@@ -150,7 +208,7 @@ class HomeModel:
     def room_status(self, room: Room, state: dict, alarms: list[dict]) -> dict[str, Any]:
         """Live status of a room.
 
-        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm", "old"}``
+        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm", "old", "temps"}``
         where ``alarm`` is None, ``"warning"`` or ``"critical"`` and ``old`` is the set of
         fields (``temp``, ``sp``, ``mode``, ``heating``, ``lights``) shown from the database of
         the last run – not read from the bus since the start. An alarm
@@ -183,4 +241,7 @@ class HomeModel:
             "lights_total": len(room.lights),
             "alarm": severity,
             "old": old,
+            # The other sensors: (label, value or None, old) – shown under the room in the overview.
+            "temps": [(label, v if isinstance(v := self.value(state, ga), (int, float)) and not isinstance(v, bool)
+                       else None, self.is_old(state, ga)) for label, ga in room.temps],
         }
