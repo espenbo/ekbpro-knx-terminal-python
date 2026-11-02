@@ -70,6 +70,7 @@ from .diagram import (
     render_diagram,
 )
 from .gateways import PointDialog, PointWrite, confirm_point_write
+from .power import Power, parse_power, render_power
 from .views import View
 from .widgets import FastTable, LiveStatic
 
@@ -132,10 +133,15 @@ class Vent:
     diagram: str = ""
     fields: dict[str, Field] = field(default_factory=dict)
     charts: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: ``type: power``: the power limiter's roles and loads; see :mod:`.power`.
+    power: Power | None = None
 
     def extra_connections(self) -> list[str]:
-        """Connections a diagram reads besides its own (fields with ``connection:``), in order, without duplicates."""
-        return list(dict.fromkeys(f.connection for f in self.fields.values() if f.connection))
+        """Connections a diagram or a power limiter reads besides its own (tags with ``connection:``), in order,
+        without duplicates."""
+        conns = [f.connection for f in self.fields.values() if f.connection]
+        conns += self.power.connections() if self.power else []
+        return [c for c in dict.fromkeys(conns) if c != self.conn]
 
     def chart_curves(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """The (``conn/tag`` key, English or configured legend) of the temperature and the output chart.
@@ -143,6 +149,12 @@ class Vent:
         An air handling unit uses its roles (:data:`TEMP_CURVES`, :data:`OUTPUT_CURVES`); a diagram the
         ``charts:`` of its entry (legend → field key, the field's main tag is drawn).
         """
+        if self.kind == "power" and self.power is not None:
+            # First chart: consumption against the limit; second: how many loads were switched off.
+            keys = self.power.keys
+            return ([(keys[r], n) for r, n in (("consumption", N_("Consumption")), ("setpoint", N_("Limit")))
+                     if r in keys],
+                    [(keys["shed_count"], N_("Loads switched off"))] if "shed_count" in keys else [])
         if self.kind != "diagram":
             return ([(k, n) for r, n in TEMP_CURVES if (k := self.key(r))],
                     [(k, n) for r, n in OUTPUT_CURVES if (k := self.key(r))])
@@ -217,8 +229,9 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
                 tags = {**METER_ROLES, **{str(k): str(v) for k, v in (m.get("tags") or {}).items() if v}}
                 meters.append(Meter(str(m.get("name") or m["connection"]), str(m["connection"]), tags))
             continue
-        if kind not in ("ventilation", "panel", "diagram"):
-            problems.append(_("ui.systems[{i}]: unknown type {type} – use ventilation, diagram, panel or energy").format(
+        if kind not in ("ventilation", "panel", "diagram", "power"):
+            problems.append(_("ui.systems[{i}]: unknown type {type} – use ventilation, diagram, panel, power or "
+                              "energy").format(
                 i=i, type=repr(kind)))
             continue
         if not e.get("connection"):
@@ -226,7 +239,12 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
             continue
         prefix = str(e.get("prefix") or "")
         tags: dict[str, str] = {}
-        for role, tag in (e.get("tags") or {}).items():
+        power = None
+        if kind == "power":
+            # A power limiter has its own roles (and tags of other connections); they are checked there.
+            power, power_problems = parse_power(e, str(e["connection"]), prefix)
+            problems += [f"ui.systems[{i}]: {p}" for p in power_problems]
+        for role, tag in (e.get("tags") or {}).items() if kind != "power" else ():
             if role not in VENT_ROLES:
                 problems.append(_("ui.systems[{i}]: unknown role {role}").format(i=i, role=repr(role)))
             elif tag:
@@ -268,7 +286,7 @@ def parse_systems(entries: Any) -> tuple[list[Vent], list[Meter], list[str]]:
         vents.append(Vent(name, str(e["connection"]), tags, str(e.get("meter") or ""), modes,
                           str(e.get("short") or ""), _str_list(e.get("settings")), prefix, groups,
                           _str_list(e.get("hide")), kind, texts["status_texts"], alarm_normal,
-                          diagram, fields, charts))
+                          diagram, fields, charts, power))
     return vents, meters, problems
 
 
@@ -767,6 +785,8 @@ class SystemsView(View):
             card.border_title = s.name
             # The same height for every unit: a new height costs a layout of the whole screen.
             height = 17 if any("week_start_hour" in v.tags for v in self.vents) else 15
+            # A power limiter needs a line per load below its bar and summary (+ the two border lines).
+            height = max([height] + [len(v.power.loads) + 6 for v in self.vents if v.power])
             if card.styles.height is None or card.styles.height.value != height:
                 card.styles.height = height
 
@@ -1051,6 +1071,12 @@ class SystemsView(View):
             card.set(Text(_("No drawing for this system – its tags are on the Settings tab."), style="dim"))
         elif s.kind == "diagram":
             card.set(render_diagram(s.diagram, s.fields, self.get, s.conn, s.prefix, diagram_colors(self.app)))
+        elif s.kind == "power" and s.power is not None:
+            card.set(render_power(s.power, self.get, theme_colors(self.app), card.size.width - 2))
+            # Over the limit is the limiter's alarm: the card border turns red like a unit in alarm.
+            over = self.get(s.power.keys.get("overuse"))
+            card.set_class(bool(over and isinstance(over[0], (int, float)) and over[0] > 0), "bad")
+            return
         else:
             card.set(render_vent(s, self.get, theme_colors(self.app), power, card.size.width - 2))
         card.set_class(bool(vent_alarm(s, self.get(s.key("alarm")))), "bad")
@@ -1079,8 +1105,9 @@ class SystemsView(View):
         pal = palette(self.app)
         curves = self.series
         temps, outputs = s.chart_curves()
-        for plot_id, chart, title in (("#sys-temp-plot", temps, _("Temperatures – last 24 hours")),
-                                      ("#sys-out-plot", outputs, _("Outputs – last 24 hours"))):
+        titles = ((_("Power – last 24 hours"), _("Loads switched off – last 24 hours")) if s.kind == "power" else
+                  (_("Temperatures – last 24 hours"), _("Outputs – last 24 hours")))
+        for plot_id, chart, title in (("#sys-temp-plot", temps, titles[0]), ("#sys-out-plot", outputs, titles[1])):
             plot = self.query_one(plot_id, CachedPlot)
             # Back on a unit whose curves did not change: its figure is kept, nothing to draw.
             key = (self.index, tuple(len(curves.get(k, ())) for k, _n in chart))
