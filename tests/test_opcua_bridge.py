@@ -29,12 +29,16 @@ VARS = {  # var: (ga, dir, IEC type, DPT, initial PLC value, OPC UA type)
 
 
 def free_port() -> int:
+    """A TCP port on localhost that is free right now."""
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
 async def start_server(port: int, users: dict | None = None, secure: bool = False, tmp=None) -> tuple[Server, dict]:
+    """Start a local OPC UA server with the GVL_KNX variables of VARS under CODESYS-style node ids; optionally with
+    users or encryption. Returns the server and its variable nodes.
+    """
     server = Server(user_manager=_Users(users) if users else None)
     await server.init()
     server.set_endpoint(f"opc.tcp://127.0.0.1:{port}")
@@ -65,9 +69,11 @@ class _Users:
     """Minimal user manager: user name → password."""
 
     def __init__(self, users: dict) -> None:
+        """Keep the allowed users and their passwords."""
         self.users = users
 
     def get_user(self, iserver, username=None, password=None, certificate=None):
+        """Log in a user with the right password; anyone else is refused (None)."""
         from asyncua.crypto.permission_rules import User, UserRole
 
         if username in self.users and self.users[username] == password:
@@ -79,6 +85,7 @@ class FakeServer:
     """The parts of ScadaServer the bridge uses."""
 
     def __init__(self) -> None:
+        """Empty state; the DPTs of the test addresses so sent payloads can be decoded."""
         self.state: dict = {}
         self.status: dict = {}
         self.events: list = []
@@ -86,16 +93,19 @@ class FakeServer:
         self.gas = {ga: {"dpt": dpt} for ga, _d, _t, dpt, _v, _vt in VARS.values()}
 
     def event(self, level, kind, text, user=None):
+        """Keep the event (level, kind, text, user) for the asserts."""
         self.events.append((level, kind, text, user))
 
     def _broadcast(self, msg):
-        pass
+        """No TUI clients in these tests."""
 
     async def _send(self, ga, kind, payload):
+        """Record the telegram as (address, decoded value) instead of putting it on the bus."""
         self.sent.append((ga, dptlib.decode(self.gas[ga]["dpt"], payload)))
 
 
 def make_bridge(port: int, tmp_path, **plc) -> tuple[PlcBridge, FakeServer]:
+    """A PLC bridge to the local test server with every VARS entry marked, and the fake server it reports to."""
     entries = [PlcEntry(ga=ga, on=True, dir=d, type=t, var=var, name=var, dpt=dpt)
                for var, (ga, d, t, dpt, _v, _vt) in VARS.items()]
     cfg = Config(path=tmp_path / "config.yaml",
@@ -115,6 +125,7 @@ async def until(cond, timeout=5.0):
 
 
 async def run_bridge(bridge, fake):
+    """Start the bridge and wait until it is connected and the first subscription values have arrived."""
     task = asyncio.create_task(bridge.run())
     await until(lambda: bridge.connected, 15)
     await asyncio.sleep(0.3)  # first subscription values
@@ -122,6 +133,7 @@ async def run_bridge(bridge, fake):
 
 
 async def stop_bridge(bridge, task):
+    """Stop the bridge and make sure its task really ends."""
     await bridge.stop()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -129,6 +141,9 @@ async def stop_bridge(bridge, task):
 
 
 def test_parse_security():
+    """plc.security accepts 'None', a policy alone (SignAndEncrypt) or policy,mode in any case; outdated policies and
+    unknown modes are refused.
+    """
     assert parse_security(None) == (None, "None")
     assert parse_security("None") == (None, "None")
     assert parse_security("Aes128Sha256RsaOaep,Sign") == ("SecurityPolicyAes128Sha256RsaOaep", "Sign")
@@ -139,7 +154,11 @@ def test_parse_security():
 
 
 def test_bridge_both_directions(tmp_path):
+    """The bridge syncs the PLC from KNX at start-up without sending telegrams, passes changes both ways, blocks echoes
+    and never sends to_plc variables to KNX.
+    """
     async def run():
+        """Run the whole scenario against the local OPC UA server."""
         port = free_port()
         server, nodes = await start_server(port)
         try:
@@ -196,7 +215,9 @@ def test_bridge_both_directions(tmp_path):
 
 
 def test_rate_limit_sends_latest(tmp_path):
+    """min_interval_ms limits how often a PLC variable is sent to KNX, but the last value always gets through."""
     async def run():
+        """Change the PLC value four times quickly and count the telegrams."""
         port = free_port()
         server, nodes = await start_server(port)
         try:
@@ -217,7 +238,9 @@ def test_rate_limit_sends_latest(tmp_path):
 
 
 def test_username_password(tmp_path):
+    """The bridge logs in with user name and password; a wrong password gives an error event and no connection."""
     async def run():
+        """Connect once with the right password and once with a wrong one."""
         port = free_port()
         server, nodes = await start_server(port, users={"knx": "secret"})
         try:
@@ -239,7 +262,9 @@ def test_username_password(tmp_path):
 
 
 def test_encrypted_connection_creates_client_certificate(tmp_path):
+    """With Basic256Sha256 the bridge creates its own client certificate under var/opcua and connects encrypted."""
     async def run():
+        """Connect to an encrypting server and check the certificate and a synced value."""
         port = free_port()
         server, nodes = await start_server(port, secure=True, tmp=tmp_path)
         try:
@@ -256,7 +281,9 @@ def test_encrypted_connection_creates_client_certificate(tmp_path):
 
 
 def test_missing_gvl_is_reported(tmp_path):
+    """A GVL name that does not exist in the PLC is reported by name."""
     async def run():
+        """Point the bridge at GVL_OTHER and wait for the event."""
         port = free_port()
         server, _nodes = await start_server(port)
         try:
@@ -274,6 +301,7 @@ def test_missing_gvl_is_reported(tmp_path):
 def test_new_variables_after_online_change_are_picked_up(tmp_path):
     """Variables missing at connect (old GVL in the PLC) are used once they appear – without telegrams."""
     async def run():
+        """Remove a variable before connecting, then add it again as an online change would."""
         port = free_port()
         server, nodes = await start_server(port)
         try:
@@ -307,16 +335,19 @@ class _Fake:
     """Minimal ScadaServer for the restart tests."""
 
     def __init__(self, dpts):
+        """Empty state; the DPT per address so sent payloads can be decoded."""
         self.state, self.status, self.events, self.sent = {}, {}, [], []
         self.dpts = dpts
 
     def event(self, level, kind, text, user=None):
+        """Keep the event (level, kind, text, user) for the asserts."""
         self.events.append((level, kind, text, user))
 
     def _broadcast(self, msg):
-        pass
+        """No TUI clients in these tests."""
 
     async def _send(self, ga, kind, payload):
+        """Record the telegram as (address, decoded value) instead of putting it on the bus."""
         self.sent.append((ga, dptlib.decode(self.dpts[ga], payload)))
 
 
@@ -340,10 +371,12 @@ def restart_bridge(tmp_path, n_lights=12, **plc):
 def test_download_without_values_sends_nothing(tmp_path):
     """What happened on 25.10.2026: values without content, then the new application's zeros."""
     async def run():
+        """Play a download: bad-quality values, then the new application's start values."""
         bridge, fake = restart_bridge(tmp_path, n_lights=3)       # few variables: the burst guard is not needed
         synced = []
 
         async def fake_sync():
+            """Note that the bridge synced the KNX values to the PLC."""
             synced.append(True)
         bridge._sync_to_plc = fake_sync
         for var in ("x0", "x1", "x2", "rSp"):
@@ -365,7 +398,11 @@ def test_download_without_values_sends_nothing(tmp_path):
 
 
 def test_many_changes_at_once_are_a_restart(tmp_path):
+    """Many variables changing at once (more than burst_limit) are treated as a PLC restart: nothing goes to the bus and
+    an error says how many.
+    """
     async def run():
+        """Switch all twelve lights and the setpoint in one go."""
         bridge, fake = restart_bridge(tmp_path, n_lights=12)
         bridge._sync_to_plc = lambda: asyncio.sleep(0)
         for i in range(12):
@@ -379,7 +416,9 @@ def test_many_changes_at_once_are_a_restart(tmp_path):
 
 
 def test_normal_change_is_sent_after_the_settle_time(tmp_path):
+    """A normal change is held for settle_ms (to see whether a burst follows) and then sent."""
     async def run():
+        """Change one light and the setpoint and check before and after settle_ms."""
         bridge, fake = restart_bridge(tmp_path)
         bridge._on_plc("x3", False)
         bridge._on_plc("rSp", 22.5)
@@ -392,7 +431,9 @@ def test_normal_change_is_sent_after_the_settle_time(tmp_path):
 
 
 def test_burst_guard_can_be_turned_off(tmp_path):
+    """burst_limit: 0 turns the guard off, so all changes are sent."""
     async def run():
+        """Switch all twelve lights at once and count the telegrams."""
         bridge, fake = restart_bridge(tmp_path, burst_limit=0)
         for i in range(12):
             bridge._on_plc(f"x{i}", False)
@@ -403,6 +444,7 @@ def test_burst_guard_can_be_turned_off(tmp_path):
 
 
 def test_missing_value_is_never_false():
+    """A missing PLC value is refused instead of becoming False (which would switch lights off)."""
     from knxscada.plc import to_knx_value
 
     with pytest.raises(ValueError):
@@ -410,6 +452,9 @@ def test_missing_value_is_never_false():
 
 
 def test_server_with_two_plcs(tmp_path):
+    """plc.controllers gives one bridge per PLC with its own map; the status is 'partly connected' until both are, and
+    events name the PLC.
+    """
     import json
 
     from knxscada import project

@@ -48,6 +48,8 @@ NAMESPACE = "http://knx.org/xml/telegrams/01"
 
 
 def _payload(raw: str | None) -> DPTArray | DPTBinary | None:
+    """The payload of a stored telegram from its ``raw`` text (:func:`.dpt.raw_hex`): ``"0x01"`` is a small
+    (≤ 6 bit) value inside the APCI, ``"0C 33"`` the data bytes; None/"" for a read request."""
     if not raw:
         return None
     if raw.startswith("0x"):
@@ -79,6 +81,7 @@ def cemi_hex(t: dict) -> str | None:
 
 
 def _stamp(ts: float) -> str:
+    """An epoch time as ETS writes it in the group monitor XML: UTC, ISO 8601, microseconds, ``Z``."""
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ts)) + f".{int(ts % 1 * 1_000_000):06d}Z"
 
 
@@ -90,9 +93,9 @@ def telegrams_xml(telegrams: Iterable[dict], connection: str = "") -> tuple[str,
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
         f'<CommunicationLog xmlns="{NAMESPACE}">',
-        f'  <RecordStart Timestamp="{_stamp(start)}" Mode="LinkLayer" Host={quoteattr(socket.gethostname())} '
-        f'ConnectionName={quoteattr(connection or "EKBPRO KNX Terminal Python")} ConnectionOptions="" '
-        'ConnectorType="KnxIpTunneling" MediumType="TP" />',
+        (f'  <RecordStart Timestamp="{_stamp(start)}" Mode="LinkLayer" Host={quoteattr(socket.gethostname())} '
+         f'ConnectionName={quoteattr(connection or "EKBPRO KNX Terminal Python")} ConnectionOptions="" '
+         'ConnectorType="KnxIpTunneling" MediumType="TP" />'),
     ]
     lines += [f'  <Telegram Timestamp="{_stamp(ts)}" Service="L_Data.ind" FrameFormat="CommonEmi" RawData="{raw}" />'
               for ts, raw in rows]
@@ -105,6 +108,7 @@ COLUMNS = ("time", "dir", "src", "dst", "name", "type", "dpt", "raw", "value", "
 
 
 def _row(t: dict, gas: dict[str, dict]) -> dict:
+    """One CSV row (:data:`COLUMNS`) for stored telegram *t*: local time in ms, name and DPT from the project *gas*."""
     ga = gas.get(t["dst"], {})
     return {
         "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t["ts"])) + f".{int(t['ts'] % 1 * 1000):03d}",

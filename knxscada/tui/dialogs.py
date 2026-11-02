@@ -9,11 +9,11 @@ passed to ``dismiss()`` (None when cancelled with Esc).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import on
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Grid, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
@@ -32,15 +32,19 @@ class ValueDialog(ModalScreen[Any]):
     * Unknown DPT: the input is taken as raw hex bytes.
     """
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def __init__(self, title: str, dpt: str | None, current: Any = None) -> None:
+        """*title* is shown on top, *dpt* decides the input (None: raw hex), *current* is the value shown as "now" and
+        prefilled in the field (a raw dict is not prefilled).
+        """
         super().__init__()
         self.title_text = title
         self.dpt = dpt
         self.current = current
 
     def compose(self) -> ComposeResult:
+        """Title, DPT and current value, then two buttons (DPT 1.x) or an input with a hint and Write/Cancel."""
         main, _sub = dptlib.split(self.dpt)
         with Vertical(classes="dialog"):
             yield Label(self.title_text, classes="dialog-title", markup=False)
@@ -70,19 +74,27 @@ class ValueDialog(ModalScreen[Any]):
 
     @on(Button.Pressed, "#v-true")
     def _true(self) -> None:
+        """The "on" button of a DPT 1.x value: return ``True``."""
         self.dismiss(True)
 
     @on(Button.Pressed, "#v-false")
     def _false(self) -> None:
+        """The "off" button of a DPT 1.x value: return ``False``."""
         self.dismiss(False)
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:
+        """Cancel: return None (nothing is written)."""
         self.dismiss(None)
 
     @on(Button.Pressed, "#ok")
     @on(Input.Submitted)
     def _ok(self) -> None:
+        """Write or Enter: validate the text and return it, or ``{"raw": text}`` for an unknown DPT.
+
+        An empty field does nothing; an invalid value is reported and the dialog stays open. The text (not the encoded
+        value) is returned because the server encodes again with the DPT it knows.
+        """
         text = self.query_one("#value", Input).value.strip()
         if not text:
             return
@@ -100,13 +112,15 @@ class ValueDialog(ModalScreen[Any]):
 class ThemeDialog(ModalScreen[str | None]):
     """Pick a colour theme. The theme is previewed while browsing; Esc reverts."""
 
-    BINDINGS = [Binding("escape", "cancel", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", _("Cancel"))]
 
     def __init__(self, current: str) -> None:
+        """*current* is the active theme name, restored when the dialog is cancelled."""
         super().__init__()
         self.original = current
 
     def compose(self) -> ComposeResult:
+        """One option per theme of ``themes.THEME_CHOICES`` with name, colour swatch and description."""
         from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
@@ -127,6 +141,7 @@ class ThemeDialog(ModalScreen[str | None]):
             yield Static(_("↑↓ preview · Enter select · Esc cancel"), classes="muted")
 
     def on_mount(self) -> None:
+        """Highlight the current theme and focus the list."""
         from textual.widgets import OptionList
 
         from .themes import THEME_CHOICES
@@ -138,13 +153,16 @@ class ThemeDialog(ModalScreen[str | None]):
         ol.focus()
 
     def on_option_list_option_highlighted(self, event) -> None:
+        """Moving through the list applies the highlighted theme at once (preview)."""
         if event.option.id:
             self.app.theme = event.option.id  # live preview
 
     def on_option_list_option_selected(self, event) -> None:
+        """Enter: keep the theme and return its name (the app saves it)."""
         self.dismiss(event.option.id)
 
     def action_cancel(self) -> None:
+        """Esc: put the original theme back and return None."""
         self.app.theme = self.original
         self.dismiss(None)
 
@@ -152,9 +170,10 @@ class ThemeDialog(ModalScreen[str | None]):
 class LanguageDialog(ModalScreen[str | None]):
     """Pick the user interface language. Returns the language code or None (Esc)."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
     def compose(self) -> ComposeResult:
+        """One option per language of ``i18n.LANGUAGES``, written in that language."""
         from textual.widgets import OptionList
         from textual.widgets.option_list import Option
 
@@ -166,6 +185,7 @@ class LanguageDialog(ModalScreen[str | None]):
             yield Static(_("Enter select · Esc cancel. The user interface restarts in the new language."), classes="muted")
 
     def on_mount(self) -> None:
+        """Highlight the current language and focus the list."""
         from textual.widgets import OptionList
 
         ol = self.query_one(OptionList)
@@ -174,13 +194,14 @@ class LanguageDialog(ModalScreen[str | None]):
         ol.focus()
 
     def on_option_list_option_selected(self, event) -> None:
+        """Enter: return the language code (the app restarts the user interface in it)."""
         self.dismiss(event.option.id)
 
 
 class ExportDialog(ModalScreen[dict | None]):
     """Bus monitor export: format and period. Returns ``{"fmt", "hours"}`` (hours None = what is shown) or None."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
     #: (format, label) and (hours, label); labels are translated when shown.
     FORMATS = (("xml", N_("ETS group monitor (.xml) – opens in ETS")), ("csv", N_("CSV (.csv) – Excel, LibreOffice")),
                ("json", N_("JSON lines (.jsonl) – scripts")))
@@ -188,10 +209,12 @@ class ExportDialog(ModalScreen[dict | None]):
                (24, N_("Last 24 hours")), (168, N_("Last 7 days")))
 
     def __init__(self, filter_text: str) -> None:
+        """*filter_text* is the bus monitor's filter, shown so the user knows which telegrams are exported."""
         super().__init__()
         self.filter_text = filter_text
 
     def compose(self) -> ComposeResult:
+        """Two radio sets (format and period, the first option preselected), the filter and Export/Cancel."""
         from textual.widgets import RadioButton, RadioSet
 
         with Vertical(classes="dialog"):
@@ -211,11 +234,13 @@ class ExportDialog(ModalScreen[dict | None]):
                 yield Button(_("Cancel"), id="exp-cancel")
 
     def on_mount(self) -> None:
+        """Focus the format choice so the dialog can be used with the keyboard only."""
         from textual.widgets import RadioSet
 
         self.query_one("#exp-fmt", RadioSet).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Export: return ``{"fmt", "hours"}`` from the pressed radio buttons; any other button returns None."""
         from textual.widgets import RadioSet
 
         if event.button.id != "exp-ok":
@@ -229,13 +254,15 @@ class ExportDialog(ModalScreen[dict | None]):
 class ConfirmDialog(ModalScreen[bool]):
     """Yes/no question. Returns True for yes."""
 
-    BINDINGS = [Binding("escape", "dismiss(False)", _("Cancel"))]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(False)", _("Cancel"))]
 
     def __init__(self, text: str) -> None:
+        """*text* is the question (plain text, not markup – it may contain names from ETS)."""
         super().__init__()
         self.text = text
 
     def compose(self) -> ComposeResult:
+        """Title, question and Yes/No buttons."""
         with Vertical(classes="dialog"):
             yield Label(_("Confirm"), classes="dialog-title")
             yield Static(self.text, markup=False)
@@ -245,6 +272,7 @@ class ConfirmDialog(ModalScreen[bool]):
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
+        """Return True for Yes, False for No."""
         self.dismiss(event.button.id == "yes")
 
 
@@ -255,7 +283,7 @@ class GADialog(ModalScreen[str | None]):
     the caller performs it (see ``ScadaApp.open_ga``).
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "dismiss(None)", _("Close")),
         Binding("w", "pick('write')", _("Write")),
         Binding("r", "pick('read')", _("Read")),
@@ -263,11 +291,17 @@ class GADialog(ModalScreen[str | None]):
     ]
 
     def __init__(self, ga: dict[str, Any], state: dict[str, Any] | None) -> None:
+        """*ga* is the address record from the project model, *state* its current state (value, text, raw, ts, src) or
+        None before the first telegram.
+        """
         super().__init__()
         self.ga = ga
         self.st = state or {}
 
     def compose(self) -> ComposeResult:
+        """Address and name, a key/value grid with description, DPT, value, age, source and flags, then the action
+        buttons.
+        """
         ga, st = self.ga, self.st
         flags = " ".join(f for f, on_ in ((_("writable"), ga.get("writable")), (_("readable"), ga.get("readable"))) if on_)
         with Vertical(classes="dialog wide"):
@@ -294,8 +328,10 @@ class GADialog(ModalScreen[str | None]):
                 yield Button(_("Close"), id="close")
 
     def action_pick(self, what: str) -> None:
+        """Keys w/r/t: return the action *what* (``write``, ``read`` or ``trend``)."""
         self.dismiss(what)
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
+        """Return the id of the pressed button as the action, or None for Close."""
         self.dismiss(None if event.button.id == "close" else event.button.id)

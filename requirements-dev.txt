@@ -1,2 +1,12 @@
+# Development and tests. The tests cover every protocol module, so all of their packages are installed here
+# (in normal use they are optional: ./scada modules install knx modbus …).
+-r requirements.txt
 pytest>=8.0
 ruff>=0.6
+xknx>=3.10
+xknxproject>=3.10
+asyncua>=1.1
+pymodbus>=3.16,<4
+pyserial>=3.5
+aiomqtt>=2.0
+bacpypes3>=0.0.100

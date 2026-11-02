@@ -70,6 +70,6 @@ def _(text: str) -> str:
     return _catalogue.get(text, text)
 
 
-def N_(text: str) -> str:  # noqa: N802 - conventional gettext name
+def N_(text: str) -> str:
     """Mark *text* for translation without translating it (for module-level constants)."""
     return text

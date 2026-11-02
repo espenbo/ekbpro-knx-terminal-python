@@ -19,6 +19,7 @@ CONFIG = Path(__file__).resolve().parent.parent / "config.yaml"
 
 # ------------------------------------------------------------------ helpers
 def co(write=False, read=False, dpts=None):
+    """A communication object with its flags and (optional) DPTs, as xknxproject gives it."""
     return {"flags": {"write": write, "read": read}, "dpts": dpts or []}
 
 
@@ -34,6 +35,7 @@ def raw_project(functions=True):
         "C7": co(read=True),                                 # heating output
     }
     def ga(name, dpt, ids, desc=""):
+        """A group address entry as xknxproject gives it."""
         return {"name": name, "dpt": dpt, "communication_object_ids": ids, "description": desc}
 
     gas = {
@@ -73,15 +75,20 @@ def raw_project(functions=True):
 
 
 def card(model, name):
+    """The card (function) with the given name."""
     return next(f for f in model["functions"].values() if f["name"] == name)
 
 
 def row(func, kind):
+    """The first row of a card with the given kind."""
     return next(d for d in func["datapoints"] if d["kind"] == kind)
 
 
 # ------------------------------------------------------------------ group addresses
 def test_group_address_flags_and_dpt_inheritance():
+    """Read/write flags come from the linked objects, a missing DPT is taken from the object, '------' is an unused
+    placeholder and the range path is kept.
+    """
     gas = project.build_model(raw_project())["gas"]
     assert gas["1/1/1"]["writable"] and not gas["1/1/1"]["readable"]
     assert gas["1/1/2"]["readable"]
@@ -91,6 +98,7 @@ def test_group_address_flags_and_dpt_inheritance():
 
 
 def test_addresses_are_sorted_numerically():
+    """Addresses are sorted as numbers (1/1/9 before 1/1/10), not as text."""
     raw = raw_project()
     raw["group_addresses"]["1/1/10"] = dict(raw["group_addresses"]["1/1/9"], name="ten")
     order = list(project.build_model(raw)["gas"])
@@ -99,6 +107,7 @@ def test_addresses_are_sorted_numerically():
 
 # ------------------------------------------------------------------ ETS functions
 def test_floors_and_rooms_from_building_structure():
+    """With ETS functions, floors and rooms come from the building structure and empty rooms are dropped."""
     model = project.build_model(raw_project())
     assert model["source"] == "ets-functions"
     assert [f["name"] for f in model["floors"]] == ["1 etg"]
@@ -106,6 +115,7 @@ def test_floors_and_rooms_from_building_structure():
 
 
 def test_light_card_pairs_switch_with_status():
+    """A light card shows one switch row with its status address as feedback, then the brightness row."""
     light = card(project.build_model(raw_project()), "Tak")
     sw = row(light, "switch")
     assert (sw["ga"], sw["status"]) == ("1/1/1", "1/1/2")
@@ -116,6 +126,9 @@ def test_light_card_pairs_switch_with_status():
 
 
 def test_heating_card():
+    """A heating card shows room temperature (read only), setpoint, mode and output, with room and function name removed
+    from the labels.
+    """
     heat = card(project.build_model(raw_project()), "Varme")
     kinds = [d["kind"] for d in heat["datapoints"]]
     assert kinds == ["value", "setpoint", "mode", "bool"]  # room temp, setpoint, mode, output
@@ -127,6 +140,7 @@ def test_heating_card():
 
 
 def test_functions_without_room_go_to_other():
+    """Functions not placed in a room are not lost: they end up under 'Other'."""
     raw = raw_project()
     raw["functions"]["F3"] = {"name": "Løs", "space_id": None, "usage_text": "", "function_type": "",
                               "group_addresses": {"3/0/4": {"role": ""}}}
@@ -136,6 +150,9 @@ def test_functions_without_room_go_to_other():
 
 # ------------------------------------------------------------------ fallback: group address structure
 def test_fallback_builds_cards_from_group_ranges():
+    """Without ETS functions, cards are built from the group ranges, switching/status pairs are merged and placeholders
+    left out.
+    """
     model = project.build_model(raw_project(functions=False))
     assert model["source"] == "group-addresses"
     assert [f["name"] for f in model["floors"]] == ["Lys", "Varme"]
@@ -158,21 +175,25 @@ def test_fallback_builds_cards_from_group_ranges():
     ],
 )
 def test_strip_prefix(name, token, expected):
+    """The room name is removed from the start of a label even with other spacing or without Nordic letters."""
     assert project._strip_prefix(name, token) == expected
 
 
 def test_label_maps_plain_words():
+    """Common words such as 'switching' become standard labels; other words are only capitalised."""
     assert project._label("Kjøkken spot switching", "Kjøkken", "Spot") == "On/Off"
     assert project._label("Stue lys verdi", "Stue", "Lys") == "Verdi"
 
 
 @pytest.mark.parametrize("name", ["------", "", "x", "- - -"])
 def test_placeholder_names(name):
+    """Dashes, empty and one-letter names mark an address as a placeholder."""
     assert project.PLACEHOLDER_RE.match(name)
 
 
 # ------------------------------------------------------------------ cache
 def test_cache_is_used_and_rebuilt_on_version_change(tmp_path):
+    """The cache is used without the .knxproj, but a cache with an old format is never trusted."""
     cfg = Config(path=tmp_path / "config.yaml",
                  project={"file": "missing.knxproj", "cache": "cache.json"})
     model = project.build_model(raw_project())
@@ -202,11 +223,15 @@ def test_local_project_cache_is_consistent():
 
 # --------------------------------------------------------------------------- rooms from group address names
 def _ga(addr, name, dpt, writable=True):
+    """A group address of the built model (as used by build_from_names)."""
     return {"address": addr, "name": name, "description": "", "dpt": dpt, "writable": writable, "readable": True,
             "used": True, "placeholder": False, "range": ""}
 
 
 def test_rooms_from_names():
+    """ui.rooms: rooms are found by a regex in the address names, floors by main group, with own room names; addresses
+    without a room keep the range structure.
+    """
     gas = {a: _ga(a, n, d, w) for a, n, d, w in [
         ("0/0/0", "av/pa Kontor 1 tak", "1.001", True),
         ("0/1/0", "av/pa Status kontor 1 tak", "1.001", False),
@@ -241,6 +266,9 @@ def test_rooms_from_names():
 
 
 def test_rooms_setpoint_and_read_only():
+    """The setpoint and read_only regexes override the built-in words and the W flag, so a site decides what can be
+    written.
+    """
     gas = {a: _ga(a, n, d) for a, n, d in [
         ("2/0/0", "Er-Verdi - rom H1001 - VF", "9.001"),
         ("2/1/0", "Set Temp - rom H1001 - VF", "9.001"),
@@ -262,6 +290,7 @@ def test_rooms_setpoint_and_read_only():
 
 
 def test_rooms_exclude():
+    """Excluded addresses are left out of the rooms and do not reappear under the range structure."""
     gas = {a: _ga(a, n, "9.001") for a, n in [
         ("2/1/46", "Set Temp - rom H1025 - Dusj"),
         ("2/1/48", "Set Temp - rom H1025/H1026 - Dusj"),
@@ -277,12 +306,16 @@ def test_rooms_exclude():
 
 
 def test_rooms_rule_is_used_only_without_ets_functions():
+    """Projects with ETS functions keep them; the name rule is only a fallback."""
     raw = raw_project()
     with_functions = project.build_model(raw, rooms={"pattern": "(?i)kitchen"})
     assert with_functions["source"] == "ets-functions"
 
 
 def test_extra_rooms():
+    """ui.extra_rooms adds rooms with cards from existing addresses; usage and status pairs are taken from the config,
+    no addresses are added.
+    """
     model = project.build_model(raw_project())
     gas = list(model["gas"])
     switch = next(a for a, g in model["gas"].items() if g["dpt"] == "1.001" and g["writable"])
@@ -302,6 +335,39 @@ def test_extra_rooms():
 
 
 def test_extra_rooms_reject_unknown_addresses():
+    """An extra room with an address not in the project is refused with the address in the message."""
     model = project.build_model(raw_project())
     with pytest.raises(ValueError, match="31/7/255"):
         project.add_extra_rooms(model, [{"name": "X", "cards": [{"addresses": ["31/7/255"]}]}])
+
+
+def test_point_rooms():
+    """project.point_rooms: cards from protocol tags (pt:conn/tag), grouped under their building."""
+    from knxscada.project import add_point_rooms, empty_model
+    from knxscada.tui.home import HomeModel
+
+    tags = {"gw/Light On/Off": {"object": "bv:4", "writable": True}, "gw/Light Status": {"object": "bv:5"},
+            "gw/RT205_PV": {"object": "av:53", "unit": "°C", "description": "Room temperature"},
+            "gw/RT205_SP": {"object": "av:52", "unit": "°C", "writable": True},
+            "gw/RT205_VP": {"object": "bv:47"}}
+    rooms = [{"building": "Annex", "floor": "2nd floor", "name": "Office 205", "cards": [
+        {"name": "Light", "usage": "light", "rows": [{"point": "gw/Light On/Off", "status": "gw/Light Status"}]},
+        {"name": "Heating", "usage": "heating", "rows": [
+            {"point": "gw/RT205_PV", "role": "temp"}, {"point": "gw/RT205_SP", "role": "setpoint", "label": "SP"},
+            {"point": "gw/RT205_VP", "role": "heat"}, {"point": "gw/missing"}]}]}]
+    model = empty_model()
+    problems = add_point_rooms(model, rooms, tags)
+    assert len(problems) == 1 and "gw/missing" in problems[0]
+    assert [(f["building"], f["name"]) for f in model["floors"]] == [("Annex", "2nd floor")]
+    light, heating = (model["functions"][fid] for fid in model["floors"][0]["rooms"][0]["functions"])
+    assert light["usage"] == "switchable light"
+    assert light["datapoints"][0] == {"label": "Light On/Off", "role": "", "kind": "switch", "ga": "pt:gw/Light On/Off",
+                                      "status": "pt:gw/Light Status", "dpt": "1.001"}
+    kinds = [(d["label"], d["kind"], d["ga"], d["status"]) for d in heating["datapoints"]]
+    assert kinds == [("Room temperature", "value", None, "pt:gw/RT205_PV"), ("SP", "setpoint", "pt:gw/RT205_SP", None),
+                     ("RT205_VP", "bool", None, "pt:gw/RT205_VP")]
+    assert "gw/Light On/Off" not in model["gas"] and model["point_gas"]["pt:gw/RT205_SP"]["dpt"] == "9.001"
+    room = HomeModel(model, {}).rooms[0]
+    assert (room.temp_ga, room.sp_ga, room.heat_ga) == ("pt:gw/RT205_PV", "pt:gw/RT205_SP", "pt:gw/RT205_VP")
+    assert room.lights[0]["status"] == "pt:gw/Light Status"
+    assert add_point_rooms(empty_model(), None, tags) == []

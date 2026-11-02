@@ -111,6 +111,7 @@ Input:focus {
 .tile.idle { color: $foreground 40%; }
 .tile.warn { color: $warning; border: round $warning; }
 .tile.bad { color: $error; border: heavy $error; }
+.tile.old { color: $foreground 45%; text-style: italic; }
 
 #ov-mid {
     height: 1fr;
@@ -235,6 +236,11 @@ Input:focus {
 .dp-value.on {
     color: $success;
     background: $success 15%;
+}
+
+.dp-value.old {
+    color: $foreground 45%;
+    text-style: italic;
 }
 
 .dp-value.alarm {
@@ -511,4 +517,106 @@ SplashScreen {
 
 #tiles.big .tile {
     height: 5;
+}
+
+/* ---------- F11 gateways ---------- */
+#gw-conns {
+    height: 10;
+}
+
+#gw-bottom {
+    height: 1fr;
+}
+
+#gw-tags {
+    width: 3fr;
+}
+
+#gw-links {
+    width: 2fr;
+}
+
+#gw-problems {
+    height: auto;
+    max-height: 6;
+    color: $warning;
+}
+
+.dialog.form {
+    width: 100;
+    max-width: 100%;
+    max-height: 90%;
+}
+
+.form-body {
+    height: auto;
+    max-height: 30;
+}
+
+.form-row {
+    height: auto;
+}
+
+.form-field {
+    height: auto;
+}
+
+.form-label {
+    width: 24;
+    padding-top: 1;
+}
+
+.form-label.wide {
+    width: 100%;
+}
+
+.form-row Input, .form-row Select {
+    width: 1fr;
+}
+
+.form-help {
+    color: $text-muted;
+    padding-left: 24;
+}
+
+.form-text {
+    height: 10;
+}
+
+.warning {
+    color: $warning;
+}
+
+/* Systems view (Ctrl+E): one card per air handling unit, then the meter table */
+#sys-tabs { height: 1fr; }
+#sys-tabs TabPane { padding: 0 1; }
+#sys-card { height: 15; padding: 0 1; overflow-x: auto; }
+#sys-card.bad { border: heavy $error; }
+#sys-charts { height: 1fr; min-height: 8; }
+#sys-charts .chart { width: 1fr; height: 1fr; }
+#sys-filter { margin-bottom: 1; }
+#sys-tags { height: 1fr; border: round $secondary; }
+#en-meters { height: auto; max-height: 20; border: round $secondary; }
+#en-detail { height: 5; padding: 0 1; }
+#en-charts { height: 1fr; min-height: 8; }
+#en-charts .chart { width: 1fr; height: 1fr; }
+
+/* ---------- write dialog: BACnet priority (gateways.PointDialog) ---------- */
+.dialog-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.dialog-label {
+    width: 12;
+    padding: 1 1 0 0;
+}
+
+.dialog-row Select {
+    width: 1fr;
+}
+
+.dialog-note {
+    height: auto;
+    margin-bottom: 1;
 }

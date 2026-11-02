@@ -26,13 +26,16 @@ the logged-in user with IP, and a clock. In demo mode a yellow **DEMO** label is
 | `F1` | Overview |
 | `F2` | Floors and rooms |
 | `F3` | Group addresses |
-| `F4` | Bus monitor |
+| `F4` | Monitor: KNX bus monitor; pressed again, the monitor of the next protocol |
 | `F5` | Alarms |
 | `F6` | Event log |
 | `F7` | Trends |
 | `F8` | Floor plan |
 | `F9` | Screensaver |
 | `F10` | Quit |
+| `F11` | Gateways (connections, tags and gateways – see [Protocols and gateways](11-protocols-gateways.md)) |
+| `Ctrl+E` | Systems: one air handling unit at a time (`ui.systems`) |
+| `Ctrl+G` | Energy meters: table, power curve and consumption (`ui.systems`) |
 | `F12` | About |
 | `Ctrl+T` | Colour theme |
 | `Ctrl+L` | Language |
@@ -54,8 +57,10 @@ The terminal is cleared when you quit.
 
 - **Status tiles:**
   - **Outdoor** and **Indoor avg** show the temperature; outdoor has a sparkline for the last 24 hours, indoor
-    shows the min–max range of the rooms.
-  - **Power** shows W or kW, with a sparkline.
+    shows the min–max range of the rooms. Without a KNX outdoor address, Outdoor shows the outdoor sensor of the
+    first air handling unit in `ui.systems`.
+  - **Power** shows W or kW, with a sparkline. Without a KNX power address, it shows the energy meters of
+    `ui.systems` one at a time (5 seconds each), with the meter's name in the title and "2/6" below.
   - **Lights on** shows how many of the lights are on.
   - **KNX tlg/s** shows the traffic.
   - **Alarms** shows active and unacknowledged alarms.
@@ -103,7 +108,45 @@ All group addresses with name, DPT, live value, time and source.
 When you write values, they are interpreted according to the DPT, for example `21.5` (or `21,5`), `on`, `Comfort`
 or `75`. If the DPT is unknown, enter raw bytes in hex, for example `0C 33`.
 
-## F4 Bus monitor
+## F4 Monitor
+
+The menu entry **Monitor** has one entry per protocol in use: **KNX**, and for example **OPC UA (2)**,
+**Modbus (4)** and **BACnet/IP (1)** (the number of connections). `F4` opens the first one (KNX, or the first
+protocol in an installation without KNX); pressed again, it moves on to the next protocol.
+
+### Monitor › Modbus, OPC UA, BACnet, MQTT
+
+On top, the connections of the protocol with role, address, number of tags and state (as in F11). Below, every
+**value change** of their tags (← time, connection, tag, description, value with unit, quality when it is not
+good) and every **write** (→ value and the user who wrote it), live. Values that do not change are not shown:
+the hub passes on changes only.
+
+- **`/`** filters on connection, tag, description, value or user; `write` lists only writes, `released`
+  the releases.
+- **`p`** pauses and resumes, **`c`** clears the view.
+- **Enter, click or `w`** on a line writes a new value to its tag, with confirmation – only for tags with
+  `writable: true`. For BACnet the dialog also offers the write priority (see "Writing to BACnet" below).
+
+### Writing to BACnet: priority and release
+
+A BACnet value is written into one of 16 slots of the device's priority array; the highest active slot (the
+lowest number) decides the value. The write dialog (Monitor, Systems › Settings, F11 `w`) shows a **Priority**
+field preset to the tag's or connection's `priority` (16 when none is set):
+
+- **16** is the usual slot for automatic control. A write there is overwritten the next time the controller
+  writes.
+- **8** (manual operator) and other numbers below the default **override the automatic control until the value
+  is released**. The dialog warns about this, and the confirmation names the priority.
+- **Release** writes "nothing" into the chosen slot, so the value with the next lower priority takes over again.
+  Release the same priority you wrote with.
+- 1, 2 and 5 (life safety and critical equipment) are never offered, and the server refuses them.
+
+The event log shows each write with the priority when it was not the default, and releases as
+"released (priority 8)".
+
+The monitor shows what has happened since the TUI was started (up to 10,000 entries for all protocols).
+
+### Monitor › KNX (bus monitor)
 
 All telegrams on the bus, live. Each line shows time, direction (← in, → out), source, destination, name,
 type (Write, Response, Read), DPT, raw data and decoded value. With several KNX IP interfaces a **Via** column
@@ -158,7 +201,44 @@ The texts are stored in the language the server was running with when the event 
 `Del` removes all curves. The curves update live.
 
 Trends are based on the telegram log, so they go back as far as `server.retention_days`, and only as far back
-as the server has been running.
+as the server has been running. Logged tags of `protocols.yaml` (`log`) are in the list too, with the connection
+as the address.
+
+## Systems (Ctrl+E)
+
+Every air handling unit has its own entry under **Systems** in the menu (`Systems → 360.001`, `360.002` …);
+`PgUp` / `PgDn` move to the next or previous unit. A unit page has two tabs (`←` / `→` on the tab bar):
+
+- **Overview:** running/stopped, alarm, mode, status text, setpoint and the power of its meter, and the unit
+  drawn with boxes – supply air from outdoor air through filter, heat recovery, heating, cooling and fan to
+  supply air at the bottom, extract air through filter and fan to exhaust at the top – with temperatures,
+  outputs, air flows and pressures. A filter alarm shows `⚠ Alarm` in the filter box, an alarm turns the card
+  red, and values from a lost connection are marked as old. On a narrow screen a smaller drawing is used.
+  Below: charts of the last 24 hours – temperatures (outdoor, supply, extract, exhaust, setpoint) and outputs
+  (fans, heat recovery, heating, cooling). The charts need the tags to be logged (`log` in `protocols.yaml`).
+- **Settings:** the tags of the unit's connection in sections – the `groups` of `ui.systems`, else one section
+  per component (TFM code such as `JV401`, or the first part of the name), the rest under «Other». Each row shows
+  the description without the section name, the live value, the tag (without `prefix`) and whether it is
+  writable (`✎`). Type in the field to filter. **Enter** (or `w`) on a `✎` row opens a dialog for the new value;
+  after a confirmation showing the old and the new value it is written, and the event log records who did it.
+  Only tags with `writable: true` in `protocols.yaml` can be written.
+
+`m` opens the system switch of the unit: one button per `mode_texts` entry, then a confirmation. It needs the
+`mode` role to be a writable tag.
+
+Water-borne plants (boiler room, floor heating, tap water) are shown as a **piping diagram** drawn for the site
+(`type: diagram`): supply pipes in red, return pipes in blue, pumps green when running, red on an alarm and
+yellow when the safety switch is off, values in red when one of their alarms is on. The charts and the Settings
+tab work as for an air handling unit. A `type: panel` entry has no drawing, only the Settings tab.
+
+What is shown is set up in [`ui.systems`](04-configuration.md#systems-view-ctrle).
+
+## Energy meters (Ctrl+G)
+
+A table of the meters: power, energy, current and voltage per phase, cos φ, frequency and the last 24 hours of
+power. The meter under the cursor (`↑` / `↓`) gets a power curve and the consumption per hour or day, worked out
+from its energy counter, and the consumption today and in the period. `d` / `w` / `m` choose 24 hours, 7 days or
+30 days. The curves need the power and energy tags to be logged (`log` in `protocols.yaml`).
 
 ## F8 Floor plan
 
@@ -172,16 +252,28 @@ Shows the building drawn from [`plan.yaml`](06-floor-plan.md). Each room shows t
 ## F9 Screensaver
 
 Starts automatically after 5 minutes without input (`ui.screensaver_minutes`), or with `F9`.
-It rotates every 20 seconds (`ui.screensaver_rotate_s`) between these pages:
+It rotates every 20 seconds (`ui.screensaver_rotate_s`) between these pages (`ui.screensaver_pages` picks them
+and sets the order; pages without data are skipped):
 
-- clock and outdoor temperature
-- home right now
-- temperatures with setpoint marker
-- energy (only if a power meter is found)
-- indoor climate, CO₂ and humidity (only if such sensors are found)
-- KNX traffic
+| Key | Page |
+|---|---|
+| `clock` | Clock, date and outdoor temperature with the last 24 hours |
+| `home` | Home right now: temperature, heating and lights per room |
+| `sky` | The sky over the buildings: the sun on its arc by day, the moon and stars by night, one window per room, lit when a light in the room is on. Sunrise and sunset are calculated for `ui.latitude`/`ui.longitude` (default Fredrikstad). |
+| `temps` | Temperatures with setpoint marker |
+| `ventilation` | Every air handling unit from `ui.systems` as a line drawing: the air moves along the ducts and the fans turn while the unit runs (moves) |
+| `heatmap` | Every room as a tile coloured by its deviation from the setpoint, floor by floor |
+| `energy` | Power from a KNX power meter (only if one is found) |
+| `meters` | All energy meters from `ui.systems`: power now, the last 24 hours, the counter, and the total |
+| `rain` | Telegrams falling down the screen like digital rain (moves) |
+| `air` | Indoor climate, CO₂ and humidity (only if such sensors are found) |
+| `records` | Today: warmest and coldest room, outdoor min/max, lights on, active alarms and the busiest group addresses |
+| `knx` | KNX traffic |
+| `bounce` | The time in big digits bouncing around the screen (moves) |
 
-The content moves a little at each page change to avoid burn-in. **Unacknowledged alarms take over the whole
+The pages marked "moves" are redrawn twice a second. Over a slow SSH link, leave them out with
+`ui.screensaver_pages`. The outdoor temperature comes from `ui.outdoor_ga`, else from the outdoor sensor of the
+first unit in `ui.systems`. The content moves a little at each page change to avoid burn-in. **Unacknowledged alarms take over the whole
 screen** with a slow red blink. Any key or click returns to the normal view.
 
 ## Colour theme (Ctrl+T)

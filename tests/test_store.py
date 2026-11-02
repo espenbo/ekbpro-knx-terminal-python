@@ -11,16 +11,19 @@ from knxscada.store import Store
 
 @pytest.fixture
 def store(tmp_path):
+    """A fresh store in a temporary database, closed after the test."""
     s = Store(tmp_path / "test.db")
     yield s
     s.close()
 
 
 def tel(ts, dst, value, kind="write"):
+    """A decoded telegram row as the server stores it."""
     return {"ts": ts, "dir": "in", "src": "1.1.1", "dst": dst, "type": kind, "raw": None, "value": value}
 
 
 def test_last_values_ignore_reads(store):
+    """Last values come from the newest write/response; a read request (no value) does not hide them."""
     now = time.time()
     store.add_telegram(tel(now - 3, "1/1/1", True))
     store.add_telegram(tel(now - 2, "1/1/1", False))
@@ -32,12 +35,14 @@ def test_last_values_ignore_reads(store):
 
 
 def test_last_values_uses_partial_index(store):
+    """The last-values query uses the partial index, so start-up stays fast on a large database."""
     plan = store.db.execute(
         "EXPLAIN QUERY PLAN SELECT dst, MAX(id) FROM telegrams WHERE type != 'read' GROUP BY dst").fetchall()
     assert any("idx_tel_last" in str(tuple(r)) for r in plan)
 
 
 def test_history_and_numeric_values(store):
+    """Trend history holds numbers only: bools become 0/1, text is left out."""
     now = time.time()
     store.add_telegram(tel(now - 10, "3/0/1", 20.0))
     store.add_telegram(tel(now - 5, "3/0/1", True))   # bools are stored as 0/1 for trends
@@ -46,6 +51,7 @@ def test_history_and_numeric_values(store):
 
 
 def test_purge_in_batches(store):
+    """Old telegrams and events are deleted in batches (so the server is not blocked), the recent ones stay."""
     now = time.time()
     for i in range(25):
         store.add_telegram(tel(now - 100 * 86400 + i, "1/1/1", i))
@@ -64,6 +70,7 @@ def test_purge_in_batches(store):
 
 
 def test_alarm_life_cycle(store):
+    """An alarm stays open until it is both cleared and acknowledged; only the first acknowledgement is recorded."""
     aid = store.raise_alarm("0/6/1", "Smoke", "critical", True)
     assert [a["id"] for a in store.open_alarms()] == [aid]
     store.ack_alarm(aid, "anna")
@@ -75,6 +82,7 @@ def test_alarm_life_cycle(store):
 
 
 def test_last_values_per_address_gives_the_same(store):
+    """Asking for last values of some addresses gives the same as the full query, unknown addresses are left out."""
     now = time.time()
     for i, v in enumerate((1.0, 2.0, 3.0)):
         store.add_telegram(tel(now + i, "3/0/1", v))
@@ -85,6 +93,9 @@ def test_last_values_per_address_gives_the_same(store):
 
 
 def test_long_history_is_thinned_but_keeps_the_peaks(store):
+    """A long history is reduced to max_points but keeps short peaks and dips, in time order, also via a separate read
+    connection.
+    """
     now = time.time()
     for i in range(3000):                       # a value every 10 s for ~8 hours
         store.add_telegram(tel(now - 30000 + i * 10, "3/0/1", 20.0))
@@ -100,9 +111,27 @@ def test_long_history_is_thinned_but_keeps_the_peaks(store):
 
 
 def test_telegrams_for_one_address_newest_last(store):
+    """The telegram list for one address gives the newest n, oldest first."""
     now = time.time()
     for i in range(5):
         store.add_telegram(tel(now + i, "1/1/1", bool(i % 2)))
     store.add_telegram(tel(now + 10, "1/1/2", True))
     rows = store.telegrams(3, "1/1/1")
     assert [r["ts"] for r in rows] == [now + 2, now + 3, now + 4]
+
+
+def test_logged_tag_values_history_and_purge(store):
+    """Values of protocols.yaml tags (point_values): trend history and purge like telegrams."""
+    now = time.time()
+    store.add_point_value("vent/RT401", 16.5, now - 7200)
+    store.add_point_value("vent/RT401", 17.0, now - 60)
+    store.add_point_value("vent/Drift", True, now - 30)
+    store.add_point_value("vent/Status", "Stoppet av kalender", now - 30)
+    store.add_telegram(tel(now, "vent/RT401", 99.0))   # a group address with the same text is not mixed in
+    store.commit()
+    assert store.history("vent/RT401", now - 3600, point=True) == [(now - 60, 17.0)]
+    assert store.read_history("vent/Drift", now - 3600, point=True) == [(now - 30, 1.0)]
+    assert store.history("vent/Status", now - 3600, point=True) == []      # text: no number
+    assert store.logged_points() == ["vent/Drift", "vent/RT401", "vent/Status"]
+    assert store.purge_batch(now - 3600) == 1
+    assert store.history("vent/RT401", 0, point=True) == [(now - 60, 17.0)]

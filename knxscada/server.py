@@ -26,7 +26,7 @@ outgoing telegram and drops copies of a telegram seen through more than one.
 In ``--demo`` mode a :class:`Simulator` produces telegrams instead of xknx,
 so the whole system can be tried without a KNX installation.
 
-Protocol: newline-delimited JSON, documented in ``docs/08-architecture.md``.
+Protocol: newline-delimited JSON, documented in ``docs/en/08-architecture.md``.
 """
 
 from __future__ import annotations
@@ -47,12 +47,17 @@ from collections import deque
 from functools import partial
 from typing import Any
 
-from xknx.dpt import DPTArray, DPTBinary
-from xknx.telegram import GroupAddress, Telegram, TelegramDirection
-from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+try:
+    from xknx.dpt import DPTArray, DPTBinary
+    from xknx.telegram import GroupAddress, Telegram, TelegramDirection
+    from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+except ImportError:          # the KNX module is not installed: only the protocols of protocols.yaml can run
+    # The names are only used by the KNX parts of the server, which never run without KNX (``knx_enabled``);
+    # ScadaServer refuses a configuration with KNX when the module is missing (see __init__).
+    pass
 
 from . import dpt as dptlib
-from .alarms import build_rules, normalize_severity
+from .alarms import Rule, build_rules, normalize_severity, point_rule
 from .config import Config
 from .i18n import N_, _
 from .knx_interfaces import (
@@ -83,18 +88,27 @@ MAX_HOURS = 24 * 400
 #: What may appear in a user name in the audit log (no markup, no control characters).
 USER_RE = re.compile(r"[^\w@.:\-]+")
 
+#: Client commands handled by the protocol hub (connections and gateways, see knxscada/protocols/hub.py).
+HUB_COMMANDS = ("protocols", "points", "logged_points", "point_write", "protocols_save", "protocols_reload")
+
 #: Telegrams older than the retention time are deleted in batches of this size, with a
 #: pause for the event loop in between, so a large purge never blocks the server.
 PURGE_BATCH = 5000
 
 
-def read_mode(value: Any) -> str:
-    """``server.read_on_start`` → ``"off"`` (default), ``"status"`` or ``"all"``.
+#: After the start-up read: how long to wait for the last answers before KNX values count as changes (s).
+START_READ_SETTLE_S = 2.0
 
-    ``true`` means ``"status"``: reading control addresses is never done unless
-    ``"all"`` is given explicitly (see :func:`read_targets` for why).
+
+def read_mode(value: Any) -> str:
+    """``server.read_on_start`` → ``"status"`` (default), ``"off"`` or ``"all"``.
+
+    ``true`` (and nothing) means ``"status"``: reading control addresses is never
+    done unless ``"all"`` is given explicitly (see :func:`read_targets` for why).
     """
-    if value is None or value is False or str(value).strip().lower() in ("false", "off", "no", "0", ""):
+    if value is None or value == "":
+        return "status"
+    if value is False or str(value).strip().lower() in ("false", "off", "no", "0"):
         return "off"
     if str(value).strip().lower() == "all":
         return "all"
@@ -132,10 +146,23 @@ def read_targets(model: dict, gas: dict[str, dict], alarm_addresses, mode: str) 
     return list(wanted)
 
 
+
+def _knx_installed() -> bool:
+    """True when the KNX module's packages (xknx, xknxproject) can be imported."""
+    from .protocols import installed
+
+    return installed("knx")
+
 class ScadaServer:
     """Owns the KNX connection, the database, the alarm state and all client connections."""
 
     def __init__(self, cfg: Config, demo: bool = False) -> None:
+        """Load the ETS project(s), open the database and prepare KNX, PLC bridges and the protocol hub.
+
+        Nothing is connected or sent here; :meth:`run` starts everything. A bad KNX interface setting raises
+        at once, so a typo stops the server instead of running it half-configured. *demo* replaces the bus by
+        the :class:`Simulator` and uses a separate ``…-demo.db``.
+        """
         self.cfg = cfg
         self.demo = demo
         self.model = load_project(cfg)
@@ -144,6 +171,10 @@ class ScadaServer:
         # The demo uses its own database so simulated data never mixes with real history.
         self.store = Store(db.with_name(db.stem + "-demo" + db.suffix) if demo else db)
         self.rules = build_rules(cfg.alarms, self.gas)
+        # Rules for the tags of protocols.yaml (match_point); bound per tag on its first value.
+        self.point_rules = [Rule.from_dict(r) for r in cfg.alarms if isinstance(r, dict) and r.get("match_point")]
+        self._point_rule: dict[str, tuple[Any, Rule | None]] = {}   # "conn/tag" → (driver, rule)
+        self._alarm_delay: dict[str, asyncio.TimerHandle] = {}       # alarms waiting for their delay_s
         self.state: dict[str, dict] = {}  # GA → {"value", "text", "raw", "ts", "src"}
         self.clients: set[asyncio.StreamWriter] = set()
         self.alarms: dict[int, dict] = {}  # open alarms (active or unacknowledged) by id
@@ -153,16 +184,26 @@ class ScadaServer:
         self.started = time.time()
         self.tel_count = 0
         self.tel_times: deque[float] = deque(maxlen=100_000)  # timestamps of the last minute's telegrams (rate)
+        # Without KNX (no knx:/project: in config.yaml) only the protocols of protocols.yaml run.
+        self.knx_enabled = cfg.knx_enabled
+        if self.knx_enabled and not _knx_installed():
+            # Stop at once with the install hint, instead of failing later in the middle of the KNX start-up.
+            from .protocols import missing_message
+
+            raise ModuleNotFoundError(missing_message("knx"))
         # One entry per KNX IP interface; validated here so a typo stops the server at once.
-        self.ifaces: list[dict[str, Any]] = [] if demo else interface_configs(
+        self.ifaces: list[dict[str, Any]] = [] if demo or not self.knx_enabled else interface_configs(
             cfg.knx, {p["name"]: p["prefix"] for p in cfg.projects})
         self.router = Router(self.ifaces) if self.ifaces else None
+        # False until read_on_start has read the bus: until then KNX values are statuses, not changes
+        # (the gateways do not pass them on as changes, see knxscada/protocols/knx.py).
+        self.start_read_done = not self.ifaces or read_mode(cfg.server.get("read_on_start")) == "off"
         self._prefix = {c["name"]: c["prefix"] for c in self.ifaces}
         self.dedup = Deduplicator(int(cfg.knx.get("dedup_ms", DEDUP_MS))) if len(self.ifaces) > 1 else None
         self.xknx: dict[str, Any] = {}  # interface name → XKNX
         self.status: dict[str, Any] = {
             "connected": False,
-            "connection": N_("demo") if demo else N_("disconnected"),
+            "connection": N_("demo") if demo else N_("disconnected") if self.knx_enabled else N_("off"),
             "gateway": "simulator" if demo else ", ".join(describe(c) for c in self.ifaces),
             "interfaces": [{"name": c["name"], "gateway": describe(c), "project": c["project"], "connected": False,
                             "connection": N_("disconnected")} for c in self.ifaces],
@@ -171,12 +212,18 @@ class ScadaServer:
         self.sim: Simulator | None = None
         self._stop = asyncio.Event()
         self.plcs = self._make_plc_bridges()
+        from .protocols.hub import Hub
+
+        self.hub = Hub(self)   # connections and gateways of protocols.yaml (see knxscada/protocols)
 
         # Start with the last known values from the database so clients see
         # something immediately, before the bus has answered our read requests.
+        # They are marked old (the TUI shows them in another colour) and are never
+        # passed on to gateways: only values read or received from now on are.
         for ga, last in self.store.last_values(list(self.gas)).items():
             if ga in self.gas:
                 last["text"] = dptlib.fmt(self.gas[ga]["dpt"], last["value"])
+                last["old"] = True
                 self.state[ga] = last
 
     # -- life cycle -----------------------------------------------------------------------
@@ -199,13 +246,14 @@ class ScadaServer:
 
         tasks = [asyncio.create_task(self._housekeeping())]
         tasks += [asyncio.create_task(b.run()) for b in self.plcs]
-        if self.demo:
+        if self.demo and self.knx_enabled:
             self.sim = Simulator(self)
             tasks.append(asyncio.create_task(self.sim.run()))
             self._set_status(True, N_("demo"))
-        else:
+        elif self.ifaces:
             tasks += [asyncio.create_task(self._knx_connect(c)) for c in self.ifaces]
             tasks.append(asyncio.create_task(self._read_on_start()))
+        await self.hub.start()
 
         await self._stop.wait()
         log.info(_("Stopping …"))
@@ -221,6 +269,8 @@ class ScadaServer:
         for b in self.plcs:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(b.stop(), 5)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.hub.stop(), 10)
         for t in tasks:
             t.cancel()
         for xknx in self.xknx.values():
@@ -334,8 +384,16 @@ class ScadaServer:
             self._set_status(False, code if len(ifs) == 1 else N_("disconnected"))
 
     def _set_status(self, connected: bool, code: str) -> None:
+        """Set the overall KNX state (*code* is an untranslated ``N_()`` text), tell the clients and the KNX driver.
+
+        The KNX driver's state drives the gateways: when it goes down their KNX values turn "old", and on
+        the way up nothing is sent to the bus (KNX never gets initial values).
+        """
         self.status.update(connected=connected, connection=code)
         self._broadcast({"type": "status", "status": self.status})
+        knx = self.hub.drivers.get("knx") if hasattr(self, "hub") else None
+        if knx is not None:
+            knx.set_state(connected)
 
     def _on_telegram(self, name: str, telegram) -> None:
         """xknx callback for every telegram (incoming and outgoing) of interface *name*."""
@@ -372,6 +430,8 @@ class ScadaServer:
 
     async def _send(self, ga: str, kind: str, payload: DPTArray | DPTBinary | None) -> None:
         """Send a GroupValueWrite (*kind* "write") or GroupValueRead (*kind* "read")."""
+        if not self.knx_enabled:
+            raise RuntimeError(_("KNX is not set up in config.yaml"))
         if self.demo:
             assert self.sim is not None
             self.ingest(src="0.0.0", dst=ga, kind=kind, value=payload, direction="out")
@@ -388,6 +448,7 @@ class ScadaServer:
         await xknx.telegrams.put(Telegram(destination_address=GroupAddress(split_key(ga)[1]), payload=apci))
 
     def _iface_connected(self, name: str) -> bool:
+        """Whether the KNX IP interface *name* is connected now (writes through it are refused otherwise)."""
         return any(i["connected"] for i in self.status["interfaces"] if i["name"] == name)
 
     async def _read_on_start(self) -> None:
@@ -400,7 +461,14 @@ class ScadaServer:
             await asyncio.sleep(0.1)
         while not self.status["connected"]:
             await asyncio.sleep(1)
-        await self._read_all()
+        try:
+            await self._read_all()
+            await asyncio.sleep(START_READ_SETTLE_S)   # the last answers
+        finally:
+            self.start_read_done = True
+            knx = self.hub.drivers.get("knx")
+            if knx is not None:
+                knx.set_ready()
 
     async def _read_all(self) -> None:
         """Ask the bus for the current value of the addresses chosen by :func:`read_targets`.
@@ -456,6 +524,8 @@ class ScadaServer:
         if kind != "read":
             for b in self.plcs:
                 b.on_knx(dst, decoded)
+            if self.hub.started and dst in self.gas:
+                self.hub.update("knx", dst, decoded)
 
     def _make_plc_bridges(self) -> list:
         """One OPC UA bridge per enabled PLC in ``plc:`` (see :mod:`knxscada.opcua_bridge`)."""
@@ -490,41 +560,89 @@ class ScadaServer:
         self.status["plc"] = N_("connected") if n == total else N_("partly connected") if n else N_("disconnected")
         self._broadcast({"type": "status", "status": self.status})
 
-    def _check_alarm(self, addr: str, value: Any) -> None:
+    def _check_alarm(self, addr: str, value: Any, rule: Rule | None = None, name: str | None = None,
+                     text_value: str | None = None) -> None:
         """Raise or clear the alarm bound to *addr* according to its rule.
 
         An alarm has two independent properties: active/cleared (the
         condition) and acknowledged/unacknowledged (the operator). It stays
         in the open list until it is both cleared and acknowledged.
+        *addr* is a group address, or ``connection/tag`` with *rule*, *name* and
+        *text_value* given (a tag of protocols.yaml). With ``delay_s`` the alarm is
+        raised only when the condition has lasted that long.
         """
-        rule = self.rules[addr]
+        rule = rule or self.rules[addr]
         active = rule.active(value)
         if active is None:
             return  # value cannot be judged – keep the current state
-        ga = self.gas[addr]
         current = next((a for a in self.alarms.values() if a["ga"] == addr and a["cleared_ts"] is None), None)
-        changed = False
-        if active and current is None:
-            text = rule.format_text(name=ga["name"], address=addr, value=dptlib.fmt(ga["dpt"], value))
-            aid = self.store.raise_alarm(addr, text, rule.severity, value)
-            self.alarms[aid] = {
-                "id": aid, "ga": addr, "text": text, "severity": rule.severity, "raised_ts": time.time(),
-                "cleared_ts": None, "acked_ts": None, "acked_by": None, "value": json.dumps(value),
-            }
-            self.event("alarm", "alarm", _("ALARM {severity}: {text} ({address})").format(
-                severity=_(rule.severity).upper(), text=text, address=addr))
-            changed = True
-        elif not active and current is not None:
+        if active:
+            if current is not None or addr in self._alarm_delay:
+                return
+            if rule.delay_s > 0:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    self._alarm_delay[addr] = loop.call_later(
+                        rule.delay_s, self._raise_alarm, addr, rule, value, name, text_value)
+                    return
+            self._raise_alarm(addr, rule, value, name, text_value)
+            return
+        pending = self._alarm_delay.pop(addr, None)
+        if pending is not None:
+            pending.cancel()   # the condition ended before the delay was over
+        if current is not None:
             self.store.clear_alarm(current["id"])
             current["cleared_ts"] = time.time()
             self.event("info", "alarm", _("Alarm cleared: {text} ({address})").format(text=current["text"], address=addr))
             if current["acked_ts"]:
                 del self.alarms[current["id"]]  # cleared and acknowledged: no longer open
-            changed = True
-        if changed:
             self._broadcast_alarms()
 
+    def _raise_alarm(self, addr: str, rule: Rule, value: Any, name: str | None, text_value: str | None) -> None:
+        """Open an alarm for *addr* (a group address or ``conn/tag``): store it, log it and tell the clients.
+
+        Called by :meth:`_check_alarm` directly, or by the ``delay_s`` timer when the condition lasted long
+        enough. *name*/*text_value* are given for protocol tags; for a group address (None) they are taken
+        from the ETS project and the DPT.
+        """
+        self._alarm_delay.pop(addr, None)
+        if name is None:
+            ga = self.gas[addr]
+            name, text_value = ga["name"], dptlib.fmt(ga["dpt"], value)
+        text = rule.format_text(name=name, address=addr, value=text_value if text_value is not None else str(value))
+        aid = self.store.raise_alarm(addr, text, rule.severity, value)
+        self.alarms[aid] = {
+            "id": aid, "ga": addr, "text": text, "severity": rule.severity, "raised_ts": time.time(),
+            "cleared_ts": None, "acked_ts": None, "acked_by": None, "value": json.dumps(value),
+        }
+        self.event("alarm", "alarm", _("ALARM {severity}: {text} ({address})").format(
+            severity=_(rule.severity).upper(), text=text, address=addr))
+        self._broadcast_alarms()
+
+    def point_value(self, key: str, value: Any, quality: str) -> None:
+        """Called by the hub for every new value of a protocol tag: evaluate its alarm rule (match_point)."""
+        if not self.point_rules or quality != "good":
+            return
+        conn, _sep, tag = key.partition("/")
+        drv = self.hub.drivers.get(conn)
+        cached = self._point_rule.get(key)
+        if cached is None or cached[0] is not drv:   # first value, or the connection was set up again
+            t = drv.tags.get(tag) if drv is not None else None
+            cached = (drv, point_rule(self.point_rules, key, tag, t.description if t else ""))
+            self._point_rule[key] = cached
+        rule = cached[1]
+        if rule is None:
+            return
+        t = drv.tags.get(tag) if drv is not None else None
+        unit = f" {t.unit}" if t is not None and t.unit else ""
+        self._check_alarm(key, value, rule, (t.description if t is not None and t.description else tag),
+                          f"{value}{unit}")
+
     def _broadcast_alarms(self) -> None:
+        """Send the full list of open alarms to every client (the alarm view replaces its list)."""
         self._broadcast({"type": "alarms", "alarms": list(self.alarms.values())})
 
     def event(self, level: str, kind: str, text: str, user: str | None = None) -> None:
@@ -560,6 +678,8 @@ class ScadaServer:
             "state": self.state,
             "alarms": list(self.alarms.values()),
             "demo": self.demo,
+            "knx": self.knx_enabled,
+            "protocols": self.hub.status(),
         }
         writer.write((json.dumps(hello, ensure_ascii=False, default=str) + "\n").encode())
         self.clients.add(writer)
@@ -639,11 +759,15 @@ class ScadaServer:
             return self.store.alarm_history(_bounded(req.get("limit", 200), MAX_LIMIT))
         if cmd == "traffic":
             return self.store.traffic(_bounded(req.get("minutes", 60), MAX_MINUTES))
+        if cmd in HUB_COMMANDS:
+            return await self.hub.command(req, user)
         if cmd == "history":
             # In a worker thread: a 30-day trend of a busy address must not stop the telegram handling.
+            # {"point": "connection/tag"} instead of {"ga": …}: a logged tag of protocols.yaml.
             return await asyncio.to_thread(
-                self.store.read_history, req["ga"], time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
-                _bounded(req.get("max_points", 4000), 20000))
+                self.store.read_history, req.get("point") or req["ga"],
+                time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
+                _bounded(req.get("max_points", 4000), 20000), bool(req.get("point")))
         raise ValueError(_("Unknown command {cmd}").format(cmd=repr(cmd)))
 
 
@@ -696,6 +820,8 @@ class Simulator:
     """
 
     def __init__(self, server: ScadaServer) -> None:
+        """Work out from the project model which addresses echo to which status addresses, which are switches
+        and which are sensors (DPT 9/13/14 that are not set-points)."""
         self.s = server
         self.echo: dict[str, list[tuple[str, str]]] = {}  # control GA → [(status GA, mode)]
         self.sensors: list[str] = []
@@ -755,6 +881,7 @@ class Simulator:
         self.s.ingest(src=src, dst=addr, kind=kind, value=payload, direction="in")
 
     async def run(self) -> None:
+        """Seed start values, then simulate bus traffic forever (cancelled when the server stops)."""
         # Initial values for everything that has no value in the database yet.
         for addr, ga in self.s.gas.items():
             if addr in self.s.state or not ga["used"]:

@@ -2,12 +2,13 @@
 # Copyright (C) 2026 EKB PRO
 #
 # EKBPRO KNX Terminal Python in a container – e.g. on a WAGO PFC200/PFC300 or any
-# Linux machine with Docker (amd64, arm64 or armv7). Guide: docs/09-docker.md
+# Linux machine with Docker (amd64, arm64 or armv7). Guide: docs/en/09-docker.md
 #
 # Code lives in /app, everything that belongs to *your* installation in /data
 # (a volume): config.yaml, the .knxproj, plan.yaml, the database and the socket.
 #
 #   docker build -t ekbpro-knx .
+#   docker build --build-arg MODULES="knx modbus mqtt" -t ekbpro-knx .             # with protocol modules (default: knx)
 #   docker run -d --name knx --network host -v /home/knx:/data ekbpro-knx          # server
 #   docker exec -it knx knx                                                         # visualisation
 
@@ -33,7 +34,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore --prefer-binary -r requirements.txt
 
 COPY knxscada/ knxscada/
-COPY config.example.yaml plan.example.yaml LICENSE ./
+# Protocol modules (docs/en/11-protocols-gateways.md): only their packages are installed, e.g. MODULES="modbus mqtt".
+# KNX is a module too since 2026-11; it stays the default, so existing images keep working. MODULES="modbus" gives a
+# smaller image without the KNX packages.
+ARG MODULES="knx"
+RUN if [ -n "$MODULES" ]; then PIP_NO_CACHE_DIR=1 PIP_ROOT_USER_ACTION=ignore python -m knxscada modules install $MODULES; fi
+COPY config.example.yaml plan.example.yaml protocols.example.yaml LICENSE ./
 COPY docker/knx /usr/local/bin/knx
 RUN chmod 755 /usr/local/bin/knx
 

@@ -80,16 +80,16 @@ def split_key(key: str) -> tuple[str, str]:
 # The patterns include common English and Norwegian words used in ETS projects.
 
 #: Names that indicate a status/feedback address.
-STATUS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state)\b", re.I)
+STATUS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state)\b", re.IGNORECASE)
 #: Names that indicate a setpoint (writing a temperature makes sense).
-SETPOINT_RE = re.compile(r"setpoint|setpunkt|settpunkt|skal|ønsket|onsket|basis", re.I)
+SETPOINT_RE = re.compile(r"setpoint|setpunkt|settpunkt|skal|ønsket|onsket|basis", re.IGNORECASE)
 #: Names that indicate a switching (control) address even without the write flag.
-CONTROL_RE = re.compile(r"\b(switching|av/på|av/paa)\b", re.I)
+CONTROL_RE = re.compile(r"\b(switching|av/på|av/paa)\b", re.IGNORECASE)
 #: Placeholder names such as "-------" used to reserve addresses.
-PLACEHOLDER_RE = re.compile(r"^[-_\s.x]*$", re.I)
+PLACEHOLDER_RE = re.compile(r"^[-_\s.x]*$", re.IGNORECASE)
 #: Words removed when comparing names, so "Hall light switching" and
 #: "Hall light status" are recognised as belonging together.
-PAIR_WORDS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state|switching|switch|value|verdi)\b", re.I)
+PAIR_WORDS_RE = re.compile(r"\b(status|tilbakemelding|feedback|state|switching|switch|value|verdi)\b", re.IGNORECASE)
 
 #: ETS function role → (role on the card, English label shown for it).
 #: Labels are translated when displayed.
@@ -119,7 +119,10 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     """Return the project model, from cache when it is up to date.
 
     *force* ignores the cache (used by ``./scada import`` and ``init``).
+    Without KNX (see :attr:`Config.knx_enabled`) the model is empty.
     """
+    if not cfg.knx_enabled:
+        return empty_model()
     projects = cfg.projects
     cache = cfg.cache_path
     sources = [[p["name"], str(p["file"]), p["prefix"], p["label"], p.get("rooms")] for p in projects]
@@ -134,7 +137,14 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # unreadable cache: rebuild below
-    from xknxproject import XKNXProj  # imported lazily: only needed when (re)building
+    # Imported lazily: only needed when (re)building the model.
+    try:
+        from xknxproject import XKNXProj
+    except ImportError:
+        # The KNX module is optional; a site with an ETS project needs it to (re)build the model.
+        from .protocols import missing_message
+
+        raise ModuleNotFoundError(missing_message("knx")) from None
 
     models = []
     for p in projects:
@@ -149,6 +159,12 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     cache.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
     add_extra_rooms(model, cfg.project.get("extra_rooms"))  # not cached: read from config.yaml every time
     return model
+
+
+def empty_model() -> dict[str, Any]:
+    """The model of an installation without KNX: no addresses, no rooms."""
+    return {"cache_version": CACHE_VERSION, "info": {"name": ""}, "gas": {}, "ranges": [], "floors": [],
+            "functions": {}, "source": "none", "sources": []}
 
 
 #: ``usage`` of an extra card → the ETS usage text the views look for.
@@ -220,6 +236,122 @@ def add_extra_rooms(model: dict[str, Any], rooms: list[dict] | None) -> None:
             addresses=", ".join(sorted(set(unknown)))))
 
 
+#: Prefix of the pseudo group addresses of protocol tags (``pt:conn/tag``), as in the trend view.
+POINT = "pt:"
+
+#: Unit of a protocol tag → the DPT its value is shown and edited with.
+_UNIT_DPT = {"°C": "9.001", "%": "5.001", "ppm": "9.008", "lx": "9.004", "m/s": "9.005", "Pa": "9.006",
+             "kW": "14.056", "W": "14.056", "kWh": "13.013", "Wh": "13.010"}
+
+#: ``role`` of a row in ``project.point_rooms`` → the ETS role the views look for.
+_POINT_ROLES = {"temp": "TempRoom", "setpoint": "TempRoomSetpoint", "heat": "HeatOutput"}
+
+
+def _is_bool(spec: dict[str, Any]) -> bool:
+    """Whether a protocols.yaml tag *spec* is on/off: ``type: bool``, a BACnet binary object or a Modbus coil/input.
+
+    Used for point rooms, so such a tag gets an on/off card (DPT 1.001) instead of a number.
+    """
+    obj = str(spec.get("object") or "")
+    return spec.get("type") == "bool" or obj.split(":")[0] in ("bv", "bi", "bo") or \
+        str(spec.get("address") or "").split(":")[0] in ("co", "di")
+
+
+def add_point_rooms(model: dict[str, Any], rooms: list[dict] | None, tags: dict[str, dict]) -> list[str]:
+    """Add rooms whose cards show tags of protocols.yaml instead of group addresses (``project.point_rooms``).
+
+    ::
+
+        point_rooms:
+          - building: Annex                 # optional: floors are grouped by building in the menu
+            floor: 2nd floor
+            name: Office 205
+            cards:
+              - name: Light
+                usage: light                # light | dimmer | heating | other
+                rows:
+                  - {point: "gw/Light 205 On/Off", status: "gw/Light 205 Status", label: Light}
+              - name: Heating
+                usage: heating
+                rows:
+                  - {point: "gw/RT205_PV", role: temp, label: Temperature}
+                  - {point: "gw/RT205_SP", role: setpoint, label: Setpoint}
+                  - {point: "gw/RT205_VP", role: heat, label: Heating}
+
+    A tag is addressed as ``pt:conn/tag`` in the cards; its record (name, DPT from the unit, writable)
+    goes into ``model["point_gas"]``, not into ``model["gas"]``, so the group address views and the PLC
+    bridge do not see it. *tags* maps ``conn/tag`` to the tag's entry in protocols.yaml. The row kind
+    follows from the tag: writable on/off → switch, writable with ``role: setpoint`` → setpoint,
+    writable % → percent, everything else a value. Returns the problems found (unknown tags …).
+    """
+    problems: list[str] = []
+    if not rooms:
+        return problems
+    point_gas = model.setdefault("point_gas", {})
+    for i, spec in enumerate(rooms):
+        if not isinstance(spec, dict):
+            problems.append(f"project.point_rooms[{i + 1}]: {spec!r}")
+            continue
+        floor_name = str(spec.get("floor") or N_("Other"))
+        building = str(spec.get("building") or "")
+        floor = next((f for f in model["floors"] if f["name"] == floor_name and f.get("building", "") == building),
+                     None)
+        if floor is None:
+            floor = {"name": floor_name, "rooms": [], "building": building}
+            model["floors"].append(floor)
+        room = {"id": f"P-{i}", "name": str(spec.get("name") or f"Room {i + 1}"), "functions": []}
+        for j, card in enumerate(spec.get("cards") or []):
+            dps = []
+            for row in card.get("rows") or []:
+                key = str(row.get("point") or "") if isinstance(row, dict) else str(row)
+                if key not in tags:
+                    problems.append(_("project.point_rooms: no tag {tag} in protocols.yaml").format(tag=key))
+                    continue
+                row = row if isinstance(row, dict) else {}
+                t = tags[key]
+                status = str(row.get("status") or "")
+                if status and status not in tags:
+                    problems.append(_("project.point_rooms: no tag {tag} in protocols.yaml").format(tag=status))
+                    status = ""
+                unit = str(t.get("unit") or "")
+                boolean = _is_bool(t)
+                dpt = "1.001" if boolean else _UNIT_DPT.get(unit, "9.001" if unit == "°C" else "")
+                role = str(row.get("role") or "")
+                writable = bool(t.get("writable"))
+                kind = str(row.get("kind") or "")
+                if not kind:
+                    if writable and boolean:
+                        kind = "switch"
+                    elif writable and role == "setpoint":
+                        kind = "setpoint"
+                    elif writable and unit == "%":
+                        kind = "percent"
+                    else:
+                        kind = "bool" if boolean else "value"
+                label = str(row.get("label") or t.get("description") or key.split("/", 1)[-1])
+                for k in (key, status):
+                    if k:
+                        kt = tags[k]
+                        point_gas[POINT + k] = {
+                            "address": POINT + k, "name": str(kt.get("description") or k.split("/", 1)[-1]),
+                            "dpt": "1.001" if _is_bool(kt) else _UNIT_DPT.get(str(kt.get("unit") or ""), ""),
+                            "unit": str(kt.get("unit") or ""), "writable": bool(kt.get("writable")),
+                            "used": True, "placeholder": False, "point": k}
+                control = kind in ("switch", "setpoint", "percent")
+                dps.append({"label": label, "role": _POINT_ROLES.get(role, ""), "kind": kind,
+                            "ga": POINT + key if control else None,
+                            "status": POINT + (status or key) if (status or not control) else None, "dpt": dpt})
+            if not dps:
+                continue
+            usage = USAGES.get(str(card.get("usage") or ""), "custom")
+            fid = f"P-{i}-{j}"
+            model["functions"][fid] = {"id": fid, "name": str(card.get("name") or ""), "usage": usage, "type": "",
+                                       "room": room["name"], "datapoints": dps}
+            room["functions"].append(fid)
+        floor["rooms"].append(room)
+    return problems
+
+
 def merge_models(projects: list[dict[str, Any]], models: list[dict[str, Any]]) -> dict[str, Any]:
     """Join the models of several projects into one (see "Several projects" above).
 
@@ -235,12 +367,14 @@ def merge_models(projects: list[dict[str, Any]], models: list[dict[str, Any]]) -
         pre = p["prefix"]
 
         def key(a: str | None, pre: str = pre) -> str | None:
+            """*a* with this project's prefix (``S:1/2/3``); empty/None unchanged. *pre* is bound per loop pass."""
             return ga_key(pre, a) if a else a
 
         for a, g in m["gas"].items():
             gas[key(a)] = {**g, "address": key(a)}
 
         def ranges_with_prefix(rs: list[dict], key=key) -> list[dict]:
+            """The group range tree *rs* with every address prefixed (recursively)."""
             return [{**r, "address": key(r["address"]), "gas": [key(a) for a in r["gas"]],
                      "children": ranges_with_prefix(r["children"])} for r in rs]
 
@@ -313,6 +447,10 @@ def build_model(raw: dict[str, Any], rooms: dict[str, Any] | None = None) -> dic
 
     # --- 2. Group range tree -----------------------------------------------------------
     def walk(ranges: dict, path: list[str]) -> list[dict]:
+        """Turn the raw group range dict into a sorted tree and set each address' ``range`` text on the way.
+
+        *path* is the names of the ranges above (``["Lighting"]``), giving ``"Lighting / Switching"``.
+        """
         out = []
         for addr, r in sorted(ranges.items(), key=lambda kv: _ga_sort_key(kv[0])):
             p = path + [r["name"]]
@@ -416,6 +554,7 @@ def build_from_ranges(ranges: list[dict], gas: dict[str, dict]) -> tuple[list[di
     functions: dict[str, dict] = {}
 
     def usable(addr: str) -> bool:
+        """Worth a card: linked to a device, not a placeholder name and with a DPT (needed to show the value)."""
         g = gas.get(addr)
         return bool(g and g["used"] and not g["placeholder"] and g["dpt"])
 
@@ -501,6 +640,7 @@ def build_from_names(ranges: list[dict], gas: dict[str, dict], rule: dict[str, A
     main_name = {r["address"]: r["name"] or r["address"] for r in ranges}
 
     def usable(addr: str) -> bool:
+        """Worth a card (as in :func:`build_from_ranges`) and not left out by the rule's ``exclude`` patterns."""
         g = gas[addr]
         return bool(g["used"] and not g["placeholder"] and g["dpt"] and addr not in excluded)
 

@@ -43,10 +43,11 @@ set `select: all` (or run `./scada plc-map --all`).
 
 | Field | Meaning |
 |---|---|
-| `use` | `true` = exchanged with the PLC (ignored with `select: all`). |
-| `dir` | `to_plc`: KNX → PLC, the PLC reads it. `to_knx`: PLC → KNX, the PLC writes it. `both`: both directions. |
+| `use` | `true` = exchanged with the PLC (ignored with `select: all`). Default `false`. |
+| `dir` | `to_plc`: KNX → PLC, the PLC reads it. `to_knx`: PLC → KNX, the PLC writes it. `both`: both directions. Left out = `to_plc`. |
 | `type` | IEC type of the PLC variable, from the DPT (see below). |
-| `var` | Name of the PLC variable. You may rename it; it must be a valid IEC identifier. |
+| `var` | Name of the PLC variable. You may rename it; it must be a valid IEC identifier (letters, digits, `_`, no `__`) and unique. |
+| `ga` | The group address. An address that is no longer in the ETS project stops the server with an error – run `./scada plc-map` after changing the project. |
 
 **Names from the system tags.** If the PLC already has its own KNX objects in ETS, named with the system tag
 (as the ST_KNX code generator does: `KNX_Linje_M1.M1_000_564_002_RT6101._01_Rom_SP`), set `plc.tag_prefix`
@@ -151,8 +152,10 @@ the server. On the WAGO PFC, the policies offered are set under *OPC UA Server S
 
 ## How values are exchanged
 
-- **No telegrams at start-up.** When the bridge connects, the PLC variables (`to_plc`, `both`) get the last
-  known KNX values from the server – that writes to the PLC, not to the bus. The current values of the PLC
+- **No telegrams at start-up.** When the bridge connects, the PLC variables (`to_plc`, `both`) get the KNX
+  values the server has received since it started – that writes to the PLC, not to the bus. Old values from the
+  database of the last run are never sent; the PLC gets those addresses when the bus has sent them
+  (`read_on_start: status` or the next telegram). The current values of the PLC
   variables are only *noted*; nothing is sent to KNX until a variable **changes** after that. The same applies
   after a reconnect: changes the PLC made while the connection was down are not sent.
 - **No telegrams when the PLC restarts.** A download, reset or online change with re-initialisation sets the

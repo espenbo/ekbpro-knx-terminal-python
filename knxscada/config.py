@@ -5,7 +5,7 @@
 The configuration is a plain YAML file with the sections ``knx``,
 ``project``, ``server``, ``alarms``, ``ui`` and (optional) ``plc``. This module only parses the
 file and offers helpers for resolving paths; the meaning of the individual
-keys is documented in ``docs/04-configuration.md`` and in
+keys is documented in ``docs/en/04-configuration.md`` and in
 ``config.example.yaml``.
 
 Relative paths in the configuration are resolved against the directory that
@@ -50,6 +50,16 @@ class Config:
         return p if p.is_absolute() else self.base / p
 
     @property
+    def knx_enabled(self) -> bool:
+        """KNX is set up (a ``knx:`` or ``project:`` section, and not ``knx: {enabled: false}``).
+
+        Without KNX the server only runs the protocol connections and gateways of ``protocols.yaml``.
+        """
+        if self.knx.get("enabled") is False:
+            return False
+        return bool(self.knx) or bool(self.project)
+
+    @property
     def language(self) -> str:
         """UI language (``en`` or ``nb``); English when not configured."""
         return str(self.ui.get("language") or "en")
@@ -78,7 +88,7 @@ class Config:
         ``project.files``. The group addresses of the first keep their plain form
         (``1/2/3``); those of the others get their prefix (``S:1/2/3``), because
         the projects may use the same addresses for different things.
-        See ``docs/04-configuration.md``.
+        See ``docs/en/04-configuration.md``.
         """
         items = self.project.get("files")
         if not items:

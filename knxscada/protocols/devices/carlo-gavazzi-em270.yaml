@@ -1,0 +1,75 @@
+# Carlo Gavazzi EM270 and EM280: dual energy meters (2 × 3-phase or 6 × 1-phase) with two sets of current
+# sensors, TCDA1 and TCDA2 – Modbus RTU on RS485.
+# Source: "EM270 X & W, EM280 Communication Protocol", version 5 revision 1 (2018-01-29), table 2.3-1, 2.6, 2.7.
+# Values are integers with a value weight (V×10, A×1000, W×10, kWh×10); INT32 has the low word first.
+# The system values (A L1 … W, kWh(+)TOT at 0000h–0024h) exist only with SUM/Virtual on, so the template reads
+# the values of each sensor set. Tag names are written as in the manual (TCDA1 = first set, TCDA2 = second set);
+# give them names from your tagging system in the gateway.
+manufacturer: Carlo Gavazzi
+protocol: modbus
+models:
+  EM270: dual 3-phase energy meter with TCD current sensors up to 630 A (EM270 X and W)
+  EM280: dual 3-phase energy meter with TCD06 current sensors, max 32 A
+manual: EM270 X & W, EM280 Communication Protocol, version 5 revision 1
+links:
+  - https://www.gavazzi.no/produktkategori/energi-forbruksmalere/1-3-fase-dobbel-maler/
+
+# Factory setting: 9600 baud, no parity, 1 stop bit (8N1). At most 18 registers per request.
+settings:
+  transport: rtu
+  baudrate: '9600'
+  parity: N
+  stopbits: '1'
+  unit_id: 1
+  poll_ms: 5000
+  word_order: little
+  max_registers: 18
+
+identify:
+  meter_code: {address: 'hr:0x000B', type: uint16,
+               values: {270: EM270, 271: EM270, 272: EM270, 273: EM270, 280: EM280, 281: EM280, 282: EM280,
+                        283: EM280}}
+  unit_id: {address: 'hr:0x2000', type: uint16}
+  baudrate: {address: 'hr:0x2001', type: uint16, values: {0: '9600', 1: '19200', 2: '38400'}}
+  parity: {address: 'hr:0x2002', type: uint16, values: {0: N, 1: E}}
+
+# MSW 7FFFh = overflow ("EEE"), 7FFEh = sensor missing, 7FFDh = not in the measuring system; LSW FFFFh.
+invalid: [2147483647, 2147418111, 2147352575]
+
+tags:
+  V L1-N: {address: 'hr:0x0000', type: int32, scale: 0.1, unit: V, writable: false}
+  V L2-N: {address: 'hr:0x0002', type: int32, scale: 0.1, unit: V, writable: false}
+  V L3-N: {address: 'hr:0x0004', type: int32, scale: 0.1, unit: V, writable: false}
+  V L1-L2: {address: 'hr:0x0006', type: int32, scale: 0.1, unit: V, writable: false}
+  V L2-L3: {address: 'hr:0x0008', type: int32, scale: 0.1, unit: V, writable: false}
+  V L3-L1: {address: 'hr:0x000A', type: int32, scale: 0.1, unit: V, writable: false}
+  A L1 TCDA1: {address: 'hr:0x010C', type: int32, scale: 0.001, unit: A, writable: false}
+  A L2 TCDA1: {address: 'hr:0x010E', type: int32, scale: 0.001, unit: A, writable: false}
+  A L3 TCDA1: {address: 'hr:0x0110', type: int32, scale: 0.001, unit: A, writable: false}
+  W L1 TCDA1: {address: 'hr:0x0112', type: int32, scale: 0.1, unit: W, writable: false}
+  W L2 TCDA1: {address: 'hr:0x0114', type: int32, scale: 0.1, unit: W, writable: false}
+  W L3 TCDA1: {address: 'hr:0x0116', type: int32, scale: 0.1, unit: W, writable: false}
+  W TOT TCDA1: {address: 'hr:0x0118', type: int32, scale: 0.1, unit: W, writable: false}
+  VA TOT TCDA1: {address: 'hr:0x011A', type: int32, scale: 0.1, unit: VA, writable: false}
+  var TOT TCDA1: {address: 'hr:0x011C', type: int32, scale: 0.1, unit: var, writable: false}
+  kWh (+) TOT TCDA1: {address: 'hr:0x011E', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (+) TOT TCDA1: {address: 'hr:0x0120', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kWh (+) L1 TCDA1: {address: 'hr:0x012A', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (+) L2 TCDA1: {address: 'hr:0x012C', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (+) L3 TCDA1: {address: 'hr:0x012E', type: int32, scale: 0.1, unit: kWh, writable: false}
+  PF TCDA1: {address: 'hr:0x0148', type: int32, scale: 0.001, writable: false}
+  A L1 TCDA2: {address: 'hr:0x020C', type: int32, scale: 0.001, unit: A, writable: false}
+  A L2 TCDA2: {address: 'hr:0x020E', type: int32, scale: 0.001, unit: A, writable: false}
+  A L3 TCDA2: {address: 'hr:0x0210', type: int32, scale: 0.001, unit: A, writable: false}
+  W L1 TCDA2: {address: 'hr:0x0212', type: int32, scale: 0.1, unit: W, writable: false}
+  W L2 TCDA2: {address: 'hr:0x0214', type: int32, scale: 0.1, unit: W, writable: false}
+  W L3 TCDA2: {address: 'hr:0x0216', type: int32, scale: 0.1, unit: W, writable: false}
+  W TOT TCDA2: {address: 'hr:0x0218', type: int32, scale: 0.1, unit: W, writable: false}
+  VA TOT TCDA2: {address: 'hr:0x021A', type: int32, scale: 0.1, unit: VA, writable: false}
+  var TOT TCDA2: {address: 'hr:0x021C', type: int32, scale: 0.1, unit: var, writable: false}
+  kWh (+) TOT TCDA2: {address: 'hr:0x021E', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kvarh (+) TOT TCDA2: {address: 'hr:0x0220', type: int32, scale: 0.1, unit: kvarh, writable: false}
+  kWh (+) L1 TCDA2: {address: 'hr:0x022A', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (+) L2 TCDA2: {address: 'hr:0x022C', type: int32, scale: 0.1, unit: kWh, writable: false}
+  kWh (+) L3 TCDA2: {address: 'hr:0x022E', type: int32, scale: 0.1, unit: kWh, writable: false}
+  PF TCDA2: {address: 'hr:0x0248', type: int32, scale: 0.001, writable: false}

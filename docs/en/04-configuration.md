@@ -1,7 +1,7 @@
 # Configuration (`config.yaml`)
 
 `config.yaml` lives in the program directory. Choose another file with `-c file.yaml` or `KNXSCADA_CONFIG=file.yaml`.
-Relative paths are resolved from the directory the file is in. The template is [`config.example.yaml`](../config.example.yaml).
+Relative paths are resolved from the directory the file is in. The template is [`config.example.yaml`](../../config.example.yaml).
 
 Changes to `knx`, `project`, `server`, `alarms` and `plc` require a restart of the server. Changes to `ui` require a
 restart of the visualisation. `ui.language` is also used by the server (for event log and alarm texts), so
@@ -11,6 +11,7 @@ restart the server as well when you change it.
 
 | Key | Default | Description |
 |---|---|---|
+| `enabled` | on when `knx:` or `project:` is filled in | `false` = run without KNX (only the connections and gateways of `protocols.yaml`; the TUI starts on F11) |
 | `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (discovery), `tunneling_secure`, `routing_secure` |
 | `gateway_ip` | – | IP address of the IP interface. Not needed for `routing` and `automatic`. |
 | `gateway_port` | `3671` | |
@@ -37,7 +38,7 @@ it, and the TUI shows one dot per interface in the top bar and the interface in 
 
 ```yaml
 knx:
-  keyring_file: MyProject.knxkeys      # keys at this level are defaults for every interface
+  keyring_file: MyProject.knxkeys      # see below which keys at this level are defaults for every interface
   interfaces:
     - name: house                      # short name, shown in the TUI and the event log
       connection: tunneling
@@ -51,8 +52,9 @@ knx:
 
 | Key (per interface) | Default | Description |
 |---|---|---|
-| `name` | `gateway_ip` | Letters, digits, `-`, `_`, `.`; at most 16 characters. |
-| `connection`, `gateway_ip`, `gateway_port`, `local_ip`, `route_back`, `individual_address`, `keyring_file`, `keyring_password`, `user_id` | | As above, for this interface. |
+| `name` | `gateway_ip`, else `knx1`, `knx2` … | Letters, digits, `-`, `_`, `.`; at most 16 characters; unique. |
+| `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`, `user_id`, `dedup_ms` | from the `knx:` level | As above, for this interface. These are the only keys taken from the `knx:` level. |
+| `gateway_ip`, `gateway_port`, `individual_address` | as in the table above | Per interface only – never taken from the `knx:` level. |
 | `addresses` | – | Group addresses whose telegrams are **sent** through this interface: a list of patterns, `*` matches anything (`"4/*"`, `"1/2/1?"`, `"3/1/0"`). |
 | `project` | first project | With several ETS projects (`project.files`): the project whose bus this interface is connected to. |
 | `default` | first interface of the project | The interface for addresses that no `addresses` pattern matches and that have not been seen yet. |
@@ -86,8 +88,10 @@ connected; operation works as long as the interface for that address is connecte
 | `file` | `project.knxproj` | Path to the `.knxproj` (or `.knxprojarchive`) |
 | `password` | – | Password if the project is protected |
 | `cache` | `var/project_cache.json` | The parsed project. Rebuilt automatically when the project file is newer, or when `files` or `rooms` change. |
-| `files` | – | Several ETS projects in one site, instead of `file` (see below) |
+| `files` | – | Several ETS projects in one site, instead of `file` (see below). `password` is then given per entry. |
 | `rooms` | – | Rooms from the group address names (see below) |
+| `extra_rooms` | – | Rooms of your own for addresses no ETS room holds (see [Extra rooms](#extra-rooms)) |
+| `point_rooms` | – | Rooms whose cards show protocol tags, e.g. an annex behind a gateway (see [Rooms from protocol tags](#point-rooms)) |
 
 `.knxprojarchive` files from ETS 6 can be used directly as well.
 
@@ -164,10 +168,49 @@ project:
           usage: light                # light | dimmer | heating | other (default: guessed)
 ```
 
+Defaults: `floor` = `Other`, `name` = `Room 1`, `Room 2` …, `usage` guessed from the addresses. With several ETS
+projects, the addresses of the second and later projects need their prefix (`S:3/0/35`).
+
 Each card is built like the cards from ETS: control and status addresses are paired by name (or by
 `status`), the DPT decides switch, dimmer, setpoint or value. A card with a temperature counts as the room
 temperature. Addresses that are not in the project stop the start with an error. The rooms are read from
 `config.yaml` at every start – no `./scada import` needed.
+
+<a id="point-rooms"></a>
+
+### Rooms from protocol tags (another building behind a gateway)
+
+Rooms can also show tags of `protocols.yaml` – for example an annex whose KNX reaches us through a KNX→BACnet
+gateway. `project.point_rooms` is built like `extra_rooms`, but each card has `rows` with a `point`
+(`connection/tag`). With `building`, the menu groups the floors by building: «Floors and rooms → Main building /
+Annex → floors → rooms»; `ui.building` names the building of the ETS floors (default «Main building»).
+
+```yaml
+project:
+  point_rooms:
+    - building: Annex
+      floor: 2nd floor
+      name: Office 205
+      cards:
+        - name: Light
+          usage: light                # light | dimmer | heating | other
+          rows:
+            - {point: "gateway/Light 205 On/Off", status: "gateway/Light 205 Status", label: Light}
+        - name: Heating
+          usage: heating
+          rows:
+            - {point: "gateway/RT205_PV", role: temp, label: Temperature}
+            - {point: "gateway/RT205_SP", role: setpoint, label: Setpoint}
+            - {point: "gateway/RT205_VP", role: heat, label: Heating}
+ui:
+  building: Main building
+```
+
+The kind of row follows from the tag: writable on/off → switch, writable with `role: setpoint` → setpoint
+(− / +), writable % → dimmer, everything else a value (`kind:` overrides). `role` `temp`, `setpoint` and `heat`
+make the room temperature, setpoint and heating of the room card in the overview. Writes go to the tag
+(`writable: true` in `protocols.yaml`) and are logged like other writes. A tag that does not exist is reported
+when the TUI starts; the other rooms work.
 
 ### Several ETS projects in one site
 
@@ -205,7 +248,7 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 
 | Key (per entry in `files`) | Default | Description |
 |---|---|---|
-| `file` | required | Path to the `.knxproj` / `.knxprojarchive` |
+| `file` | required | Path to the `.knxproj` / `.knxprojarchive`. An entry can also be just the path as a string. |
 | `name` | `p1`, `p2` … | Used by `knx.interfaces[].project` |
 | `label` | the name | Shown in the TUI (floors, address tree) |
 | `prefix` | the name | Letters and digits. The first project never gets one. |
@@ -219,16 +262,18 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 | `socket` | `var/knxscada.sock` | Unix socket between server and visualisation |
 | `database` | `var/knxscada.db` | SQLite with telegrams, events and alarms. Demo mode uses `var/knxscada-demo.db`. |
 | `retention_days` | `90` | How long telegrams and events are kept. Old data is deleted every hour. Alarms are kept. |
-| `read_on_start` | `false` | Read values from the bus when the server starts: `false` (send no telegrams; the last values are taken from the database), `status` (feedback, sensor and alarm addresses only) or `all` (see the warning below). `true` means `status`. |
+| `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`, and `off`, `no`, `0` mean `false`. Any other value is taken as `status`. Values from the database are never passed on to gateways. |
 | `read_interval_ms` | `80` | Pause between the reads, so the bus is not overloaded |
+| `protocols` | `protocols.yaml` | Connections and gateways (Modbus, MQTT, OPC UA, BACnet): see [Protocols and gateways](11-protocols-gateways.md). Use `var/protocols.yaml`, as `config.example.yaml` does: the systemd service may only write in `var/`, so F11 can only save the file there. |
 
-**Why reading at start-up is off by default, and `all` is not recommended.** A GroupValueRead on a *control*
+**Why `status` is the default, and `all` is not recommended.** A GroupValueRead on a *control*
 address (e.g. "Hall light switching") is answered by every device that has the read flag (R) on that address –
 also by a push button or logic module that still holds an old value. Actuators whose object has the update
 flag (U) treat such a response like a write, so a read can switch a light off. `status` therefore never reads
-an address that is used to control something; it only reads feedback, sensor and alarm addresses. With `false`
-the server sends nothing at start-up: it logs all bus traffic around the clock, so the last values in the
-database are normally up to date, and every value is refreshed with the next telegram.
+an address that is used to control something; it only reads feedback, sensor and alarm addresses, so the
+values are fresh right after a start. With `false` the server sends nothing at start-up: the last values from
+the database are shown dimmed and in italics ("not read yet") until the bus sends a new one, and they are never
+passed on to the PLC bridge or to gateways.
 
 The database grows with the traffic, approx. 115 bytes per telegram. At 1–2 telegrams/s that is approx. 10–20 MB
 per day, and 0.9–1.8 GB with `retention_days: 90`.
@@ -249,8 +294,14 @@ alarms:
     text: "Smoke alarm: {name}"     # {name}, {address}, {value}
 ```
 
-`address` is accepted as an alias for `match_address`. Placeholder addresses and addresses without any linked
+`address` is accepted as an alias for `match_address`. `dpt_main` must be a number (`1`, not `"1"`). A rule
+whose `condition` is none of the forms below is never active – there is no warning. A rule without `condition`
+uses `"true"`, without `text` the GA name. Placeholder addresses and addresses without any linked
 communication object are never monitored.
+
+`delay_s: 60` raises the alarm only when the condition has lasted 60 seconds. Tags of `protocols.yaml` (Modbus,
+OPC UA, MQTT, BACnet) get alarms from rules with `match_point: "connection/tag-glob"` – see
+[Alarms on tags](11-protocols-gateways.md#alarms-on-tags).
 
 | `condition` | Active when |
 |---|---|
@@ -283,6 +334,7 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | Key | Default | Description |
 |---|---|---|
 | `title` | project name | Title in the top bar |
+| `building` | `Main building` | Name of the ETS building in the menu when `project.point_rooms` add another building |
 | `language` | `en` | Language: `en` (English) or `nb` (Norwegian bokmål; `no` is accepted as an alias). Also the language of the event log and alarm texts the server generates. Each user's own choice (Ctrl+L) and `./scada tui --language` take precedence in the visualisation. |
 | `theme` | `retro` | Default theme: `retro`, `retro-classic`, `amber`, `modern`, `solarized`, `storm`. The user's own choice for this installation (Ctrl+T) takes precedence. The old names `retro-klassisk` and `moderne` are still accepted. |
 | `logo_file` | – | A logo of your own for the start-up screen and About (a text file). The theme `storm` always shows the Storm Automasjon logo instead. Drawn with `█ ▀ ▄` (solid, in the theme's main colour) and `▒` (shade); blocks separated by an empty line – when the logo is too big for the window, only the first block is shown. |
@@ -291,16 +343,112 @@ for a,r in build_rules(c.alarms, m['gas']).items(): print(a, m['gas'][a]['name']
 | `ascii` | `false` | Only ASCII characters in charts, for older terminals |
 | `screensaver_minutes` | `5` | Minutes without input before the screensaver starts. `0` turns it off. |
 | `screensaver_rotate_s` | `20` | Seconds per screensaver page |
+| `screensaver_pages` | all | The screensaver pages and their order, e.g. `[clock, sky, heatmap, meters, records]`. Keys: `clock`, `home`, `sky`, `temps`, `ventilation`, `heatmap`, `energy`, `meters`, `rain`, `air`, `records`, `knx`, `bounce` (see the user guide). Unknown keys are ignored. |
+| `latitude`, `longitude` | `59.22`, `10.93` (Fredrikstad) | Position for sunrise, sunset and the moon on the screensaver page `sky` (decimal degrees) |
 | `plan` | `plan.yaml` | The floor plan file |
 | `export_dir` | `~` | Where the bus monitor export (`e`: ETS XML, CSV or JSON) is saved. In Docker: e.g. `/data/export`. |
-| `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". |
-| `power_ga` | auto | Power (DPT 14.056) for the status tile. Auto finds a name ending in "power" or "W", or containing "effekt". |
+| `outdoor_ga` | auto | Group address of the outdoor temperature. Auto finds a DPT 9 address whose name starts with "ute temp", "outdoor" or "outside". Without one, the `outdoor` tag of the first unit in `ui.systems` is used. |
+| `power_ga` | auto | Power (DPT 14.056) for the status tile. Auto finds a name ending in "power" or "W", or containing "effekt". Without one, the tile rotates through the energy meters of `ui.systems`. |
 | `energy_ga` | auto | Energy meter (DPT 13.x). Auto finds a name containing "kwh" or "energy". |
 | `setpoint_step` | `0.5` | Step for − / + on setpoints |
 | `dim_step` | `10` | Step for − / + on dimmers |
 | `confirm_raw_write` | `true` | Confirmation before writing from the group address view |
 
 An unknown `language` falls back to English.
+
+### Systems view (Ctrl+E)
+
+`ui.systems` describes the air handling units of `protocols.yaml` for the **Systems** view and the meters for
+the **Energy meters** view (Ctrl+G). Each unit names a connection and binds its tags to roles; `prefix` is put in
+front of every tag name. Every unit gets a menu entry under Systems: `short`, else the `360.001` part of a name
+that starts with `=360.001`, else the name.
+
+```yaml
+ui:
+  systems:
+    - name: "=360.001 Ventilation 1st floor"
+      short: "360.001"                  # menu entry – optional
+      type: ventilation
+      connection: vent1                 # a connection in protocols.yaml
+      prefix: BY_360_001_
+      meter: meter1                     # its energy meter (a connection with a meter template) – optional
+      tags: {outdoor: RT900_PV, supply: RT401_PV, extract: RT501_PV, setpoint: AktReg_SP,
+             supply_fan: JV401_OP, extract_fan: JV501_OP, recovery: LX001_OP, heating: LV001_OP,
+             cooling: LK001_OP, alarm: SYS_AL, filter_supply: QD401_AL, filter_extract: QD501_AL, mode: SD_CMD}
+      mode_texts: {0: Auto, 1: Manual off, 2: Manual on}
+      status_texts: {12: Time schedule} # text per value of the status tag – optional
+      alarm_normal: 1                   # value of the alarm tag that means "no alarm" – optional
+      settings: ["*_SP", "*_Set*"]      # tags on the Settings tab (glob) – optional, default: all tags
+      hide: [Act_Time, DayOfWeek]       # never on the Settings tab (glob without prefix) – optional
+      groups:                           # sections of the Settings tab (glob without prefix) – optional
+        - {title: "Operation and alarms", tags: [SYS_*, SD_CMD, QD401_AL, QD501_AL]}
+        - {title: "Supply fan JV401", tags: [JV401_*]}
+    - name: Energy
+      type: energy
+      meters:
+        - {name: Main board, connection: meter_main}
+        - {name: Ventilation 1st floor, connection: meter1, tags: {pf: "Power factor"}}
+```
+
+Roles of a unit: `outdoor`, `supply`, `extract`, `exhaust`, `setpoint`, `supply_fan`, `extract_fan`,
+`supply_fan_run`, `extract_fan_run`, `recovery`, `heating`, `cooling`, `supply_flow`, `extract_flow`,
+`supply_pressure`, `extract_pressure`, `running`, `alarm`, `filter_supply`, `filter_extract`, `mode`, `status`.
+Leave out what the unit does not have. "Running" is `running`, else `supply_fan_run`, else `supply_fan` > 0.
+BACnet multi-state values are numbers (1, 2, 3 …): `status_texts` shows a text for the `status` value (a
+Climatix `ActOpSta` 12 = "Time schedule"), and `alarm_normal` gives the `alarm` value that means "no alarm"
+(an alarm class with 1 = Normal, 2 = Alarm – without it every value above 0 counts as an alarm). The texts of a
+device can be read with `property: state-text` on a tag.
+A week program is shown when `week_start_hour` and `week_stop_hour` are set: arrays with one value per day,
+Monday first (`week_start_minute`, `week_stop_minute`, `week_enabled` optional), and `overtime` (on/off).
+
+#### Piping diagrams (`type: diagram`)
+
+Water-borne plants look different on every site, so their drawing is written as text, the way an HMI page is
+drawn, and the live values are put into it:
+
+```yaml
+    - name: "=320.002 Floor heating"
+      type: diagram
+      connection: plc1
+      prefix: "320_002_"
+      diagram: |2
+         supply ━━━━ SB501 {valve } ━━ {p1 } JP401 ━━━━━━━━▶ RT401 {t_sup  }
+         return ◀══════════════════════════════════════════ RT501 {t_ret  }
+      fields:
+        valve: {tag: RelPos, connection: valve1, decimals: 0}   # a tag of another connection
+        p1: {kind: pump, run: JP401_V, alarm: [JP401_AL], safety: JP401_SB}
+        t_sup: {tag: RT401_PV, alarm: [RT401_L_AL, RT401_H_AL]}
+        t_ret: {tag: RT501_PV}
+      charts:                           # the 24 h charts: legend → field
+        temperatures: {"Supply": t_sup, "Return": t_ret}
+        outputs: {"Valve %": valve}
+```
+
+- `{key}` is replaced by the field *key*, as wide as the placeholder itself (braces included): spaces inside the
+  braces widen the field, so the drawing keeps its columns. Write `diagram: |2` so the first line may start
+  with spaces.
+- Heavy box characters (`━ ┃ ┏ ┓ ┗ ┛ ┣ ┫ ┳ ┻ ╋`) are supply pipes (red), double ones (`═ ║ ╔ ╗ ╚ ╝ ╠ ╣ ╦ ╩ ╬`)
+  return or cold water (blue); arrows `▶ ◀ ▲ ▼` take the colour of the pipe before them.
+- Field kinds: `value` (default; `decimals`, `unit: false`), `pump` (`run`, `alarm`, `safety`), `state` (an
+  on/off tag shown as `on`/`off` texts) and `text` (`texts` for the numbers of a multi-state tag). `alarm` is a
+  tag or a list: any of them on draws the field red. Tags get the entry's `prefix`; a field with its own
+  `connection` reads that connection without prefix (or with its own `prefix`). `align` (`left` / `center` /
+  `right`, default `center`) places the text inside the field.
+- `groups`, `settings` and `hide` work as for an air handling unit (the Settings tab).
+
+A meter uses the tag names of the device templates (`Total active power`, `Total active energy`, `L1 current` …,
+`L1 voltage` …, `Power factor`, `Frequency`); `tags:` overrides single roles (`power`, `energy`, `i1`–`i3`,
+`u1`–`u3`, `pf`, `freq`). The curves of a meter need its power and energy tags to be logged (`log` in
+`protocols.yaml`); the charts of a unit need its temperatures and outputs to be logged.
+
+`type: panel` is a system without a drawing – e.g. a KNX→BACnet gateway: it gets a menu entry under Systems
+and opens on the Settings tab with its tags in `groups` (writable ones with Enter). Roles are not used.
+
+Settings tab: a tag goes into the first of the `groups` it matches. Tags in no group are put into automatic
+sections by TFM code (`JV401_OP` → `JV401`) or by the first part of the name (`Sequence_Kp1` → `Sequence`) when at
+least two tags share it; the section is named after the words their descriptions start with. The rest is «Other».
+The section name – or the title without a trailing TFM code – is left out of each description (`Supply fan output`
+in «Supply fan JV401» shows as `Output`). Put titles with a comma in quotes.
 
 ### Personal settings
 
@@ -315,7 +463,9 @@ Optional. Exchanges KNX values with a PLC (e.g. CODESYS on a WAGO PFC). Guide: [
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Start the bridge with the server |
+| `enabled` | `false` | Start the bridge with the server. With `controllers` (below), each PLC is on unless it or `plc.enabled` says `false`. |
+| `name` | `plc` | Name of the PLC in the top bar and the event log |
+| `controllers` | – | Several PLCs (see below) |
 | `endpoint` | `opc.tcp://127.0.0.1:4840` | The PLC's OPC UA server |
 | `username`, `password` | – | User of the PLC runtime. Without `username` the connection is anonymous. |
 | `security` | `None` | `None`, or `<policy>,Sign` / `<policy>,SignAndEncrypt` with policy `Basic256Sha256`, `Aes128Sha256RsaOaep` or `Aes256Sha256RsaPss` |
@@ -324,7 +474,7 @@ Optional. Exchanges KNX values with a PLC (e.g. CODESYS on a WAGO PFC). Guide: [
 | `map` | `plc_map.yaml` | Which group addresses are exchanged, their direction and PLC variable names (`./scada plc-map`) |
 | `gvl` | `GVL_KNX` | Name of the GVL in the PLC. Only used when `plc_map.yaml` is first created; after that, `gvl:` at the top of `plc_map.yaml` counts. |
 | `gvl_file` | `<gvl>.st` | Where `./scada plc-map` writes the GVL |
-| `node_prefix`, `namespace` | found automatically | Node id prefix of the GVL variables (e.g. `\|var\|<device>.Application.GVL_KNX.`) and its namespace index – only needed if the automatic search does not find the GVL |
+| `node_prefix`, `namespace` | found automatically | Node id prefix of the GVL variables (e.g. `\|var\|<device>.Application.GVL_KNX.`) and its namespace index – only needed if the automatic search does not find the GVL. With `node_prefix` and no `namespace`, the namespace is `4`. |
 | `publish_interval_ms` | `200` | How often the PLC reports changes |
 | `min_interval_ms` | `200` | At most one KNX write per address in this time; the latest value wins |
 | `timeout_s` | `10` | Connection timeout |
@@ -353,6 +503,9 @@ plc:
       gvl: GVL_KNX_Board2
       # enabled: false                  # keep it configured, but do not connect
 ```
+
+`enabled` on a PLC wins; without it, `plc.enabled` counts, and without that the PLC is **on**. Give each PLC its own
+`gvl` – two PLCs with the default `GVL_KNX` would write the same `GVL_KNX.st`.
 
 Each PLC has its own mapping, by default `plc_map_<name>.yaml`, and its own GVL; `./scada plc-map` creates or
 updates all of them (`--plc board2` for one), `./scada plc-browse --plc board2` checks one. Every PLC reads and

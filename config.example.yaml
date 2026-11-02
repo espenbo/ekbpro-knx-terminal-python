@@ -4,7 +4,7 @@
 #   ./scada init MyProject.knxproj --gateway 192.168.1.50 [--language nb]
 # or copy it and edit it by hand (replace the __PLACEHOLDERS__).
 # Relative paths are resolved from the directory config.yaml is in.
-# Full reference: docs/04-configuration.md
+# Full reference: docs/en/04-configuration.md
 
 knx:
   # tunneling | tunneling_tcp | routing | automatic
@@ -20,7 +20,7 @@ knx:
   # keyring_password: "secret"
   # user_id: 2                      # tunnel user for secure tunneling (optional)
   # Several KNX IP interfaces (one per line/building part): list them under interfaces instead.
-  # Keys above are then defaults for every interface. See docs/04-configuration.md.
+  # Keys above are then defaults for every interface. See docs/en/04-configuration.md.
   # interfaces:
   #   - name: house
   #     gateway_ip: 192.168.1.50
@@ -35,7 +35,7 @@ project:
   file: __PROJECT__
   # password: ""                    # if the .knxproj is password protected
   # (.knxprojarchive from ETS 6 works too)
-  # Several ETS projects in one site instead of file: (see docs/04-configuration.md):
+  # Several ETS projects in one site instead of file: (see docs/en/04-configuration.md):
   # files:
   #   - {name: main, label: Main building, file: Main.knxproj}
   #   - {name: annex, label: Annex, prefix: S, file: Annex.knxprojarchive}   # addresses become S:1/2/3
@@ -49,11 +49,15 @@ server:
   socket: var/knxscada.sock
   database: var/knxscada.db
   retention_days: 90                # how long telegrams and events are kept
-  # Read values from the bus when the server starts: false (default, sends no telegrams),
-  # status (feedback/sensor/alarm addresses only) or all (also control addresses – not recommended,
-  # a stale answer from another device can switch actuators). See docs/04-configuration.md.
-  read_on_start: false
+  # Read values from the bus when the server starts: status (default – feedback/sensor/alarm addresses
+  # only, safe), false (sends no telegrams; the old values from the database are shown, marked as old)
+  # or all (also control addresses – not recommended, a stale answer from another device can switch
+  # actuators). See docs/en/04-configuration.md.
+  read_on_start: status
   read_interval_ms: 80              # pause between reads (keeps the bus load low)
+  # Connections and gateways (Modbus, MQTT, OPC UA – F11). In var/ because the systemd service may only write
+  # there, so F11 can save it.
+  protocols: var/protocols.yaml
 
 # Alarms: rules select group addresses by address (glob) and/or name (regex).
 # The first matching rule applies. condition: "true" | "false" | "> 30" | "< 5" | ">= x" | "<= x" | "== x" | "!= x"
@@ -100,7 +104,7 @@ ui:
   ascii: false                      # ASCII-only charts (old terminals without Unicode)
   screensaver_minutes: 5            # 0 = off
   screensaver_rotate_s: 20
-  # plan: plan.yaml                 # floor plan (see docs/06-floor-plan.md)
+  # plan: plan.yaml                 # floor plan (see docs/en/06-floor-plan.md)
   # outdoor_ga: 0/1/0               # status tiles – found automatically by name if not set
   # power_ga: 0/0/23
   # energy_ga: 0/1/20
@@ -111,7 +115,7 @@ ui:
 # PLC bridge over OPC UA (optional) – exchange KNX values with a PLC, e.g. CODESYS on a WAGO PFC.
 # 1. ./scada plc-map           → plc_map.yaml (mark addresses with use: true) and GVL_KNX.st
 # 2. Import GVL_KNX.st into the PLC project, add it to the Symbol Configuration, download.
-# 3. Set enabled: true and restart the server.            Guide: docs/10-plc-opcua.md
+# 3. Set enabled: true and restart the server.            Guide: docs/en/10-plc-opcua.md
 plc:
   enabled: false
   endpoint: opc.tcp://127.0.0.1:4840   # the PLC's OPC UA server (127.0.0.1 when running on the PLC itself)
@@ -130,7 +134,7 @@ plc:
   # namespace: 4                       # with node_prefix: namespace index of the PLC variables
   publish_interval_ms: 200             # how fast PLC changes are reported
   min_interval_ms: 200                 # at most one KNX write per address in this time (latest value wins)
-  # PLC restart (download/reset) protection – see docs/10-plc-opcua.md:
+  # PLC restart (download/reset) protection – see docs/en/10-plc-opcua.md:
   # settle_ms: 500                     # PLC changes are held this long before they go to KNX
   # burst_limit: 8                     # more changes than this at once = PLC restart: nothing is sent
   # restart_quiet_s: 15                # after a restart: only remember values, then re-sync the PLC from KNX

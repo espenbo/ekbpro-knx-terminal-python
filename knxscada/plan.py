@@ -6,7 +6,7 @@
 millimetres with the origin in the top-left corner – the same orientation as
 a paper drawing. A room can be linked to an ETS room by name (``room:``) so
 the terminal view can show live temperature, lights and alarms inside it.
-See ``docs/06-floor-plan.md`` for the format.
+See ``docs/en/06-floor-plan.md`` for the format.
 
 The DXF export writes a minimal AutoCAD R12 ASCII file that practically every
 CAD program can open (LibreCAD, QCAD, FreeCAD, AutoCAD …). It is one-way: the
@@ -77,16 +77,19 @@ def export_dxf(floors: list[PlanFloor], path: Path) -> None:
 
     # DXF is a list of (group code, value) pairs, one per line.
     def line(layer: str, x1: float, y1: float, x2: float, y2: float) -> None:
+        """Add a LINE from (x1, y1) to (x2, y2) on *layer* (z is always 0)."""
         out.extend(["0", "LINE", "8", layer, "10", f"{x1:.1f}", "20", f"{y1:.1f}", "30", "0",
                     "11", f"{x2:.1f}", "21", f"{y2:.1f}", "31", "0"])
 
     def rect(layer: str, x: float, y: float, w: float, h: float) -> None:
+        """Add a rectangle as four LINEs (simpler for old DXF readers than a polyline)."""
         line(layer, x, y, x + w, y)
         line(layer, x + w, y, x + w, y + h)
         line(layer, x + w, y + h, x, y + h)
         line(layer, x, y + h, x, y)
 
     def text(x: float, y: float, height: float, value: str, center: bool = True) -> None:
+        """Add a TEXT of *height* at (x, y) on layer TEXT, centred on that point unless *center* is False."""
         out.extend(["0", "TEXT", "8", "TEXT", "10", f"{x:.1f}", "20", f"{y:.1f}", "30", "0", "40", f"{height:.1f}", "1", value])
         if center:  # 72/73 = horizontal/vertical alignment, 11/21 = alignment point
             out.extend(["72", "1", "73", "2", "11", f"{x:.1f}", "21", f"{y:.1f}", "31", "0"])

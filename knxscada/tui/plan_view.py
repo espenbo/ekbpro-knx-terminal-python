@@ -22,14 +22,14 @@ second. Over SSH that meant ~100 kB per refresh and a sluggish UI. Now:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.color import Color
 from textual.containers import Horizontal
 from textual.strip import Strip
@@ -62,7 +62,7 @@ HEAVY = {  # outer walls
 class FloorCanvas(Widget, can_focus=True):
     """Draws one floor scaled to the available space (cached line strips)."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         # Several ways to change floor: some SSH clients send unusual arrow key codes.
         Binding("left", "floor(-1)", _("Previous floor"), show=False),
         Binding("right", "floor(1)", _("Next floor"), show=False),
@@ -77,6 +77,11 @@ class FloorCanvas(Widget, can_focus=True):
     ]
 
     def __init__(self, plan: PlanView, **kw: Any) -> None:
+        """A canvas that draws the floors of *plan*.
+
+        Args:
+            plan: the owning :class:`PlanView`; it holds the floors, the current floor index and the room status.
+        """
         super().__init__(**kw)
         self.plan = plan
         self.selected = 0  # index of the selected room on the current floor
@@ -86,6 +91,7 @@ class FloorCanvas(Widget, can_focus=True):
 
     @property
     def scada(self) -> ScadaApp:
+        """The app, typed as :class:`ScadaApp` (theme, state, ``show_room_id``)."""
         return self.app  # type: ignore[return-value]
 
     # -- rendering --------------------------------------------------------------------------
@@ -116,10 +122,12 @@ class FloorCanvas(Widget, can_focus=True):
         oy = int((height - floor.depth * sy) / 2)
 
         def cx(mm: float) -> int:
-            return ox + int(round(mm * sx))
+            """Horizontal position in mm on the floor → screen column."""
+            return ox + round(mm * sx)
 
         def cy(mm: float) -> int:
-            return oy + int(round(mm * sy))
+            """Vertical position in mm on the floor → screen row (half the horizontal scale, see above)."""
+            return oy + round(mm * sy)
 
         # Per-cell layers: wall direction bits, background colour and text.
         light = [[0] * width for _row in range(height)]
@@ -178,6 +186,7 @@ class FloorCanvas(Widget, can_focus=True):
         cache: dict[Any, Style] = {}
 
         def style(key: Any, make) -> Style:
+            """The Style stored under *key*, created with *make* the first time, so equal cells share one object."""
             st_ = cache.get(key)
             if st_ is None:
                 st_ = cache[key] = make()
@@ -254,24 +263,29 @@ class FloorCanvas(Widget, can_focus=True):
 
     # -- interaction ---------------------------------------------------------------------
     def action_floor(self, delta: int) -> None:
+        """←/→, PgUp/PgDn, n/p: go *delta* floors forward or back (wrapping)."""
         self.plan.change_floor(delta)
 
     def action_goto_floor(self, index: int) -> None:
+        """1–9: jump to floor number *index* + 1; keys beyond the last floor are ignored."""
         if index < len(self.plan.floors):
             self.plan.change_floor(index - self.plan.index)
 
     def action_room(self, delta: int) -> None:
+        """↑/↓: select the previous/next room on this floor (wrapping, in ``plan.yaml`` order)."""
         floor = self.plan.floor
         if floor and floor.rooms:
             self.selected = (self.selected + delta) % len(floor.rooms)
             self.refresh()
 
     def action_open(self) -> None:
+        """Enter: open the selected room in the room view."""
         floor = self.plan.floor
         if floor and 0 <= self.selected < len(floor.rooms):
             self.plan.open_room(floor.rooms[self.selected])
 
     def on_click(self, event: events.Click) -> None:
+        """A click inside a room rectangle selects that room and opens it; clicks on walls or outside do nothing."""
         for i, (x0, y0, x1, y1, r) in enumerate(self._boxes):
             if x0 < event.x < x1 and y0 < event.y < y1:
                 self.selected = i
@@ -280,9 +294,11 @@ class FloorCanvas(Widget, can_focus=True):
                 return
 
     def on_focus(self) -> None:
+        """Focus gained: repaint so the selected room gets its highlight."""
         self.refresh()  # the selected room is highlighted only while focused
 
     def on_blur(self) -> None:
+        """Focus lost: repaint without the highlight of the selected room."""
         self.refresh()
 
 
@@ -290,6 +306,7 @@ class PlanView(View):
     """Floor tabs, the canvas and a legend line."""
 
     def __init__(self, **kw: Any) -> None:
+        """Create the empty view; the floors are read from ``plan.yaml`` each time the view is shown (:meth:`reload`)."""
         super().__init__(**kw)
         self.floors: list[PlanFloor] = []
         self.index = 0
@@ -299,14 +316,17 @@ class PlanView(View):
 
     @property
     def floor(self) -> PlanFloor | None:
+        """The floor shown now, or None when ``plan.yaml`` has no floors."""
         return self.floors[self.index] if self.floors else None
 
     def compose(self) -> ComposeResult:
+        """A row of floor tabs (filled by :meth:`reload`), the canvas and the legend line."""
         yield Horizontal(id="plan-tabs")
         yield FloorCanvas(self, id="plan-canvas")
         yield Static("", id="plan-legend", classes="muted")
 
     def on_mount(self) -> None:
+        """Index the ETS rooms by lower-case name (``room:`` in ``plan.yaml`` ignores case) and start the 1 s tick."""
         self.by_name = {r.name.lower(): r for r in self.scada.home.rooms}
         self.set_interval(1, self._tick)
 
@@ -352,6 +372,10 @@ class PlanView(View):
             self.query_one(FloorCanvas).refresh()
 
     def change_floor(self, delta: int) -> None:
+        """Go *delta* floors forward or back (wrapping), reset the room selection and mark the active tab.
+
+        ``_sig`` is reset so the next tick takes the status of the new floor's rooms as its baseline.
+        """
         if not self.floors:
             return
         self.index = (self.index + delta) % len(self.floors)
@@ -364,9 +388,11 @@ class PlanView(View):
 
     @on(Button.Pressed, ".floor-tab")
     def _tab(self, event: Button.Pressed) -> None:
+        """A floor tab was clicked: switch to that floor (the index is in the button id ``floor-<i>``)."""
         self.change_floor(int(str(event.button.id).split("-")[1]) - self.index)
 
     def open_room(self, r: PlanRoom) -> None:
+        """Open the ETS room linked to plan room *r* in the room view, or warn when it has no (known) ``room:``."""
         room = self.by_name.get((r.room or "").lower())
         if room is None:
             self.notify(_("«{label}» is not linked to an ETS room (room: in plan.yaml)").format(label=r.label), severity="warning")
@@ -374,6 +400,7 @@ class PlanView(View):
         self.scada.show_room_id(room.id)
 
     def on_show_view(self) -> None:
+        """F8 shown: re-read ``plan.yaml`` in a worker and focus the canvas so the keys work at once."""
         self._sig = None
         self.run_worker(self.reload(), exclusive=True, group="plan")
         self.call_after_refresh(self.query_one(FloorCanvas).focus)

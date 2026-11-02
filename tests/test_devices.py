@@ -1,0 +1,378 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 EKB PRO
+"""Device templates (``model:``): the WAGO 879-30xx meters, merging, validation and identification."""
+
+import asyncio
+
+import pytest
+
+from knxscada.protocols import PROTOCOLS, devices, installed
+from knxscada.protocols.config import dump, settings_of, validate
+
+from .test_protocols import free_port, make_hub, until
+
+
+def test_wago_meters_are_known_by_name_and_number():
+    """A template is found by model name or order number, ignoring case and extra spaces; an unknown model is an error
+    and the models are offered in the F11 form.
+    """
+    assert {"WAGO 879-3000", "WAGO 879-3020", "WAGO 879-3040"} <= set(devices.names("modbus"))
+    assert devices.find("WAGO 879-3020")["model"] == "WAGO 879-3020"
+    assert devices.find(" wago  879-3040 ")["number"] == "879-3040"
+    assert devices.find("879-3000")["model"] == "WAGO 879-3000"
+    assert devices.find("") is None
+    with pytest.raises(ValueError, match="unknown device"):
+        devices.find("WAGO 879-9999")
+    model = next(f for f in PROTOCOLS["modbus"].settings if f.key == "model")
+    assert "WAGO 879-3000" in model.choices
+
+
+def test_wago_template_has_the_35_main_values_named_as_in_the_manual():
+    """The WAGO template has the 35 main values with the manual's names, Float ABCD from 0x5002, read only."""
+    tags = devices.find("WAGO 879-3000")["tags"]
+    assert len(tags) == 35
+    assert tags["L1 voltage"] == {"address": "hr:0x5002", "type": "float32", "unit": "V", "writable": False}
+    assert tags["Total active power"]["address"] == "hr:0x5012"
+    assert tags["Total active energy"]["unit"] == "kWh"
+    assert all(t["type"] == "float32" for t in tags.values())
+
+
+def test_template_settings_are_defaults_and_own_tags_are_added():
+    """Template settings are defaults the connection can override, own tags and descriptions are merged in, and only
+    differences are saved to protocols.yaml.
+    """
+    conn = {"protocol": "modbus", "model": "WAGO 879-3000", "baudrate": "19200",
+            "tags": {"Day register": {"address": "hr:0x6049", "type": "float32"},
+                     "L1 voltage": {"description": "incoming"}}}
+    s = settings_of(conn)
+    assert (s["transport"], s["parity"], s["baudrate"], s["poll_ms"]) == ("rtu", "E", "19200", 5000)
+    assert len(s["tags"]) == 36
+    assert s["tags"]["L1 voltage"] == {"address": "hr:0x5002", "type": "float32", "unit": "V", "writable": False,
+                                       "description": "incoming"}
+    # Only what differs from the template is written back to protocols.yaml.
+    text = dump({"connections": {"meter1": {**conn, "parity": "E", "transport": "rtu"}}, "gateways": []})
+    assert "parity" not in text and "transport" not in text and "baudrate: '19200'" in text
+    assert "hr:0x5002" not in text
+
+
+def test_validate_reports_an_unknown_model():
+    """An unknown model is reported by validation; a known order number is accepted."""
+    data = {"connections": {"m": {"protocol": "modbus", "model": "ABB 123"},
+                            "ok": {"protocol": "modbus", "model": "879-3000"}}, "gateways": []}
+    errors = validate(data)
+    assert len(errors) == 1 and "ABB 123" in errors[0]
+
+
+def test_describe_and_mismatches():
+    """The identification read from the meter is shown as text, and a different model or RS485 parity than configured is
+    reported.
+    """
+    tpl = devices.find("WAGO 879-3000")
+    found = {"meter_code": "879-3040", "unit_id": 1, "baudrate": "9600", "parity": "N", "serial": "00123456"}
+    assert devices.describe(tpl, found) == "WAGO 879-3040 (2PU CT – current transformer)  unit 1  9600 N  serial 00123456"
+    problems = devices.mismatches(tpl, found, {"baudrate": "9600", "parity": "E", "unit_id": 1})
+    assert len(problems) == 2
+    assert "879-3040" in problems[0] and "parity" in problems[1]
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_master_identifies_the_meter(tmp_path):
+    """A Modbus slave plays the meter; the master with model: reads its identification and its values."""
+    port = free_port()
+
+    async def run():
+        """Fill a slave with the identification registers of a 879-3020, then let a master with the 879-3000 template
+        read it.
+        """
+        meter = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port, "tags": {
+            "code": {"address": "hr:0x4002"}, "id": {"address": "hr:0x4003"}, "baud": {"address": "hr:0x4004"},
+            "parity": {"address": "hr:0x4011"}, "serial": {"address": "hr:0x4000", "type": "uint32"},
+            "power": {"address": "hr:0x5012", "type": "float32"}}}
+        hub = await make_hub(tmp_path, {"connections": {"meter": meter}, "gateways": []})
+        try:
+            await until(lambda: hub.drivers["meter"].connected)
+            for tag, value in (("code", 0x1112), ("id", 1), ("baud", 6), ("parity", 2), ("serial", 0x123456),
+                               ("power", 1.5)):
+                await hub.write("meter", tag, value)
+            # Over TCP for the test; the template would choose RS485.
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "transport": "tcp",
+                                 "model": "WAGO 879-3000", "poll_ms": 100})
+            master = hub.drivers["master"]
+            assert len(master.tags) == 35
+            await until(lambda: master.ready)
+            assert master.identity == "WAGO 879-3020 (4PS – direct connection, 40 A)  unit 1  9600 N  serial 00123456"
+            assert "WAGO 879-3020" in master.describe()
+            texts = [t for _level, t in hub.server.events]
+            assert any("found WAGO 879-3020" in t for t in texts)
+            assert any("not a 879-3000" in t for t in texts)
+            assert any("parity is N in the device, E in the settings" in t for t in texts)
+            assert hub.values["master/Total active power"]["v"] == pytest.approx(1.5)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+# -- Carlo Gavazzi ---------------------------------------------------------------------------------------
+@pytest.mark.parametrize(("model", "n_tags", "max_regs", "max_gap"), [
+    ("Carlo Gavazzi EM111", 17, 50, 8), ("Carlo Gavazzi EM112", 17, 50, 8), ("Carlo Gavazzi ET112", 18, 50, 8),
+    ("Carlo Gavazzi EM270", 36, 18, 8), ("Carlo Gavazzi EM280", 36, 18, 8), ("Carlo Gavazzi EM271", 44, 18, 8),
+    ("Carlo Gavazzi EM580", 34, 125, 0), ("Carlo Gavazzi WM15", 40, 125, 8),
+])
+def test_carlo_gavazzi_templates(model, n_tags, max_regs, max_gap):
+    """Each Carlo Gavazzi template has its tags, low word first, its block limits, and 'only:' tags are kept for the
+    right model only.
+    """
+    s = settings_of({"protocol": "modbus", "model": model})
+    assert len(s["tags"]) == n_tags
+    assert (s["parity"], s["word_order"], s["max_registers"]) == ("N", "little", max_regs)
+    assert s.get("max_gap", 8) == max_gap
+    assert ("Hour counter" in s["tags"]) == model.endswith("ET112")   # only: [ET112]
+    assert all("only" not in t for t in s["tags"].values())
+    assert validate({"connections": {"m": {"protocol": "modbus", "model": model}}, "gateways": []}) == []
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_blocks_respect_max_registers_and_gaps():
+    """Read blocks never exceed the meter's register limit, and with max_gap 0 (EM580) gaps are never read across."""
+    from types import SimpleNamespace
+
+    from knxscada.protocols.modbus import Driver
+
+    hub = SimpleNamespace(values={})
+    for model, limit in (("Carlo Gavazzi EM270", 18), ("Carlo Gavazzi EM111", 50), ("Carlo Gavazzi EM580", 125)):
+        drv = Driver("m", settings_of({"protocol": "modbus", "model": model}), hub)
+        drv._build_blocks()
+        assert all(b.end - b.start <= limit for b in drv.blocks), model
+    # EM580: unknown addresses answer with an error – only neighbouring registers are read together.
+    em580 = Driver("m", settings_of({"protocol": "modbus", "model": "Carlo Gavazzi EM580"}), hub)
+    em580._build_blocks()
+    assert [(b.start, b.end) for b in em580.blocks] == [(0x00, 0x38), (0x4E, 0x52), (0x56, 0x58)]
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_master_reads_a_carlo_gavazzi_meter(tmp_path):
+    """Low word first, value weights, identification code 114 = EM111, and the overflow code shown as bad."""
+    port = free_port()
+
+    async def run():
+        """Fill a slave with EM111 registers (identification, values and an overflow code), then read it with the
+        template.
+        """
+        meter = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port, "word_order": "little",
+                 "tags": {"code": {"address": "hr:0x000B"}, "id": {"address": "hr:0x2000"},
+                          "baud": {"address": "hr:0x2001"}, "parity": {"address": "hr:0x2002"},
+                          "v": {"address": "hr:0x0000", "type": "int32"}, "a": {"address": "hr:0x0002", "type": "int32"},
+                          "w": {"address": "hr:0x0004", "type": "int32"}, "pf": {"address": "hr:0x000E", "type": "int16"},
+                          "kwh": {"address": "hr:0x0010", "type": "int32"}}}
+        hub = await make_hub(tmp_path, {"connections": {"meter": meter}, "gateways": []})
+        try:
+            await until(lambda: hub.drivers["meter"].connected)
+            for tag, value in (("code", 114), ("id", 1), ("baud", 1), ("parity", 1), ("v", 2301), ("a", 5250),
+                               ("w", 2147483647), ("pf", -950), ("kwh", 1234567)):
+                await hub.write("meter", tag, value)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "transport": "tcp",
+                                 "model": "Carlo Gavazzi EM111", "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.identity.startswith("Carlo Gavazzi EM111 (1-phase energy meter")
+            assert master.identity.endswith("unit 1  9600 N")
+            assert not [t for level, t in hub.server.events if level == "error"]
+            v = hub.values
+            assert v["master/V L-N"]["v"] == pytest.approx(230.1)
+            assert v["master/A"]["v"] == pytest.approx(5.25)
+            assert v["master/PF"]["v"] == pytest.approx(-0.95)
+            assert v["master/kWh (+) TOT"]["v"] == pytest.approx(123456.7)
+            assert v["master/W"]["q"] == "bad"            # 7FFFFFFFh = "EEE"
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+# -- ./scada simulate -------------------------------------------------------------------------------------
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+@pytest.mark.parametrize(("model", "tag", "lo", "hi"), [
+    ("WAGO 879-3000", "L1 voltage", 220, 240),
+    ("Carlo Gavazzi EM111", "V L-N", 220, 240),          # 000Bh is both the ID code and the high word of W dmd
+    ("Carlo Gavazzi EM270", "kWh (+) TOT TCDA2", 12000, 13000),
+    ("Carlo Gavazzi EM271", "W TOT TCDA1 DMD", 800, 1500),
+])
+def test_simulator_is_identified_and_read_by_the_master(tmp_path, model, tag, lo, hi):
+    """./scada simulate gives a slave that the master identifies as the same model and reads with good values in a
+    plausible range.
+    """
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        """Start the simulator, let a master with the template read it, then stop both."""
+        tpl, sim = simulate.build(model, port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            hub._make("master", {"protocol": "modbus", "transport": "tcp", "host": "127.0.0.1", "port": port,
+                                 "model": model, "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.identity.startswith(tpl["model"]), master.identity
+            assert not [t for level, t in hub.server.events if level == "error"]
+            assert lo < hub.values[f"master/{tag}"]["v"] < hi
+            assert all(r["q"] == "good" for k, r in hub.values.items() if k.startswith("master/"))
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+# -- Solar-Log ---------------------------------------------------------------------------------------------
+def test_solar_log_templates():
+    """The Solar-Log templates: TCP, low word first, no gaps, input registers only, power-control tags written to
+    holding registers, and no '/' in tag names.
+    """
+    free = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP", "host": "192.0.2.10"})
+    pm = settings_of({"protocol": "modbus", "model": "Solar-Log Modbus TCP PM", "host": "192.0.2.10"})
+    assert (free["transport"], free["port"], free["word_order"], free["max_gap"]) == ("tcp", 502, "little", 0)
+    assert len(free["tags"]) == 17 and "PM Pac" not in free["tags"]
+    assert len(pm["tags"]) == 17 + 28 + 22
+    assert all(t["address"].startswith("ir:") for t in pm["tags"].values())   # only function code 4 reads
+    control = {n: t for n, t in pm["tags"].items() if n.startswith("PC ")}
+    assert len(control) == 22 and all(t["write_address"] == "hr" for t in control.values())
+    assert not any("/" in n for n in pm["tags"])   # "/" separates connection and tag
+    for model in ("Solar-Log Modbus TCP", "Solar-Log Modbus TCP PM"):
+        assert validate({"connections": {"s": {"protocol": "modbus", "model": model, "host": "192.0.2.10"}},
+                         "gateways": []}) == []
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_tag_invalid_codes_and_solar_log_simulator(tmp_path):
+    """A tag's own ``invalid`` (-273 = no sensor) gives bad quality; the rest of the Solar-Log reads fine."""
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        """Set the module temperature to the 'no sensor' code in the simulator and read the PM template."""
+        _tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            sim.store.put(sim.points["PM Module temp."], -273, "little")
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port,
+                                 "model": "Solar-Log Modbus TCP PM", "poll_ms": 100})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            v = hub.values
+            assert 800 < v["master/Pac"]["v"] < 1500
+            assert v["master/Total yield"]["v"] > 12_000_000
+            assert v["master/PM Module temp."]["q"] == "bad"
+            assert v["master/PM Ambient temp."]["q"] == "good"
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+def test_write_address_validation():
+    """write_address must be a writable area (hr or co) that suits the type; input registers and bad addresses are
+    refused.
+    """
+    def errors(spec):
+        """Validation errors for one Modbus tag."""
+        return validate({"connections": {"m": {"protocol": "modbus", "host": "192.0.2.10", "tags": {"t": spec}}},
+                         "gateways": []})
+
+    assert errors({"address": "ir:10201", "write_address": "hr"}) == []
+    assert errors({"address": "ir:5", "write_address": "hr:200", "type": "float32"}) == []
+    assert errors({"address": "di:3", "write_address": "co"}) == []
+    assert errors({"address": "ir:5", "write_address": "ir"})       # input registers cannot be written
+    assert errors({"address": "ir:5", "write_address": "co:1"})     # a number to a coil
+    assert errors({"address": "ir:5", "write_address": "hr:x"})
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_solar_log_power_control_and_watchdog(tmp_path):
+    """Read with function 4, written with 6/16 to the same number; the heartbeat keeps the watchdog counting."""
+    import time
+
+    from knxscada.protocols import simulate
+
+    port = free_port()
+
+    async def run():
+        """Write power-control values, check they come back on the input registers and that the heartbeat counts."""
+        _tpl, sim = simulate.build("Solar-Log Modbus TCP PM", port=port)
+        simulate.refresh(sim, time.time())
+        task = asyncio.create_task(sim.run())
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []})
+        try:
+            await until(lambda: sim.connected)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "poll_ms": 100,
+                                 "model": "Solar-Log Modbus TCP PM",
+                                 "tags": {"PC WatchDog_Tag": {"heartbeat_s": 0.1}}})
+            master = hub.drivers["master"]
+            await until(lambda: master.ready)
+            assert master.tags["PC PLimitPerc"].writable and not master.tags["PM PLimitPerc"].writable
+            await hub.write("master", "PC PLimitPerc", 60)
+            await hub.write("master", "PC CosPhi_Fix", -0.97)
+            await hub.write("master", "PC QPerc", -12.5)
+            await until(lambda: hub.values["master/PC PLimitPerc"]["v"] == 60)
+            await until(lambda: hub.values["master/PC CosPhi_Fix"]["v"] == pytest.approx(-0.97))
+            await until(lambda: hub.values["master/PC QPerc"]["v"] == pytest.approx(-12.5))
+            # The simulator received them on the holding registers and answers them on the input registers.
+            assert sim.store.data["ir"][10201] == 60 and sim.store.data["hr"][10201] == 60
+            assert (await sim.store.async_getValues(1, 4, 10209, 1)) == [65536 - 125]
+            await until(lambda: (hub.values.get("master/PC WatchDog_Tag") or {}).get("v", 0) >= 3)
+            assert not [t for level, t in hub.server.events if level == "error"]
+        finally:
+            await hub.stop()
+            await sim.stop()
+            task.cancel()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_heartbeat_on_a_read_only_tag_is_reported_once(tmp_path):
+    """A heartbeat on a tag that cannot be written gives one error, not one every interval."""
+    port = free_port()
+
+    async def run():
+        """Let a master run a heartbeat on an input register and count the errors."""
+        slave = {"protocol": "modbus", "role": "server", "host": "127.0.0.1", "port": port,
+                 "tags": {"wd": {"address": "ir:7"}}}
+        hub = await make_hub(tmp_path, {"connections": {"slave": slave}, "gateways": []})
+        try:
+            await until(lambda: hub.drivers["slave"].connected)
+            hub._make("master", {"protocol": "modbus", "host": "127.0.0.1", "port": port, "poll_ms": 100,
+                                 "tags": {"wd": {"address": "ir:7", "heartbeat_s": 0.05}}})
+            await until(lambda: hub.drivers["master"].ready)
+            await asyncio.sleep(0.3)
+            errors = [t for level, t in hub.server.events if level == "error"]
+            assert len(errors) == 1 and "heartbeat" in errors[0]
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_simulate_lists_templates(capsys):
+    """./scada simulate without a model lists the templates it can simulate."""
+    from knxscada.__main__ import main
+
+    assert main(["simulate"]) == 0
+    out = capsys.readouterr().out
+    assert "WAGO 879-3000" in out and "Carlo Gavazzi EM580" in out

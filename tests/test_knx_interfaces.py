@@ -30,6 +30,7 @@ TWO = {
 
 # --------------------------------------------------------------------------- configuration
 def test_single_interface_form_still_works():
+    """The old form (one gateway directly under knx:) still gives one interface named 'knx'."""
     (c,) = interface_configs({"connection": "tunneling", "gateway_ip": "192.168.1.50"})
     assert c["name"] == "knx"
     assert c["connection"] == "tunneling"
@@ -38,11 +39,15 @@ def test_single_interface_form_still_works():
 
 
 def test_empty_knx_section_is_automatic():
+    """An empty knx: section means automatic gateway discovery."""
     (c,) = interface_configs({})
     assert c["connection"] == "automatic"
 
 
 def test_interfaces_inherit_knx_level_defaults():
+    """Shared settings (keyring password, connection type) are inherited from the knx: level; per-interface keys such as
+    the port are not.
+    """
     house, garage = interface_configs({**TWO, "connection": "tunneling", "gateway_port": 9999})
     assert house["keyring_password"] == "secret" and garage["keyring_password"] == "secret"
     assert house["connection"] == garage["connection"] == "tunneling"
@@ -51,11 +56,13 @@ def test_interfaces_inherit_knx_level_defaults():
 
 
 def test_name_defaults_to_gateway_ip():
+    """An interface without a name is named after its gateway IP."""
     (c,) = interface_configs({"interfaces": [{"gateway_ip": "10.0.0.5"}]})
     assert c["name"] == "10.0.0.5"
 
 
 def test_address_pattern_as_a_single_string():
+    """addresses: may be one pattern instead of a list."""
     (c,) = interface_configs({"interfaces": [{"name": "a", "addresses": "4/*"}]})
     assert c["addresses"] == ["4/*"]
 
@@ -68,12 +75,16 @@ def test_address_pattern_as_a_single_string():
     {"interfaces": "192.168.1.50"},                                                 # not a list
 ])
 def test_invalid_configuration(knx):
+    """Duplicate or invalid names, a misspelt connection type, two defaults and a non-list are refused at start-up."""
     with pytest.raises(ValueError):
         interface_configs(knx)
 
 
 # --------------------------------------------------------------------------- routing
 def test_route_by_pattern_then_learned_then_default():
+    """Outgoing telegrams go by address pattern first, then the interface the address was last seen on, then the
+    default.
+    """
     r = Router(interface_configs(TWO))
     assert r.route("4/2/7") == "garage"       # pattern
     assert r.route("5/1/0") == "garage"
@@ -85,35 +96,41 @@ def test_route_by_pattern_then_learned_then_default():
 
 
 def test_route_default_interface():
+    """default: true picks the interface for addresses that are not matched or learned."""
     cfgs = interface_configs({"interfaces": [{"name": "a"}, {"name": "b", "default": True}]})
     assert Router(cfgs).route("1/1/1") == "b"
 
 
 def test_route_single_interface_ignores_everything():
+    """With one interface every address goes through it, whatever was learned."""
     r = Router(interface_configs({"gateway_ip": "x"}))
     r.learn("1/1/1", "other")
     assert r.route("1/1/1") == "knx"
 
 
 def test_pattern_does_not_match_a_longer_main_group():
+    """The pattern '4/*' matches main group 4 only, not 14."""
     r = Router(interface_configs({"interfaces": [{"name": "a"}, {"name": "b", "addresses": ["4/*"]}]}))
     assert r.route("14/1/1") == "a"
 
 
 # --------------------------------------------------------------------------- de-duplication
 def test_copy_from_another_interface_is_dropped():
+    """The same telegram seen shortly after through another interface (via a coupler) is a duplicate."""
     d = Deduplicator(1000)
     assert not d.duplicate("house", "1/1/1", "write", "01", now=10.0)
     assert d.duplicate("garage", "1/1/1", "write", "01", now=10.2)
 
 
 def test_same_interface_twice_is_kept():
+    """Repeats on the same interface are real telegrams (e.g. a button pressed twice) and are kept."""
     d = Deduplicator(1000)
     assert not d.duplicate("house", "1/1/1", "write", "01", now=10.0)
     assert not d.duplicate("house", "1/1/1", "write", "01", now=10.1)
 
 
 def test_different_value_or_late_copy_is_kept():
+    """Another value or a copy outside the time window is not a duplicate."""
     d = Deduplicator(1000)
     assert not d.duplicate("house", "1/1/1", "write", "01", now=10.0)
     assert not d.duplicate("garage", "1/1/1", "write", "00", now=10.1)   # other value
@@ -122,6 +139,7 @@ def test_different_value_or_late_copy_is_kept():
 
 
 def test_dedup_off():
+    """A window of 0 turns de-duplication off."""
     d = Deduplicator(0)
     assert not d.duplicate("house", "1/1/1", "write", "01", now=10.0)
     assert not d.duplicate("garage", "1/1/1", "write", "01", now=10.0)
@@ -132,20 +150,25 @@ class FakeXknx:
     """Collects the telegrams the server puts in the queue."""
 
     def __init__(self):
+        """The fake is its own telegram queue, as the server only calls xknx.telegrams.put()."""
         self.telegrams = self
         self.sent: list[Telegram] = []
 
     async def put(self, telegram):
+        """Keep the telegram instead of sending it."""
         self.sent.append(telegram)
 
 
 class State:
+    """A stand-in for xknx's connection state (only its name is used)."""
     def __init__(self, name):
+        """Name as in xknx's XknxConnectionState, e.g. 'CONNECTED'."""
         self.name = name
 
 
 @pytest.fixture
 def server(tmp_path):
+    """A ScadaServer with the interfaces 'house' and 'garage' replaced by fakes; nothing is connected."""
     from knxscada.server import ScadaServer
 
     model = project.build_model(raw_project())
@@ -160,11 +183,13 @@ def server(tmp_path):
 
 
 def telegram(ga, value, direction=TelegramDirection.INCOMING, src="1.1.24"):
+    """An incoming (or outgoing) group write with a binary value."""
     return Telegram(destination_address=GroupAddress(ga), source_address=IndividualAddress(src),
                     direction=direction, payload=GroupValueWrite(DPTBinary(value)))
 
 
 def test_server_status_per_interface(server):
+    """The status lists each interface and is 'partly connected' until all are connected."""
     assert [i["name"] for i in server.status["interfaces"]] == ["house", "garage"]
     assert server.status["gateway"] == "192.168.1.50, 192.168.1.51"
     server._on_conn_state("house", State("CONNECTED"))
@@ -177,6 +202,9 @@ def test_server_status_per_interface(server):
 
 
 def test_server_logs_a_telegram_once_and_learns_the_interface(server):
+    """A telegram seen through two interfaces is logged once, with the interface it came through first, and the router
+    learns it.
+    """
     server._on_telegram("garage", telegram("1/1/2", 1))
     server._on_telegram("house", telegram("1/1/2", 1, src="1.0.250"))   # the copy through the coupler
     assert server.tel_count == 1
@@ -186,6 +214,7 @@ def test_server_logs_a_telegram_once_and_learns_the_interface(server):
 
 
 def test_server_sends_through_the_routed_interface(server):
+    """Writes go through the interface the router picks, not through all of them."""
     for name in ("house", "garage"):
         server._on_conn_state(name, State("CONNECTED"))
     asyncio.run(server._send("4/0/1", "write", DPTBinary(1)))
@@ -195,12 +224,15 @@ def test_server_sends_through_the_routed_interface(server):
 
 
 def test_server_refuses_to_send_through_a_disconnected_interface(server):
+    """A write for a disconnected interface is refused with its name, not sent elsewhere."""
     server._on_conn_state("house", State("CONNECTED"))
     with pytest.raises(RuntimeError, match="garage"):
         asyncio.run(server._send("4/0/1", "write", DPTBinary(1)))
 
 
 def test_own_telegram_seen_by_the_other_interface_is_logged_once(server):
+    """Our own write echoed back through the other interface is logged once as outgoing and does not change the routing.
+    """
     server._on_telegram("house", telegram("1/1/1", 1, direction=TelegramDirection.OUTGOING, src="0.0.0"))
     server._on_telegram("garage", telegram("1/1/1", 1, src="1.0.250"))
     (t,) = server.store.telegrams()
@@ -209,6 +241,9 @@ def test_own_telegram_seen_by_the_other_interface_is_logged_once(server):
 
 
 def test_unknown_connection_type_stops_the_server(tmp_path):
+    """A misspelt connection type stops the server with the wrong word in the message instead of connecting
+    automatically.
+    """
     from knxscada.server import ScadaServer
 
     model = project.build_model(raw_project())
@@ -221,6 +256,7 @@ def test_unknown_connection_type_stops_the_server(tmp_path):
 
 # --------------------------------------------------------------------------- database
 def test_old_database_gets_the_via_column(tmp_path):
+    """A database from before several interfaces gets the via column; old rows have none."""
     db = tmp_path / "old.db"
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE telegrams (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, dir TEXT NOT NULL,"
@@ -243,6 +279,7 @@ SITE = [{"name": "main", "label": "Main", "prefix": ""}, {"name": "annex", "labe
 
 
 def test_key_round_trip():
+    """Address keys get the project prefix ('S:1/2/3'), and the main project has none."""
     assert ga_key("", "1/2/3") == "1/2/3"
     assert ga_key("S", "1/2/3") == "S:1/2/3"
     assert split_key("S:1/2/3") == ("S", "1/2/3")
@@ -250,6 +287,9 @@ def test_key_round_trip():
 
 
 def test_config_projects(tmp_path):
+    """project.file gives one project 'main'; project.files gives several with paths relative to config.yaml; duplicate
+    names are refused.
+    """
     single = Config(path=tmp_path / "config.yaml", project={"file": "a.knxproj"})
     assert [(p["name"], p["prefix"]) for p in single.projects] == [("main", "")]
     two = Config(path=tmp_path / "config.yaml",
@@ -263,6 +303,9 @@ def test_config_projects(tmp_path):
 
 
 def test_merge_keeps_both_projects_apart():
+    """Two projects with the same addresses are merged without clashes: every reference of the annex uses its prefix and
+    each project gets its own address tree.
+    """
     m = merge_models(SITE, [build_model(raw_project()), build_model(raw_project())])
     assert "1/1/1" in m["gas"] and "S:1/1/1" in m["gas"]
     assert m["gas"]["S:1/1/1"]["address"] == "S:1/1/1"
@@ -281,10 +324,12 @@ def test_merge_keeps_both_projects_apart():
 
 
 def test_plc_variable_name_with_prefix():
+    """The project prefix is part of the GVL variable name, so the names stay unique."""
     assert var_name("S:1/2/3", "Light") == "GA_S_1_2_3_Light"
 
 
 def test_router_keeps_projects_apart():
+    """An interface bound to a project only gets that project's addresses; an unknown prefix has no route."""
     cfgs = interface_configs({"interfaces": [{"name": "hb"}, {"name": "sb", "project": "annex"}]},
                              {"main": "", "annex": "S"})
     r = Router(cfgs)
@@ -294,12 +339,14 @@ def test_router_keeps_projects_apart():
 
 
 def test_interface_with_unknown_project():
+    """An interface naming an unknown project is refused."""
     with pytest.raises(ValueError, match="nope"):
         interface_configs({"interfaces": [{"name": "a", "project": "nope"}]}, {"main": ""})
 
 
 @pytest.fixture
 def site_server(tmp_path):
+    """A ScadaServer with two ETS projects (main and annex 'S'), each on its own connected fake interface."""
     from knxscada.server import ScadaServer
 
     m = merge_models(SITE, [build_model(raw_project()), build_model(raw_project())])
@@ -320,6 +367,7 @@ def site_server(tmp_path):
 
 
 def test_same_address_in_two_projects_is_two_addresses(site_server):
+    """The same address in two buildings is two addresses, not a duplicate telegram."""
     s = site_server
     s._on_telegram("hb", telegram("1/1/2", 1))
     s._on_telegram("sb", telegram("1/1/2", 0))     # same number, other building: not a copy
@@ -329,6 +377,7 @@ def test_same_address_in_two_projects_is_two_addresses(site_server):
 
 
 def test_annex_address_is_sent_through_the_annex_interface(site_server):
+    """An annex address is sent through the annex interface with the prefix removed on the bus."""
     s = site_server
     asyncio.run(s._send("S:1/1/1", "write", DPTBinary(1)))
     asyncio.run(s._send("1/1/1", "write", DPTBinary(1)))

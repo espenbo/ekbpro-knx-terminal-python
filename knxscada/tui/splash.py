@@ -15,13 +15,13 @@ import platform
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.color import Color
 from textual.containers import Grid, Vertical
 from textual.screen import ModalScreen, Screen
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
 #: The logos that come with the program (text files).
 LOGOS = Path(__file__).with_name("logos")
+#: The program's own logo, used when no theme logo or ``ui.logo_file`` applies.
 LOGO_FILE = LOGOS / "ekbpro.txt"
 
 #: Colour themes with a logo of their own – shown only while that theme is active.
@@ -73,6 +74,7 @@ def logo(app, width: int, rows: int | None = None, height: int | None = None) ->
     lines = logo_lines(logo_path(app))
 
     def fits(block: list[str]) -> bool:
+        """True if every line of *block* fits the width and the block fits the height (if one is given)."""
         return max(len(line) for line in block) <= width and (height is None or len(block) <= height)
 
     if lines and not fits(lines):
@@ -98,27 +100,33 @@ def logo(app, width: int, rows: int | None = None, height: int | None = None) ->
 class SplashScreen(Screen):
     """Shown at start-up for :attr:`DURATION` seconds. The logo is revealed line by line.
 
-    Any key or click skips it; F10 skips it and quits.
+    Any key or click skips it; F10 skips it and quits. The status line shows how far the connection to the server and
+    the KNX gateway has come, so a slow start is visible.
     """
 
+    #: Seconds the splash is shown unless a key or click skips it.
     DURATION = 5.0
 
     def __init__(self) -> None:
+        """Remember the start time; no logo lines are shown yet."""
         super().__init__()
         self.started = time.monotonic()
         self.shown = 0  # logo lines revealed so far
 
     @property
     def scada(self) -> ScadaApp:
+        """The running app, typed as :class:`ScadaApp`."""
         return self.app  # type: ignore[return-value]
 
     def compose(self) -> ComposeResult:
+        """Logo, subtitle (product, version, project) and status line, centred by CSS."""
         with Vertical(id="splash-box"):
             yield Static("", id="splash-logo")
             yield Static("", id="splash-sub")
             yield Static("", id="splash-status")
 
     def on_mount(self) -> None:
+        """Write the subtitle and start the 60 ms timer that reveals the logo and updates the status."""
         app = self.scada
         project = app.model["info"].get("name", "")
         self.query_one("#splash-sub", Static).update(
@@ -127,6 +135,11 @@ class SplashScreen(Screen):
         self.set_interval(0.06, self._tick)
 
     def _tick(self) -> None:
+        """Every 60 ms: reveal one more logo line, update the connection status and progress bar, close when the time is
+        up.
+
+        The logo is redrawn at the current size, so a resized terminal is handled.
+        """
         app = self.scada
         total = len(logo_lines(logo_path(app))) or 1
         if self.shown < total:
@@ -149,25 +162,33 @@ class SplashScreen(Screen):
             self.dismiss()
 
     def on_key(self, event: events.Key) -> None:
+        """Any key closes the splash (the key is not passed on to the app); F10 also quits."""
         event.stop()
         self.dismiss()
         if event.key == "f10":
             self.scada.action_quit()
 
     def on_click(self) -> None:
+        """A click closes the splash."""
         self.dismiss()
 
 
 class AboutDialog(ModalScreen[None]):
     """F12: logo, version, project, connection, licence and platform."""
 
-    BINDINGS = [Binding("escape", "dismiss", _("Close")), Binding("enter", "dismiss", show=False)]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss", _("Close")), Binding("enter", "dismiss", show=False)]
 
     @property
     def scada(self) -> ScadaApp:
+        """The running app, typed as :class:`ScadaApp`."""
         return self.app  # type: ignore[return-value]
 
     def compose(self) -> ComposeResult:
+        """Logo and a key/value grid built from the app's model, status, statistics and alarms at the time of opening.
+
+        With several KNX interfaces there is one line per interface. The values are not updated while the dialog is
+        open.
+        """
         app = self.scada
         model = app.model
         gas = model["gas"]
@@ -204,4 +225,5 @@ class AboutDialog(ModalScreen[None]):
             yield Button(_("Close"), id="about-close", variant="primary")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """The Close button closes the dialog."""
         self.dismiss()

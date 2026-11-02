@@ -19,11 +19,17 @@ the glue the rest of the program needs:
 
 from __future__ import annotations
 
+import contextlib
 from enum import Enum
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
-from xknx.dpt import DPTArray, DPTBase, DPTBinary
+try:
+    from xknx.dpt import DPTArray, DPTBase, DPTBinary
+except ImportError:          # the KNX module is not installed (./scada modules install knx)
+    # Without xknx there are no KNX telegrams to decode; the formatting helpers still work (no unit, value as is),
+    # so the TUI and the server run for installations with only Modbus, OPC UA, BACnet or MQTT.
+    DPTArray = DPTBase = DPTBinary = None  # type: ignore[assignment,misc]
 
 from .i18n import N_, _
 
@@ -89,7 +95,7 @@ def split(dpt: str | None) -> tuple[int | None, int | None]:
     return int(main), (int(sub) if sub else None)
 
 
-@lru_cache(maxsize=None)
+@cache
 def transcoder(dpt: str | None) -> type[DPTBase] | None:
     """Find the xknx transcoder class for a DPT, or None if xknx does not know it.
 
@@ -98,7 +104,7 @@ def transcoder(dpt: str | None) -> type[DPTBase] | None:
     The result is cached because the lookup walks xknx's class tree.
     """
     main, sub = split(dpt)
-    if main is None:
+    if main is None or DPTBase is None:      # no DPT, or the KNX module is not installed
         return None
     t = DPTBase.parse_transcoder({"main": main, "sub": sub})
     if t is None and main in _MAIN_FALLBACK:
@@ -131,10 +137,9 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (bool, int, float, str)) or value is None:
         return value
     if hasattr(value, "as_dict"):
-        try:
+        # Some xknx values have as_dict() but fail on it in odd states: fall through to the generic conversions.
+        with contextlib.suppress(Exception):
             return value.as_dict()
-        except Exception:  # noqa: BLE001 - fall through to the generic conversions
-            pass
     if hasattr(value, "_asdict"):
         return value._asdict()
     return str(value)

@@ -10,10 +10,13 @@ from knxscada.tui.widgets import FastTable
 
 
 class TableApp(App):
+    """A small app with a FastTable of 200 rows, more than fit on screen."""
     def compose(self) -> ComposeResult:
+        """Only the table."""
         yield FastTable(id="t", cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
+        """Fill the table with address/value rows keyed by address."""
         t = self.query_one(FastTable)
         t.add_column("Address", key="addr", width=8)
         t.add_column("Value", key="value", width=10)
@@ -22,11 +25,16 @@ class TableApp(App):
 
 
 def visible_text(table: FastTable) -> str:
+    """The text of the lines the table renders right now (what the user sees)."""
     return "\n".join(table.render_line(y).text for y in range(table.size.height))
 
 
 def test_update_cell_shows_new_value_and_keeps_others():
+    """update_cell takes the fast row-local path and shows the new value, without touching neighbours, also after
+    scrolling.
+    """
     async def run() -> None:
+        """Update a visible row, then a row far down after moving the cursor there."""
         app = TableApp()
         async with app.run_test(size=(30, 12)) as pilot:
             t = app.query_one(FastTable)
@@ -54,10 +62,13 @@ def test_update_cell_shows_new_value_and_keeps_others():
 def test_table_cells_are_plain_text_not_markup():
     """A user name or ETS name with brackets must not be parsed as markup (it could end the TUI)."""
     class T(App):
+        """An app with an empty FastTable."""
         def compose(self):
+            """Only the table."""
             yield FastTable(id="t")
 
     async def run():
+        """Add and update cells with text that looks like markup."""
         app = T()
         async with app.run_test(size=(60, 10)) as pilot:
             t = app.query_one(FastTable)
@@ -71,6 +82,7 @@ def test_table_cells_are_plain_text_not_markup():
 
 
 def test_export_dialog_returns_format_and_period():
+    """The export dialog returns the chosen format and period when OK is pressed."""
     from textual.widgets import RadioButton
 
     from knxscada.tui.dialogs import ExportDialog
@@ -78,10 +90,13 @@ def test_export_dialog_returns_format_and_period():
     result = []
 
     class T(App):
+        """An app that opens the export dialog and keeps its result."""
         def on_mount(self):
+            """Open the dialog at once; the result is appended to the list."""
             self.push_screen(ExportDialog("1/1"), result.append)
 
     async def run():
+        """Choose CSV and 24 hours, then press OK."""
         app = T()
         async with app.run_test(size=(90, 30)) as pilot:
             await pilot.pause()
@@ -97,12 +112,16 @@ def test_export_dialog_returns_format_and_period():
 
 
 def test_logo_by_name_or_file(tmp_path):
+    """The splash logo comes from the theme or ui.logo_file (relative to config.yaml), and every built-in logo can be
+    read.
+    """
     from types import SimpleNamespace
 
     from knxscada.config import Config
     from knxscada.tui.splash import LOGO_FILE, LOGOS, logo_lines, logo_path
 
     def app(theme="retro", **ui):
+        """A stand-in for the app with only a theme and a config."""
         return SimpleNamespace(theme=theme, cfg=Config(path=tmp_path / "config.yaml", ui=ui))
 
     assert logo_path(app()) == LOGO_FILE

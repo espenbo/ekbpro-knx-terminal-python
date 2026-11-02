@@ -4,7 +4,7 @@
 
 ```
 knxscada/
-  __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse
+  __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse, modules, gateway
   config.py       loading of config.yaml, path resolution
   prefs.py        per-user preferences (~/.config/knxscada/ui.json: colour theme, language)
   i18n.py         translation support: _(), N_(), set_language(), LANGUAGES
@@ -14,7 +14,7 @@ knxscada/
                   several projects (address prefix S:1/2/3), rooms from group address names
   dpt.py          decoding and encoding of DPT values, display text, DPT 1 texts
   alarms.py       alarm rules (glob, regex, condition, severity)
-  store.py        SQLite: telegrams, events, alarms
+  store.py        SQLite: telegrams, events, alarms, logged tag values
   server.py       ScadaServer (xknx per interface, logging, alarms, socket API) + Simulator (--demo)
   knx_interfaces.py  several KNX IP interfaces: configuration, Router (outgoing), Deduplicator (incoming)
   client.py       asynchronous client for the socket
@@ -24,6 +24,14 @@ knxscada/
                   several PLCs (plc_configs)
   opcua_bridge.py OPC UA client to the PLC: sync, subscriptions, echo suppression, restart protection,
                   security
+  protocols/      protocol modules and gateways (docs/en/11-protocols-gateways.md)
+    __init__.py   registry: protocols, their settings and tag fields, module install
+    base.py       Tag and Driver (base class of every protocol), value conversion
+    config.py     protocols.yaml: load, validate (also device templates), save
+    gateway.py    gateway engine: renaming, scaling, direction, echo suppression, deadband, start-up rules
+    hub.py        runs the drivers in the server, keeps the values, talks to the TUI
+    knx.py, modbus.py, mqtt.py, opcua.py   the drivers
+    devices/      device templates (model: WAGO 879-3000 …): one YAML file per device family
   tui/
     app.py        the Textual app: menu, top bar, key bar, navigation, message handling
     views.py      Overview, Rooms, Group addresses, Bus monitor, Alarms, Events, Trends
@@ -33,6 +41,10 @@ knxscada/
     screensaver.py, splash.py (start-up logo and the About dialog)
     charts.py     plotext helpers (palette from theme, time axis, chart types)
     graphics.py   sparklines, bars, large digits
+    gateways.py   F11 Gateways: connections, tags, gateways and their forms
+    protomon.py   Monitor › Modbus/OPC UA/BACnet/MQTT: value changes and writes per protocol (app.point_log)
+    systems.py, energy.py   Systems (Ctrl+E) and Energy meters (Ctrl+G) from ui.systems
+    diagram.py    piping diagrams for Systems (type: diagram): text drawing with live fields
     home.py       summary per room (temperature, lights, heating, alarm)
     themes.py     colour themes
     app.tcss      style sheet
@@ -104,7 +116,8 @@ only the SSH address after `@` comes from the client. When the client runs under
 | `telegrams` | `limit` (≤ 5000), `ga?`, `before_id?` | list |
 | `events` | `limit` (≤ 5000) | list |
 | `alarm_history` | `limit` (≤ 5000) | list |
-| `history` | `ga`, `hours`, `max_points?` (4000) | `[[ts, number], …]`. Beyond `max_points` the lowest and highest value per time bucket. Runs in a worker thread. |
+| `history` | `ga` or `point` (`connection/tag`), `hours`, `max_points?` (4000) | `[[ts, number], …]`. Beyond `max_points` the lowest and highest value per time bucket. Runs in a worker thread. |
+| `logged_points` | – | the logged tags of `protocols.yaml` (`key`, `conn`, name, unit, description, value) |
 | `traffic` | `minutes` (≤ 1440) | telegrams per minute |
 
 Example from the shell:
@@ -130,9 +143,12 @@ Clients that do not keep up (write buffer too large) are disconnected by the ser
   - `text` is stored in the server's language at the time of the event.
 - `alarms(id, ga, text, severity, raised_ts, cleared_ts, acked_ts, acked_by, value)`
   - `severity`: `critical` | `warning` | free text. Old rows with `kritisk` / `advarsel` are mapped when loaded.
+  - `ga`: a group address, or `connection/tag` for a tag of `protocols.yaml` (`match_point` rules).
+- `point_values(id, ts, point, value JSON, num REAL)`: values of the tags chosen with `log` in `protocols.yaml`
+  (`point` = `connection/tag`). Indexes on `(point, ts)` and `(ts)`; purged with the telegrams.
 
 Telegram and event inserts are committed once per second; alarm changes are committed immediately. Once an hour
-the server deletes telegrams and events older than `retention_days` in batches (5000 rows per batch), yielding to
+the server deletes telegrams, events and logged tag values older than `retention_days` in batches (5000 rows per batch), yielding to
 the event loop in between, so a large purge does not block the server.
 
 ## Performance in the TUI
@@ -195,7 +211,8 @@ It lists strings used in the code that have no translation, and catalogue entrie
 The tests are in `tests/` and cover DPT conversion, alarm rules, the interpretation of ETS projects (also
 several projects and rooms from names), several KNX interfaces (routing, de-duplication), the store, the
 start-up rules (no telegrams), the TUI widgets, the PLC mapping, the OPC UA bridge against a real asyncua
-server (including PLC restart protection) and the Docker files.
+server (including PLC restart protection), the protocol modules and gateways against real Modbus, OPC UA and
+MQTT (`test_protocols.py`), the device templates (`test_devices.py`) and the Docker files.
 pytest is listed in `requirements-dev.txt`:
 
 ```bash

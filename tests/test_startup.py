@@ -15,23 +15,34 @@ from knxscada.server import read_mode, read_targets
 from tests.test_project import raw_project
 
 
-@pytest.mark.parametrize(("value", "mode"), [(None, "off"), (False, "off"), ("false", "off"), ("off", "off"),
+@pytest.mark.parametrize(("value", "mode"), [(None, "status"), ("", "status"), (False, "off"), ("false", "off"), ("off", "off"),
                                               (True, "status"), ("status", "status"), ("all", "all"), ("ALL", "all")])
 def test_read_mode(value, mode):
+    """knx.read_on_start accepts bools, words and any case; empty means 'status' (read feedback only)."""
     assert read_mode(value) == mode
 
 
 def model_and_gas():
+    """The project model built from the test project, and its group addresses."""
     model = project.build_model(raw_project())
     return model, model["gas"]
 
 
-def test_default_reads_nothing():
+def test_off_reads_nothing():
+    """With read_on_start off, start-up sends no read requests at all."""
     model, gas = model_and_gas()
-    assert read_targets(model, gas, [], read_mode(None)) == []
+    assert read_targets(model, gas, [], read_mode(False)) == []
+
+
+def test_default_reads_statuses():
+    """The default mode reads status addresses only, never control addresses."""
+    assert read_mode(None) == "status"
 
 
 def test_status_mode_never_reads_control_addresses():
+    """Status mode reads feedback, sensors and alarm addresses but never a control address, even when an alarm rule
+    watches it: a stale answer from another device would switch the actuator.
+    """
     model, gas = model_and_gas()
     controls = {d["ga"] for f in model["functions"].values() for d in f["datapoints"] if d["ga"]}
     targets = read_targets(model, gas, ["3/0/4", "1/1/1"], "status")
@@ -42,6 +53,7 @@ def test_status_mode_never_reads_control_addresses():
 
 
 def test_all_mode_includes_control_addresses():
+    """'all' also reads readable control addresses such as setpoints (an explicit choice for the site)."""
     model, gas = model_and_gas()
     targets = read_targets(model, gas, [], "all")
     assert "1/1/2" in targets
@@ -49,6 +61,7 @@ def test_all_mode_includes_control_addresses():
 
 
 def test_unreadable_addresses_are_never_read():
+    """Addresses without a read flag (R) in ETS are never read, not even in 'all' mode."""
     model, gas = model_and_gas()
     assert "1/1/1" not in read_targets(model, gas, [], "all")   # switch input has no R flag
 
@@ -70,15 +83,18 @@ def test_tui_start_sends_no_write_or_read(tmp_path, monkeypatch):
              for ga, v in {"1/1/2": True, "3/0/1": 21.0, "3/0/2": 21.0, "3/0/3": "COMFORT", "3/0/4": False}.items()}
 
     async def fake_request(cmd, **kw):
+        """Record every command the TUI sends to the server; only 'hello' is special."""
         sent.append(cmd)
         return [] if cmd != "hello" else None
 
     async def fake_connect():
+        """Act as a connected server and send the hello message with the current state."""
         app.client._writer = object()  # pretend to be connected
         app._handle({"type": "hello", "state": state, "status": {"connected": True, "connection": "connected"},
                      "alarms": [], "stats": {}})
 
     async def run():
+        """Open every view, then let status changes arrive while the room view is shown."""
         async with app.run_test(size=(160, 50)) as pilot:
             await pilot.pause(1)
             for view in ("rooms", "overview", "gas", "trends", "plan"):
@@ -106,6 +122,9 @@ def test_tui_start_sends_no_write_or_read(tmp_path, monkeypatch):
 
 
 def test_audit_user_cannot_inject_markup_or_pretend():
+    """The user name in the audit log is cleaned and bounded, and the Unix account from the socket beats the name the
+    client claims; only its SSH address is kept.
+    """
     from knxscada.server import _audit_user
 
     assert _audit_user(None, "[/x]bob@10.0.0.5") == "xbob@10.0.0.5"          # no markup characters

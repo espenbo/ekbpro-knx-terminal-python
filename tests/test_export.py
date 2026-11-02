@@ -10,14 +10,18 @@ from knxscada.export import NAMESPACE, cemi_hex, telegrams_xml
 
 
 def tel(dst, kind, raw, src="1.1.24", ts=1792950000.25):
+    """A telegram row as the store returns it."""
     return {"ts": ts, "dir": "in", "src": src, "dst": dst, "type": kind, "raw": raw}
 
 
 def back(hexframe):
+    """Parse a cEMI hex frame with xknx and return its telegram, to check the export independently."""
     return CEMIFrame.from_knx(bytes.fromhex(hexframe)).data.telegram()
 
 
 def test_frames_round_trip():
+    """Write, response and read telegrams become cEMI frames that xknx decodes back to the same addresses and payloads.
+    """
     t = back(cemi_hex(tel("1/1/47", "write", "0x01")))
     assert str(t.source_address) == "1.1.24" and str(t.destination_address) == "1/1/47"
     assert t.payload.value.value == 1                                       # DPTBinary in the APCI
@@ -29,16 +33,21 @@ def test_frames_round_trip():
 
 
 def test_project_prefix_is_removed():
+    """The project prefix used with several ETS projects ('S:1/2/3') is not part of the KNX address in the frame."""
     assert back(cemi_hex(tel("S:1/2/3", "write", "0x00"))).destination_address.raw == back(
         cemi_hex(tel("1/2/3", "write", "0x00"))).destination_address.raw
 
 
 def test_broken_telegram_is_skipped():
+    """A telegram without payload or with an invalid address gives no frame instead of breaking the export."""
     assert cemi_hex(tel("1/1/1", "write", None)) is None
     assert cemi_hex(tel("not/an/address", "write", "0x01")) is None
 
 
 def test_xml_is_the_ets_communication_log():
+    """The XML export has the structure of an ETS group monitor log (RecordStart, Telegram, RecordStop) so ETS can open
+    it.
+    """
     text, n = telegrams_xml([tel("1/1/1", "write", "0x01", ts=1.5), tel("1/1/1", "write", None),
                              tel("3/0/1", "write", "0C 33", ts=2.0)], "My house")
     assert n == 2
@@ -53,6 +62,9 @@ def test_xml_is_the_ets_communication_log():
 
 
 def test_csv_and_json():
+    """CSV has a BOM for Excel, ';' as separator and quotes names containing it; JSON keeps the decoded value and the
+    time stamp.
+    """
     import json
 
     from knxscada.export import render

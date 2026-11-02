@@ -7,6 +7,10 @@ Several views need the same per-room facts – "what is the room temperature,
 which lights are on, is the heating running, is there an alarm?" – so this
 module extracts them once into :class:`Room` objects and computes the live
 status from the current state with :meth:`HomeModel.room_status`.
+
+The app builds one :class:`HomeModel` at start-up (``ScadaApp.home``) and fills :attr:`HomeModel.meters` (and, without
+a KNX outdoor address, ``outdoor_ga``) from ``ui.systems``. Config keys read here: ``ui.outdoor_ga``,
+``ui.power_ga`` and ``ui.energy_ga`` (otherwise found by group address name and DPT).
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ class Room:
 
 def _first_ga(gas: dict, pattern: str, dpt_main: int | None = None, dpt: str | None = None) -> str | None:
     """First used group address whose name matches *pattern* (optionally with a given DPT)."""
-    rx = re.compile(pattern, re.I)
+    rx = re.compile(pattern, re.IGNORECASE)
     for addr, g in gas.items():
         if not g["used"] or g["placeholder"]:
             continue
@@ -53,6 +57,12 @@ class HomeModel:
     """Rooms plus a few building-wide points (outdoor temperature, power, energy, CO₂, humidity)."""
 
     def __init__(self, model: dict[str, Any], ui: dict[str, Any]) -> None:
+        """Extract the rooms and building-wide points from the project *model* and the ``ui`` section *ui*.
+
+        Called once by the app at start-up. Per room: the temperature, setpoint, mode and heating output (from ETS
+        roles, else from row kinds and names) and every light (a function whose usage mentions "light" and that has a
+        switch). ``ui.outdoor_ga``, ``ui.power_ga`` and ``ui.energy_ga`` override the addresses found by name.
+        """
         gas = model["gas"]
         self.rooms: list[Room] = []
         for floor in model["floors"]:
@@ -80,6 +90,8 @@ class HomeModel:
                                 room.temp_ga = d["status"]
                             elif d["role"] == "TempRoomSetpoint" and not room.sp_ga:
                                 room.sp_ga = d["ga"]
+                            elif d["role"] == "HeatOutput" and not room.heat_ga:   # project.point_rooms
+                                room.heat_ga = d["status"] or d["ga"]
                             elif d["kind"] == "mode" and not room.mode_ga:
                                 room.mode_ga = d["status"] or d["ga"]
                             elif re.search(r"(?i)varmeutgang|heating output|heat output", d["label"]) and not room.heat_ga:
@@ -105,22 +117,29 @@ class HomeModel:
         self.outdoor_ga = ui.get("outdoor_ga") or _first_ga(gas, r"^(ute ?temp|outdoor|outside)", 9)
         self.power_ga = ui.get("power_ga") or _first_ga(gas, r"power$|effekt|\bW$", dpt="14.056")
         self.energy_ga = ui.get("energy_ga") or _first_ga(gas, r"kwh|energy", 13)
-        self.co2 = [(a, g["name"]) for a, g in gas.items() if g["used"] and g["dpt"] == "9.008" and re.search("co2", g["name"], re.I)]
+        # Energy meters from ui.systems: (name, pt:conn/tag of the power), filled by the app.
+        self.meters: list[tuple[str, str]] = []
+        self.co2 = [(a, g["name"]) for a, g in gas.items() if g["used"] and g["dpt"] == "9.008" and re.search("co2", g["name"], re.IGNORECASE)]
         self.humidity = [
             (a, g["name"]) for a, g in gas.items()
-            if g["used"] and g["dpt"] == "9.007" and re.search("fukt|humid", g["name"], re.I)
+            if g["used"] and g["dpt"] == "9.007" and re.search("fukt|humid", g["name"], re.IGNORECASE)
         ]
 
     def trend_gas(self) -> list[str]:
         """Addresses whose 24 h history the overview needs (room temperatures, outdoor, power)."""
         out = [r.temp_ga for r in self.rooms if r.temp_ga]
         out += [g for g in (self.outdoor_ga, self.power_ga) if g]
-        return out
+        return out + [ga for _name, ga in self.meters]
 
     @staticmethod
     def value(state: dict, ga: str | None) -> Any:
         """Current decoded value of *ga* (None if unknown)."""
         return state.get(ga or "", {}).get("value")
+
+    @staticmethod
+    def is_old(state: dict, ga: str | None) -> bool:
+        """True if the value of *ga* is from the database of the last run (not read since the start)."""
+        return bool(state.get(ga or "", {}).get("old"))
 
     @staticmethod
     def text(state: dict, ga: str | None) -> str:
@@ -131,8 +150,10 @@ class HomeModel:
     def room_status(self, room: Room, state: dict, alarms: list[dict]) -> dict[str, Any]:
         """Live status of a room.
 
-        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm"}``
-        where ``alarm`` is None, ``"warning"`` or ``"critical"``. An alarm
+        Returns ``{"temp", "sp", "mode", "heating", "lights_on", "lights_total", "alarm", "old"}``
+        where ``alarm`` is None, ``"warning"`` or ``"critical"`` and ``old`` is the set of
+        fields (``temp``, ``sp``, ``mode``, ``heating``, ``lights``) shown from the database of
+        the last run – not read from the bus since the start. An alarm
         belongs to the room when its group address is one of the room's
         addresses or the alarm text mentions the room name.
         """
@@ -148,6 +169,10 @@ class HomeModel:
                     severity = "warning"
         temp = self.value(state, room.temp_ga)
         heat = self.value(state, room.heat_ga)
+        old = {key for key, ga in (("temp", room.temp_ga), ("sp", room.sp_ga), ("mode", room.mode_ga),
+                                   ("heating", room.heat_ga)) if self.is_old(state, ga)}
+        if any(self.is_old(state, light["status"]) for light in room.lights):
+            old.add("lights")
         return {
             "temp": temp if isinstance(temp, (int, float)) and not isinstance(temp, bool) else None,
             "sp": self.value(state, room.sp_ga),
@@ -157,4 +182,5 @@ class HomeModel:
             "lights_on": lights_on,
             "lights_total": len(room.lights),
             "alarm": severity,
+            "old": old,
         }

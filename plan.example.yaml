@@ -2,7 +2,7 @@
 #
 # Copy it and draw your own building:
 #   cp plan.example.yaml plan.yaml
-# Format: docs/06-floor-plan.md
+# Format: docs/en/06-floor-plan.md
 #
 # Dimensions in millimetres, origin in the top-left corner (as on a paper drawing).
 #   x, y  = top-left corner of the room (inside dimensions)

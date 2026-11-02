@@ -61,13 +61,13 @@ and does not mix with real logs.
 ./scada server
 ```
 
-At start-up the server connects to KNX. By default it sends **no telegrams** at start-up and shows the last
-values from its database; with `read_on_start: status` it also reads the feedback and sensor addresses (about
-80 ms per address, see [Configuration](04-configuration.md#server)). Watch the log:
+At start-up the server connects to KNX and reads the feedback, sensor and alarm addresses (`read_on_start: status`,
+about 80 ms per address, see [Configuration](04-configuration.md#server)). Until an address has answered, the TUI
+shows the last value from the database in a dimmed colour. Watch the log:
 
 ```
 [knx] KNX connection: CONNECTED
-[knx] Reading the status of 107 group addresses     (only with read_on_start: status)
+[knx] Reading the status of 107 group addresses
 ```
 
 Then start the visualisation with `./scada`.

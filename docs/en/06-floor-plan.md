@@ -33,10 +33,10 @@ floors:
 | Field | Meaning |
 |---|---|
 | `name` | Floor name, shown as a tab. Floors are shown in the order they are listed. |
-| `width`, `depth` | Outer dimensions of the floor |
-| `label` | Text in the room |
-| `x`, `y` | Top-left corner (inside) |
-| `w`, `h` | Width and depth |
+| `width`, `depth` | Outer dimensions of the floor (default 8000 each) |
+| `label` | Text in the room (default empty) |
+| `x`, `y` | Top-left corner (inside). **Required** – a room without it stops F8 and `plan-dxf` with an error. |
+| `w`, `h` | Width and depth. **Required**, like `x` and `y`. |
 | `room` | Name of the room in ETS. Links temperature, lights, heating and alarms to the room. Omit for rooms without KNX. |
 
 The ETS room names are listed in the menu under F2 and in the output of `./scada info`. Upper and lower case
@@ -55,6 +55,8 @@ do not matter. Labels and floor names are your own text and are shown as written
 ```bash
 ./scada plan-dxf plan.dxf
 ```
+
+The file name is relative to the folder you run the command in (default `plan.dxf`).
 
 This creates a DXF file (AutoCAD R12) with the floors side by side. It has the layers `OUTER_WALL` (floor outline),
 `ROOM` (room rectangles) and `TEXT` (floor names, room labels and areas). The file opens in LibreCAD, QCAD,

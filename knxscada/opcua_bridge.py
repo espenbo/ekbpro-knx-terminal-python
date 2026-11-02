@@ -119,6 +119,39 @@ async def make_client(cfg: Config, p: dict[str, Any] | None = None):
     return client
 
 
+async def operation_limits(client, default: int = 100) -> tuple[int, int]:
+    """How many nodes the server takes per Read and per CreateMonitoredItems call.
+
+    Servers reject bigger requests with ``BadTooManyOperations`` (WAGO PFC: 100). The limits are read from
+    ``ServerCapabilities/OperationLimits``; 0 there means no limit, and *default* is used when they cannot be read.
+    """
+    from asyncua import ua
+
+    limits = []
+    for oid in (ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead,
+                ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxMonitoredItemsPerCall):
+        try:
+            n = int(await client.get_node(oid).read_value() or 0)
+        except Exception:  # noqa: BLE001 - not published by the server
+            n = default
+        limits.append(n if n > 0 else 1000)
+    return limits[0], limits[1]
+
+
+async def read_values(client, nodes: list, per_request: int) -> list:
+    """``read_attributes`` (DataValues) in batches of at most *per_request* nodes."""
+    values: list = []
+    for i in range(0, len(nodes), per_request):
+        values += await client.read_attributes(nodes[i:i + per_request])
+    return values
+
+
+async def subscribe(sub, nodes: list, per_call: int) -> None:
+    """``subscribe_data_change`` in batches of at most *per_call* monitored items."""
+    for i in range(0, len(nodes), per_call):
+        await sub.subscribe_data_change(nodes[i:i + per_call])
+
+
 async def ensure_certificate(cert: Path, key: Path) -> None:
     """Create a self-signed client certificate (valid for years) if it does not exist yet."""
     if cert.exists() and key.exists():
@@ -152,7 +185,7 @@ async def find_gvl(client, gvl: str, max_nodes: int = 5000) -> tuple[int, str] |
             continue
         visited.add(node.nodeid)
         ident = node.nodeid.Identifier
-        if isinstance(ident, str) and (ident.endswith("." + gvl) or ident.endswith("|" + gvl)):
+        if isinstance(ident, str) and (ident.endswith(("." + gvl, "|" + gvl))):
             return node.nodeid.NamespaceIndex, ident + "."
         if depth < 10:
             with contextlib.suppress(Exception):
@@ -169,14 +202,18 @@ class _Handler:
     """asyncua subscription handler – forwards data changes to the bridge."""
 
     def __init__(self, bridge: PlcBridge) -> None:
+        """Forward notifications to *bridge*."""
         self.bridge = bridge
 
     def datachange_notification(self, node, val, data) -> None:
+        """asyncua: a watched PLC variable changed. The status is passed on, because a non-Good status (CODESYS
+        while loading an application) is a restart guard (see :meth:`PlcBridge._on_plc`)."""
         status = getattr(getattr(getattr(data, "monitored_item", None), "Value", None), "StatusCode", None)
         good = status is None or status.is_good()
         self.bridge._on_plc(node.nodeid, val, good)
 
     def status_change_notification(self, status) -> None:  # connection problems
+        """asyncua: the subscription's status changed (e.g. keep-alive timeout): end the session and reconnect."""
         self.bridge._lost.set()
 
 
@@ -185,6 +222,12 @@ class PlcBridge:
 
     def __init__(self, server: ScadaServer, cfg: Config, pmap: PlcMap, p: dict[str, Any] | None = None,
                  several: bool = False) -> None:
+        """A bridge for one PLC; nothing is connected until :meth:`run`.
+
+        *pmap* is the parsed ``plc_map.yaml`` (only its active entries are used); *p* is this PLC's settings
+        (default ``cfg.plc``); *several* is True when the server runs more than one PLC bridge, so event texts and
+        the audit log name the PLC.
+        """
         self.server = server
         self.cfg = cfg
         self.p = cfg.plc if p is None else p   # this PLC's settings (one entry of plc_configs)
@@ -236,10 +279,19 @@ class PlcBridge:
                 delay = min(delay * 2, 60)
 
     async def stop(self) -> None:
+        """Stop for good (server shutdown): no reconnect, pending KNX sends are cancelled, the client disconnects."""
         self._stop = True
         await self._disconnect()
 
     async def _session(self) -> None:
+        """One connection: find the GVL, resolve the variables, sync KNX → PLC, subscribe, then watch.
+
+        The node prefix comes from ``node_prefix``/``namespace`` or is found by browsing for the GVL. Variables
+        missing in the PLC are reported and skipped; every ``missing_recheck_s`` the session checks whether they
+        appeared (online change) and reconnects to pick them up. Only variables that go towards KNX are
+        subscribed, in batches the PLC accepts (WAGO: 100 per call). ``seen`` is cleared before subscribing, so
+        the first value of every variable is only remembered – a reconnect sends nothing to KNX.
+        """
         from asyncua import ua
 
         self.client = await make_client(self.cfg, self.p)
@@ -273,7 +325,7 @@ class PlcBridge:
         sub = await self.client.create_subscription(int(self.p.get("publish_interval_ms", 200)), handler)
         watch = [self.nodes[e.var] for e in self.entries if e.dir in ("to_knx", "both") and e.var in self.nodes]
         if watch:
-            await sub.subscribe_data_change(watch)
+            await subscribe(sub, watch, (await operation_limits(self.client))[1])
         self._set_connected(True)
         self.server.event("info", "plc", _("PLC (OPC UA) connected: {n} variables").format(n=len(self.nodes)) + self._tag)
         recheck = float(self.p.get("missing_recheck_s", 60))
@@ -297,14 +349,18 @@ class PlcBridge:
     async def _any_exists(missing: list) -> bool:
         """True if at least one of the missing variables exists now (checks the first few)."""
         for _e, node in missing[:3]:
-            try:
+            # Reading the data type fails as long as the variable is missing (not downloaded to the PLC yet).
+            with contextlib.suppress(Exception):
                 await node.read_data_type()
                 return True
-            except Exception:  # noqa: BLE001 - still missing
-                continue
         return False
 
     async def _disconnect(self) -> None:
+        """Drop the connection and everything pending: KNX sends, held changes and a planned re-sync.
+
+        Cancelling them matters for safety – a value from before the disconnect must not reach the bus after
+        it. "Disconnected" is logged only for an unplanned loss (not for the reconnect after an online change).
+        """
         was = self.connected and not self._planned
         self._planned = False
         self._set_connected(False)
@@ -323,6 +379,8 @@ class PlcBridge:
             self.server.event("error", "plc", _("PLC (OPC UA) disconnected") + self._tag)
 
     def _set_connected(self, connected: bool) -> None:
+        """Record the connection state and report it to the server (``plc_state`` combines several PLCs), which
+        tells the clients. Without ``plc_state`` (older callers, tests) the server status is set directly."""
         if connected != self.connected or self.server.status.get("plc") is None:
             self.connected = connected
             report = getattr(self.server, "plc_state", None)
@@ -334,11 +392,15 @@ class PlcBridge:
 
     # -- KNX → PLC -------------------------------------------------------------------------
     async def _sync_to_plc(self) -> None:
-        """Give the PLC the last known KNX values (no bus traffic) before subscribing."""
+        """Give the PLC the KNX values known since the start (no bus traffic) before subscribing.
+
+        Old values from the database of the last run are never sent: the PLC gets them when
+        the bus has sent them (read_on_start or the next telegram).
+        """
         for e in self.entries:
             if e.dir in ("to_plc", "both") and e.var in self.nodes:
                 st = self.server.state.get(e.ga)
-                if st and st.get("value") is not None:
+                if st and st.get("value") is not None and not st.get("old"):
                     await self._write_plc(e, st["value"])
 
     def on_knx(self, ga: str, value: Any) -> None:
@@ -364,6 +426,10 @@ class PlcBridge:
                 log.warning("PLC write %s failed: %s", var, exc)
 
     async def _write_plc(self, e: PlcEntry, knx_value: Any) -> None:
+        """Write a KNX value to the PLC variable of *e*, converted to its IEC type (None = nothing to write).
+
+        Raises on OPC UA errors; :meth:`_drain_to_plc` logs them, :meth:`_sync_to_plc` lets them end the session.
+        """
         from asyncua import ua
 
         v = to_plc_value(e, knx_value)
@@ -376,6 +442,11 @@ class PlcBridge:
 
     # -- PLC → KNX -------------------------------------------------------------------------
     def _on_plc(self, nodeid, value: Any, good: bool = True) -> None:
+        """A subscription report for a PLC variable; *good* is False for a non-Good status code.
+
+        Applies the start-up and restart guards (see the module docstring) and holds real changes for the
+        settle time, after which :meth:`_release_held` decides whether they go to KNX.
+        """
         e = self.by_nodeid.get(nodeid)
         if e is None or e.dir not in ("to_knx", "both"):
             return
@@ -411,6 +482,7 @@ class PlcBridge:
             self._schedule_knx(e, value)
 
     def _drop_held(self) -> None:
+        """Forget the changes waiting for the settle time (they are never sent) and stop its timer."""
         if self._held_timer is not None:
             self._held_timer.cancel()
             self._held_timer = None
@@ -459,6 +531,10 @@ class PlcBridge:
             self._pending_knx[e.ga] = loop.call_later(wait, lambda: loop.create_task(self._send_knx(e, value)))
 
     async def _send_knx(self, e: PlcEntry, value: Any) -> None:
+        """Send a PLC change to the group address of *e* (GroupValueWrite with its DPT) and log it in the audit log.
+
+        Failures (KNX not connected, value out of range for the DPT) are logged as errors and not retried.
+        """
         self._pending_knx.pop(e.ga, None)
         self._last_sent[e.ga] = time.monotonic()
         try:
@@ -490,7 +566,8 @@ async def browse(cfg: Config, text_filter: str = "", limit: int = 400,
             visited.add(node.nodeid)
             try:
                 cls = await node.read_node_class()
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - a node we may not read (access rights, gone): skip it
+                log.debug("browse: cannot read the class of %s: %s", node.nodeid, exc)
                 continue
             ident = str(node.nodeid.to_string())
             if cls == ua.NodeClass.Variable and (not text_filter or text_filter.lower() in ident.lower()):

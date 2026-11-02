@@ -10,6 +10,7 @@ from tests.test_project import raw_project
 
 @pytest.fixture
 def model():
+    """The project model built from the test project."""
     return project.build_model(raw_project())
 
 
@@ -17,6 +18,7 @@ def model():
                                           ("9.001", "REAL"), ("13.010", "DINT"), ("14.056", "REAL"), ("16.000", "STRING(14)"),
                                           ("17.001", "USINT"), ("20.102", "USINT"), ("3.007", None), ("10.001", None), (None, None)])
 def test_plc_type(dpt, typ):
+    """The PLC data type per DPT; DPTs without a sensible IEC type are not supported (None)."""
     assert plc.plc_type(dpt) == typ
 
 
@@ -27,15 +29,18 @@ def test_plc_type(dpt, typ):
     ("1/2/3", "---", "GA_1_2_3"),
 ])
 def test_var_name(addr, name, var):
+    """GVL variable names are valid IEC identifiers: Norwegian letters are spelled out, symbols dropped, no '__'."""
     assert plc.var_name(addr, name) == var
     assert plc.IDENT_RE.match(var) and "__" not in var
 
 
 def test_var_name_is_limited():
+    """Long ETS names are cut so the variable name stays within the PLC's limit."""
     assert len(plc.var_name("31/7/255", "x" * 200)) <= plc.VAR_MAX
 
 
 def test_default_direction(model):
+    """Controls on a card are exchanged both ways by default, feedback and sensors only to the PLC."""
     assert plc.default_direction("1/1/1", model) == "both"     # switching (control on a card)
     assert plc.default_direction("3/0/2", model) == "both"     # setpoint
     assert plc.default_direction("1/1/2", model) == "to_plc"   # feedback
@@ -43,6 +48,8 @@ def test_default_direction(model):
 
 
 def test_build_write_load_round_trip(tmp_path, model):
+    """A generated plc_map.yaml has nothing active until lines are marked, skips placeholders and reads back unchanged.
+    """
     pmap, unsupported, removed = plc.build_map(model)
     assert pmap.select == "marked" and not pmap.active()        # nothing exchanged until marked
     assert "1/1/9" not in {e.ga for e in pmap.entries}           # placeholder / unused
@@ -55,6 +62,9 @@ def test_build_write_load_round_trip(tmp_path, model):
 
 
 def test_regeneration_keeps_choices(tmp_path, model):
+    """Rebuilding the map after a project change keeps the user's choices (use, direction, own name) and reports removed
+    addresses.
+    """
     path = tmp_path / "plc_map.yaml"
     pmap, _u, _r = plc.build_map(model)
     plc.write_map(pmap, path)
@@ -73,12 +83,16 @@ def test_regeneration_keeps_choices(tmp_path, model):
 
 
 def test_select_all(model):
+    """select: all makes every line active, marked or not."""
     pmap, _u, _r = plc.build_map(model)
     pmap.select = "all"
     assert len(pmap.active()) == len(pmap.entries)
 
 
 def test_load_map_reports_errors(tmp_path, model):
+    """Errors in a hand-edited map (select, direction, invalid or duplicate names, unknown address) are all reported in
+    one message.
+    """
     path = tmp_path / "plc_map.yaml"
     path.write_text('select: some\naddresses:\n'
                     '  - {ga: "1/1/1", on: true, dir: sideways, type: BOOL, var: 1bad}\n'
@@ -94,6 +108,9 @@ def test_load_map_reports_errors(tmp_path, model):
 
 
 def test_gvl(model):
+    """The GVL declares only the marked lines with their types, and has linkalways so CODESYS keeps it in the symbol
+    configuration.
+    """
     pmap, _u, _r = plc.build_map(model)
     for e in pmap.entries:
         e.on = e.ga in ("1/1/1", "3/0/1")
@@ -110,18 +127,21 @@ def test_gvl(model):
     ("7.001", "UINT", 1000, 1000), ("20.102", "USINT", "ECONOMY", 3), ("16.000", "STRING(14)", "Hello", "Hello"),
 ])
 def test_value_conversion_round_trip(dpt, typ, knx, plc_value):
+    """Values convert between KNX and the PLC type and back, enums as their number."""
     e = plc.PlcEntry(ga="1/1/1", on=True, dir="both", type=typ, var="x", dpt=dpt)
     assert plc.to_plc_value(e, knx) == plc_value
     assert plc.to_knx_value(e, plc_value) == knx
 
 
 def test_value_conversion_bad_input():
+    """Missing or non-numeric values are not sent to the PLC."""
     e = plc.PlcEntry(ga="1/1/1", on=True, dir="both", type="REAL", var="x", dpt="9.001")
     assert plc.to_plc_value(e, None) is None
     assert plc.to_plc_value(e, "text") is None
 
 
 def test_same_value_is_loose_for_float32():
+    """A float that comes back from a REAL (float32) counts as the same, so it is not echoed as a change."""
     import struct
     as_float32 = struct.unpack("f", struct.pack("f", 21.4))[0]   # what the PLC's REAL gives back
     assert plc.same_value(21.4, as_float32)
@@ -130,6 +150,7 @@ def test_same_value_is_loose_for_float32():
 
 
 def test_on_is_accepted_as_alias_of_use(tmp_path, model):
+    """'on:' and 'use:' both mark a line in plc_map.yaml."""
     # YAML 1.1 reads the key "on" as True – a hand-written "on: true" must still work.
     path = tmp_path / "plc_map.yaml"
     path.write_text('addresses:\n  - {ga: "3/0/1", on: true, dir: to_plc, type: REAL, var: X}\n'
@@ -140,6 +161,9 @@ def test_on_is_accepted_as_alias_of_use(tmp_path, model):
 
 # --------------------------------------------------------------------------- names from tagged PLC objects
 def test_tag_name_from_object_texts():
+    """The tag name is built from a KNX object text in the PLC (line, system, component, signal) with the site prefix;
+    plain texts give none.
+    """
     from knxscada.plc import tag_name
 
     assert tag_name(["KNX_Linje_M1.M1_000_564_002_RT6101._01_Rom_SP"], "BY1234") == "BY1234_564_002_RT6101_Rom_SP"
@@ -148,6 +172,9 @@ def test_tag_name_from_object_texts():
 
 
 def test_tagged_address_gets_the_tag_and_is_only_read():
+    """With a tag prefix an address written by the PLC's own KNX object gets the tag name and goes to_plc only;
+    duplicates and others keep GA_ names, and --rename renames existing lines.
+    """
     from knxscada.plc import build_map
 
     model = {"gas": {
@@ -173,6 +200,7 @@ def test_tagged_address_gets_the_tag_and_is_only_read():
 
 # --------------------------------------------------------------------------- several PLCs
 def test_plc_configs_single_form():
+    """The single-PLC form gives one controller with the default name, map file and GVL."""
     from knxscada.plc import plc_configs
 
     (c,) = plc_configs({"enabled": True, "endpoint": "opc.tcp://a:4840"})
@@ -180,6 +208,7 @@ def test_plc_configs_single_form():
 
 
 def test_plc_configs_several_with_defaults():
+    """With controllers, shared settings come from the plc: level, but endpoint, map and GVL are per PLC."""
     from knxscada.plc import plc_configs
 
     a, b = plc_configs({"enabled": True, "username": "knx", "endpoint": "ignored",
@@ -194,6 +223,7 @@ def test_plc_configs_several_with_defaults():
 
 @pytest.mark.parametrize("controllers", [[{"name": "a"}, {"name": "A"}], [{"endpoint": "x"}], [{"name": "with space"}]])
 def test_plc_configs_invalid(controllers):
+    """Duplicate names (case-insensitive), a missing name and names with spaces are refused."""
     from knxscada.plc import plc_configs
 
     with pytest.raises(ValueError):

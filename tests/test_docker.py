@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_dockerfile_sources_exist_and_are_in_the_build_context():
-    copies = re.findall(r"^COPY\s+(.+?)\s+\S+\s*$", (ROOT / "Dockerfile").read_text(), re.M)
+    """Every path the Dockerfile COPYs exists and is let through .dockerignore, otherwise the image build fails."""
+    copies = re.findall(r"^COPY\s+(.+?)\s+\S+\s*$", (ROOT / "Dockerfile").read_text(), re.MULTILINE)
     sources = [s.rstrip("/") for line in copies for s in line.split()]
     allowed = [line[1:].rstrip("/") for line in (ROOT / ".dockerignore").read_text().splitlines() if line.startswith("!")]
     for src in sources:
@@ -18,6 +19,9 @@ def test_dockerfile_sources_exist_and_are_in_the_build_context():
 
 
 def test_private_files_are_not_in_the_build_context():
+    """.dockerignore excludes everything by default and never lets site files (config.yaml, plan.yaml, var/) or the venv
+    into the image.
+    """
     ignore = (ROOT / ".dockerignore").read_text().splitlines()
     assert ignore[ignore.index("*") if "*" in ignore else 0] == "*"   # everything excluded by default
     allowed = {line[1:] for line in ignore if line.startswith("!")}

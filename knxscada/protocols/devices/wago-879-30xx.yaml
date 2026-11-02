@@ -1,0 +1,71 @@
+# WAGO MID energy meters 879-3000 (4PU), 879-3020 (4PS) and 879-3040 (2PU CT) – Modbus RTU on RS485.
+# Source: WAGO Operating Instructions 4PU/4PS/2PU CT, version 022024V1.8, appendix A3 (register map p. 36–40).
+# The three meters have the same register map. Tag names are written as in the manual; give them names
+# that follow your tagging system in the gateway (e.g. "Total active power -> 320.001-OE001.P").
+manufacturer: WAGO
+protocol: modbus
+models:
+  879-3000: 4PU – direct connection, 65 A
+  879-3020: 4PS – direct connection, 40 A
+  879-3040: 2PU CT – current transformer
+manual: WAGO Operating Instructions 4PU/4PS/2PU CT, V1.8 (022024), appendix A3.2
+
+# Defaults for the connection (the connection's own settings win). The manual says the factory parity is
+# none; the WAGO CODESYS library (WagoAppPowerMeasurement) and our meters use even – we use even.
+settings:
+  transport: rtu
+  baudrate: '9600'
+  parity: E
+  stopbits: '1'
+  unit_id: 1
+  poll_ms: 5000
+  word_order: big
+
+# Read once after connecting: which meter answers and how it is set up (compared with the settings).
+identify:
+  meter_code: {address: 'hr:0x4002', type: uint16, hex_digits: true,
+               values: {0x1111: 879-3000, 0x1112: 879-3020, 0x1113: 879-3040}}
+  unit_id: {address: 'hr:0x4003', type: uint16}
+  baudrate: {address: 'hr:0x4004', type: uint16,
+             values: {1: '300', 2: '600', 3: '1200', 4: '2400', 5: '4800', 6: '9600', 7: '19200', 8: '38400',
+                      9: '57600', 10: '115200'}}
+  parity: {address: 'hr:0x4011', type: uint16, values: {1: E, 2: N, 3: O}}
+  serial: {address: 'hr:0x4000', type: uint32, hex: true}
+
+# Values: Float ABCD (float32, high word first), function code 3.
+tags:
+  Voltage: {address: 'hr:0x5000', type: float32, unit: V, writable: false, description: '* 2PU CT'}
+  L1 voltage: {address: 'hr:0x5002', type: float32, unit: V, writable: false}
+  L2 voltage: {address: 'hr:0x5004', type: float32, unit: V, writable: false}
+  L3 voltage: {address: 'hr:0x5006', type: float32, unit: V, writable: false}
+  Frequency: {address: 'hr:0x5008', type: float32, unit: Hz, writable: false}
+  Current: {address: 'hr:0x500A', type: float32, unit: A, writable: false, description: '* 2PU CT'}
+  L1 current: {address: 'hr:0x500C', type: float32, unit: A, writable: false}
+  L2 current: {address: 'hr:0x500E', type: float32, unit: A, writable: false}
+  L3 current: {address: 'hr:0x5010', type: float32, unit: A, writable: false}
+  Total active power: {address: 'hr:0x5012', type: float32, unit: kW, writable: false}
+  L1 active power: {address: 'hr:0x5014', type: float32, unit: kW, writable: false}
+  L2 active power: {address: 'hr:0x5016', type: float32, unit: kW, writable: false}
+  L3 active power: {address: 'hr:0x5018', type: float32, unit: kW, writable: false}
+  Total reactive power: {address: 'hr:0x501A', type: float32, unit: kvar, writable: false}
+  L1 reactive power: {address: 'hr:0x501C', type: float32, unit: kvar, writable: false}
+  L2 reactive power: {address: 'hr:0x501E', type: float32, unit: kvar, writable: false}
+  L3 reactive power: {address: 'hr:0x5020', type: float32, unit: kvar, writable: false}
+  Total apparent power: {address: 'hr:0x5022', type: float32, unit: kVA, writable: false}
+  L1 apparent power: {address: 'hr:0x5024', type: float32, unit: kVA, writable: false}
+  L2 apparent power: {address: 'hr:0x5026', type: float32, unit: kVA, writable: false}
+  L3 apparent power: {address: 'hr:0x5028', type: float32, unit: kVA, writable: false}
+  Power factor: {address: 'hr:0x502A', type: float32, writable: false}
+  L1 power factor: {address: 'hr:0x502C', type: float32, writable: false}
+  L2 power factor: {address: 'hr:0x502E', type: float32, writable: false}
+  L3 power factor: {address: 'hr:0x5030', type: float32, writable: false}
+  L1-L2 voltage: {address: 'hr:0x5032', type: float32, unit: V, writable: false}
+  L1-L3 voltage: {address: 'hr:0x5034', type: float32, unit: V, writable: false}
+  L2-L3 voltage: {address: 'hr:0x5036', type: float32, unit: V, writable: false}
+  Total active energy: {address: 'hr:0x6000', type: float32, unit: kWh, writable: false}
+  L1 Total active energy: {address: 'hr:0x6006', type: float32, unit: kWh, writable: false}
+  L2 Total active energy: {address: 'hr:0x6008', type: float32, unit: kWh, writable: false}
+  L3 Total active energy: {address: 'hr:0x600A', type: float32, unit: kWh, writable: false}
+  Active energy import: {address: 'hr:0x600C', type: float32, unit: kWh, writable: false}
+  Active energy export: {address: 'hr:0x6018', type: float32, unit: kWh, writable: false}
+  Total reactive energy: {address: 'hr:0x6024', type: float32, unit: kvarh, writable: false}

@@ -1,0 +1,67 @@
+# Connections and gateways – EKBPRO KNX Terminal Python
+#
+# Copy this file to var/protocols.yaml next to config.yaml (for a site: sites/<site>/var/protocols.yaml;
+# config.yaml: server.protocols: var/protocols.yaml – the systemd service may only write in var/),
+# or build it in the user interface (F11 Gateways). Guide: docs/en/11-protocols-gateways.md
+#
+# Each protocol is a module; install the ones you use:  ./scada modules install modbus mqtt
+# Check the file:  ./scada gateway
+#
+# Mapping lines:  "source"  ·  "source -> new name"  ·  {from: …, to: …, direction: both, scale: 0.1}
+
+connections:
+  # The connection "knx" exists by itself when KNX is set up in config.yaml.
+  # Its tags are the group addresses (1/2/3) or their unique ETS names.
+
+  # WAGO 879-3000 energy meter (879-3020 and 879-3040 have the same registers) on RS485, Modbus RTU.
+  # model: gives the 35 main values with the names from the WAGO manual and the serial settings
+  # (9600 baud, 8E1, unit id 1, every 5 s). After connecting, the meter's model, unit id, baud rate,
+  # parity and serial number are read and reported. Settings written here win over the template.
+  meter1:
+    protocol: modbus
+    device: /dev/ttyUSB0
+    model: WAGO 879-3000
+
+  # A PLC or a heat pump over Modbus TCP.
+  plc1:
+    protocol: modbus
+    host: 192.168.1.20
+    tags:
+      Temp_ute: {address: 'ir:0', type: int16, scale: 0.1, unit: °C}
+      Pumpe_start: {address: 'co:0'}
+
+  # Our own OPC UA server for a SCADA system (Ignition, WinCC …).
+  scada:
+    protocol: opcua
+    role: server
+    endpoint: opc.tcp://0.0.0.0:4841
+
+  # An MQTT broker (Home Assistant, Node-RED …).
+  broker:
+    protocol: mqtt
+    host: 127.0.0.1
+    topic_prefix: bygg/
+
+gateways:
+  - name: Energimåler til SCADA
+    from: meter1
+    to: scada
+    map:                                           # names from your tagging system
+      - Total active power -> Energi.Hovedtavle.Effekt
+      - Total active energy -> Energi.Hovedtavle.Energi
+      - L1 current -> Energi.Hovedtavle.Strom_L1
+
+  - name: Anlegg til SCADA
+    from: plc1
+    to: scada
+    map:
+      - Temp_ute -> Ute.Temperatur
+      - {from: Pumpe_start, to: Pumper.P1.Start, direction: both}
+
+  - name: KNX til MQTT
+    from: knx
+    to: broker
+    deadband: 0.2
+    map:
+      - 3/0/1 -> stue/temperatur
+      - {from: 1/1/1, to: stue/lys, direction: both}

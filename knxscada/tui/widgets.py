@@ -9,6 +9,7 @@ its status group address (via :class:`GAWatcher`) and updates itself when a
 new value arrives. Writing goes through ``ScadaApp.write`` → server → bus;
 the row does *not* change its own state optimistically, it waits for the
 status telegram. That way the screen always shows what the bus says.
+Step sizes come from config.yaml: ``ui.dim_step`` (%, default 10) and ``ui.setpoint_step`` (°C, default 0.5).
 
 **Performance building blocks** – replacements for Textual widgets that
 were too slow for a live SCADA, especially over SSH:
@@ -25,12 +26,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.geometry import Region, Size
 from textual.message import Message
@@ -99,9 +100,18 @@ class FastTable(DataTable):
     """
 
     def add_row(self, *cells, **kw):
+        """Add a row like ``DataTable.add_row``, but plain ``str`` cells are wrapped in ``Text`` so they are never
+        parsed as markup. Returns the row key.
+        """
         return super().add_row(*(Text(c) if isinstance(c, str) else c for c in cells), **kw)
 
     def update_cell(self, row_key, column_key, value, *, update_width: bool = False) -> None:
+        """Set one cell and repaint only its row (see the class docstring).
+
+        *row_key* and *column_key* may be strings or keys. A ``str`` *value* is shown as plain text. With *update_width*
+        the column width may change, so the standard (slow) method is used. Raises ``CellDoesNotExist`` for an unknown
+        row or column, like ``DataTable``.
+        """
         if isinstance(value, str):
             value = Text(value)
         if update_width:
@@ -117,7 +127,8 @@ class FastTable(DataTable):
             # Drop only what was rendered from this row (all caches are keyed by row or line).
             self._row_renderable_cache.discard((self._update_count, row_index))
             for cache in (self._cell_render_cache, self._row_render_cache):
-                for key in [k for k in cache.keys() if k[0] == row_key]:
+                # Textual's LRUCache has keys() but cannot be iterated directly.
+                for key in [k for k in cache.keys() if k[0] == row_key]:  # noqa: SIM118
                     cache.discard(key)
             for key in list(self._line_cache.keys()):
                 try:
@@ -131,6 +142,10 @@ class FastTable(DataTable):
         self.refresh_row(row_index)
 
     def _update_dimensions(self, new_rows) -> None:
+        """Textual hook after rows were added: with fixed column widths only the virtual size is set.
+
+        Auto-width columns and row labels need the cells measured, so those tables use the standard method.
+        """
         if any(c.auto_width for c in self.columns.values()) or self._labelled_row_exists:
             super()._update_dimensions(new_rows)
             return
@@ -152,14 +167,15 @@ class LineLog(ScrollView, can_focus=True):
     appear on screen in batches (at most twice a second) to limit repaints.
     """
 
-    COMPONENT_CLASSES = {"linelog--cursor"}
+    #: Style of the cursor line, set in ``DEFAULT_CSS``.
+    COMPONENT_CLASSES: ClassVar[set[str]] = {"linelog--cursor"}
     #: Seconds new lines may wait before they are shown (repaints are batched).
     APPEND_DELAY = 0.5
     DEFAULT_CSS = """
     LineLog > .linelog--cursor { background: $primary 30%; }
     LineLog:focus > .linelog--cursor { background: $primary 45%; }
     """
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("up", "move(-1)", show=False),
         Binding("down", "move(1)", show=False),
         Binding("pageup", "move(-20)", show=False),
@@ -173,16 +189,21 @@ class LineLog(ScrollView, can_focus=True):
         """An item was chosen with Enter or a click."""
 
         def __init__(self, log: LineLog, data: Any) -> None:
+            """*log* is the LineLog that posted the message, *data* the chosen item (e.g. a telegram dict)."""
             super().__init__()
             self.log = log
             self.data = data
 
         @property
         def control(self) -> LineLog:
+            """The LineLog that posted the message."""
             # Needed so the message can be used with @on(LineLog.Selected, "#id").
             return self.log
 
     def __init__(self, formatter: Callable[[Any], Text], width: int, max_lines: int = 1000, **kw: Any) -> None:
+        """*formatter* turns an item into one ``Text`` line, *width* is the line width in cells (for the horizontal
+        scrollbar), *max_lines* the number of items kept. *kw* goes to ``ScrollView`` (``id``, ``classes`` …).
+        """
         super().__init__(**kw)
         self.formatter = formatter
         self.line_width = width
@@ -201,6 +222,7 @@ class LineLog(ScrollView, can_focus=True):
         return list(self._items)
 
     def clear(self) -> None:
+        """Remove all lines."""
         self.set_items([])
 
     def set_items(self, items: list[Any]) -> None:
@@ -247,6 +269,7 @@ class LineLog(ScrollView, can_focus=True):
 
     @property
     def line_count(self) -> int:
+        """Number of items in the log (shown in the bus monitor's border)."""
         return len(self._items)
 
     def _update_size(self) -> None:
@@ -288,6 +311,7 @@ class LineLog(ScrollView, can_focus=True):
 
     # -- navigation -------------------------------------------------------------------
     def _goto(self, idx: int) -> None:
+        """Move the cursor to item *idx* (clamped), scroll it into view and follow new lines again if it is the last."""
         if not self._items:
             return
         self.cursor = max(0, min(len(self._items) - 1, idx))
@@ -296,19 +320,24 @@ class LineLog(ScrollView, can_focus=True):
         self.refresh()
 
     def action_move(self, delta: int) -> None:
+        """Up/Down/PageUp/PageDown: move the cursor by *delta* lines (from the last line if there is no cursor yet)."""
         self._goto((self.cursor if self.cursor >= 0 else len(self._items) - 1) + delta)
 
     def action_first(self) -> None:
+        """Home: go to the oldest line (and stop following new lines)."""
         self._goto(0)
 
     def action_last(self) -> None:
+        """End: go to the newest line and follow new lines again."""
         self._goto(len(self._items) - 1)
 
     def action_select(self) -> None:
+        """Enter: post :class:`Selected` with the item under the cursor."""
         if 0 <= self.cursor < len(self._items):
             self.post_message(self.Selected(self, self._items[self.cursor]))
 
     def on_click(self, event: events.Click) -> None:
+        """A click selects the clicked line and posts :class:`Selected` (opens the address dialog in the views)."""
         idx = self.scroll_offset.y + event.y
         if 0 <= idx < len(self._items):
             self._goto(idx)
@@ -338,6 +367,7 @@ class LiveStatic(Widget):
     """
 
     def __init__(self, content: str | Text = "", **kw: Any) -> None:
+        """*content* is the initial text (markup string or ``Text``); *kw* goes to ``Widget``."""
         super().__init__(**kw)
         self._content: str | Text = content
 
@@ -359,6 +389,7 @@ class LiveStatic(Widget):
         self.set(Text(text))
 
     def render(self) -> str | Text:
+        """Textual render hook: the content as it is (a markup string is interpreted by Textual)."""
         return self._content
 
 
@@ -371,31 +402,52 @@ class GAWatcher:
     on unmount, so rebuilt room views do not leak watchers.
     """
 
+    #: Group addresses (or ``pt:conn/tag``) whose changes call :meth:`state_changed`.
     watched: tuple[str, ...] = ()
 
     @property
     def scada(self) -> ScadaApp:
+        """The running app, typed as :class:`ScadaApp`."""
         return self.app  # type: ignore[attr-defined,return-value]
 
     def on_mount(self) -> None:
+        """Register every watched address with the app and show the current value at once."""
         for ga in self.watched:
             self.scada.watch_ga(ga, self)
-        self.on_state()  # show the current value immediately
+        self.state_changed()  # show the current value immediately
 
     def on_unmount(self) -> None:
+        """Unregister, so removed rows and cards are not called any more (and can be garbage collected)."""
         for ga in self.watched:
             self.scada.unwatch_ga(ga, self)
 
+    def state_changed(self) -> None:
+        """Called by the app when a watched address changed."""
+        self.on_state()
+        self.after_state()
+
     def on_state(self) -> None:  # overridden by subclasses
-        pass
+        """Update the widget from the current state – overridden by subclasses."""
+
+    def after_state(self) -> None:  # overridden by subclasses
+        """Run after :meth:`on_state` for work shared by a base class (e.g. dimming old values).
+
+        Overridden by subclasses; :class:`DatapointRow` uses it to mark old values.
+        """
 
 
 class DatapointRow(GAWatcher, Horizontal):
     """Base class of a card row: label on the left, value/controls on the right."""
 
+    #: CSS class of every datapoint row (``app.tcss``).
     DEFAULT_CLASSES = "dp-row"
 
     def __init__(self, dp: dict[str, Any]) -> None:
+        """*dp* is a datapoint of a function card (``ga``, ``status``, ``dpt``, ``kind``, ``label``, ``role`` …).
+
+        The row shows the status (feedback) address when there is one, else the control address. Protocol tags on room
+        cards use ``pt:conn/tag`` as address and work the same way.
+        """
         super().__init__()
         self.dp = dp
         self.read_ga = dp["status"] or dp["ga"]  # show the feedback when there is one
@@ -403,10 +455,12 @@ class DatapointRow(GAWatcher, Horizontal):
 
     @property
     def value(self) -> Any:
+        """Current decoded value of the shown address (None before the first value)."""
         return self.scada.state.get(self.read_ga, {}).get("value")
 
     @property
     def text(self) -> str:
+        """Current display text of the shown address (``"–"`` before the first value)."""
         st = self.scada.state.get(self.read_ga)
         return st["text"] if st else "–"
 
@@ -419,12 +473,26 @@ class DatapointRow(GAWatcher, Horizontal):
         if self.dp["status"]:
             parts.append(f"{_('Status:')}  {self.dp['status']}")
         parts.append(f"DPT {self.dp['dpt'] or '?'}  •  {ago(st.get('ts'))}")
+        if st.get("old"):
+            parts.append(_("Old value (from before the start) – not read yet"))
         return "\n".join(parts)
 
     def label(self) -> Label:
+        """The label widget on the left (generic English labels are translated, ETS names stay as they are)."""
         return Label(_(self.dp["label"]), classes="dp-label", markup=False)
 
+    def after_state(self) -> None:
+        """Mark the value widgets ``old`` while the value is from the database of the last run."""
+        # A value from the database of the last run is shown dimmed until the bus has sent a new one.
+        old = bool(self.scada.state.get(self.read_ga, {}).get("old"))
+        for widget in self.query(".dp-value"):
+            widget.set_class(old, "old")
+
     def write(self, value: Any) -> None:
+        """Send *value* to the control address (via ``ScadaApp.write`` and the server, which logs the user).
+
+        Nothing is changed locally: the row shows the new value when the status telegram arrives.
+        """
         self.scada.write(self.dp["ga"], value, self.dp["dpt"])
 
 
@@ -432,11 +500,13 @@ class SwitchRow(DatapointRow):
     """On/off switch. The text left of the switch is the status feedback."""
 
     def compose(self) -> ComposeResult:
+        """Label, status text and switch."""
         yield self.label()
         yield LiveStatic("", classes="dp-value")
         yield Switch(animate=False)
 
     def on_state(self) -> None:
+        """Show the status text, colour it when on, and move the switch without writing."""
         v = self.value
         val = self.query_one(".dp-value", LiveStatic)
         val.set_text(self.text)
@@ -448,6 +518,7 @@ class SwitchRow(DatapointRow):
         self.tooltip = self._tip_text()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        """The user moved the switch: write the new value (the message must not bubble to the card)."""
         event.stop()
         self.write(event.value)
 
@@ -456,10 +527,15 @@ class StepRow(DatapointRow):
     """Dimmer (%) and setpoint (°C): − value + …  (… opens a dialog for an exact value)."""
 
     def __init__(self, dp: dict[str, Any], step: float, lo: float, hi: float, bar: bool) -> None:
+        """*step* is the change per press, *lo*/*hi* the allowed range; *bar* draws a level bar (dimmers) and treats the
+        value as an integer percentage, otherwise a setpoint with one decimal (from ``ui.dim_step`` /
+        ``ui.setpoint_step``).
+        """
         super().__init__(dp)
         self.step, self.lo, self.hi, self.bar = step, lo, hi, bar
 
     def compose(self) -> ComposeResult:
+        """Label, optional level bar, ``−`` value ``+`` and ``…`` for an exact value."""
         yield self.label()
         if self.bar:
             yield LiveStatic("", classes="dp-bar")
@@ -469,16 +545,18 @@ class StepRow(DatapointRow):
         yield Button("…", classes="dp-btn set", compact=True, tooltip=_("Set exact value"))
 
     def on_state(self) -> None:
+        """Show the value text and fill the level bar (12 cells over *lo*…*hi*)."""
         self.query_one(".dp-value", LiveStatic).set_text(self.text)
         if self.bar:
             v = self.value if isinstance(self.value, (int, float)) else 0
             frac = max(0.0, min(1.0, (v - self.lo) / (self.hi - self.lo)))
             width = 12
-            full = int(round(frac * width))
+            full = round(frac * width)
             self.query_one(".dp-bar", LiveStatic).set_text("█" * full + "░" * (width - full))
         self.tooltip = self._tip_text()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """``…`` opens :class:`ValueDialog`; ``−``/``+`` write the value one step down/up."""
         event.stop()
         if event.button.has_class("set"):
             from .dialogs import ValueDialog
@@ -502,11 +580,13 @@ class ModeRow(DatapointRow):
     """HVAC operating mode as a drop-down list."""
 
     def compose(self) -> ComposeResult:
+        """Label and a drop-down with the valid modes of the DPT (e.g. HVAC 20.102)."""
         yield self.label()
         opts = [(dptlib.hvac_label(o), o) for o in dptlib.enum_options(self.dp["dpt"])]
         yield Select(opts, prompt="–", compact=True, classes="dp-select")
 
     def on_state(self) -> None:
+        """Select the current mode without writing (an unknown value shows the prompt)."""
         sel = self.query_one(Select)
         with sel.prevent(Select.Changed):
             v = self.value
@@ -514,6 +594,7 @@ class ModeRow(DatapointRow):
         self.tooltip = self._tip_text()
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        """The user chose a mode: write it."""
         event.stop()
         if event.value is not Select.NULL:
             self.write(event.value)
@@ -523,17 +604,20 @@ class SceneRow(DatapointRow):
     """Scene number input (1–64) with a Send button."""
 
     def compose(self) -> ComposeResult:
+        """Label, number field and Send button."""
         yield self.label()
         yield Input(placeholder="1-64", type="integer", compact=True, classes="dp-input")
         yield Button(_("Send"), classes="dp-btn", compact=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Send the entered scene number (nothing happens while the field is empty)."""
         event.stop()
         v = self.query_one(Input).value
         if v:
             self.write(int(v))
 
     def on_state(self) -> None:
+        """A scene has no state to show: only the tooltip is updated."""
         self.tooltip = self._tip_text()
 
 
@@ -541,10 +625,15 @@ class ValueRow(DatapointRow):
     """Read-only value. On/off values are green when on, red when they mean an alarm."""
 
     def compose(self) -> ComposeResult:
+        """Label and a wide value field."""
         yield self.label()
         yield LiveStatic("", classes="dp-value wide")
 
     def on_state(self) -> None:
+        """Show the value text; on/off values are coloured, red when they mean an alarm.
+
+        DPT 1.005 (alarm) or an alarm word in the label (:data:`ALARM_WORDS`) means ``True`` is bad.
+        """
         val = self.query_one(".dp-value", LiveStatic)
         val.set_text(self.text)
         v = self.value
@@ -574,9 +663,13 @@ def make_row(dp: dict[str, Any], ui: dict[str, Any]) -> DatapointRow:
 class FunctionCard(Vertical):
     """A bordered card for one function (e.g. "Ceiling light") with its rows."""
 
+    #: CSS class of the card border (``app.tcss``).
     DEFAULT_CLASSES = "card"
 
     def __init__(self, func: dict[str, Any], ui: dict[str, Any], show_room: bool = False) -> None:
+        """*func* is a function from the project model (``name``, ``room``, ``usage``, ``datapoints``), *ui* the ``ui``
+        section of config.yaml (step sizes for the rows). *show_room* adds the room name to the title (floor view).
+        """
         super().__init__()
         self.func = func
         self.ui = ui
@@ -586,5 +679,6 @@ class FunctionCard(Vertical):
         self.border_subtitle = _(usage) if usage else ""
 
     def compose(self) -> ComposeResult:
+        """One row per datapoint (see :func:`make_row`)."""
         for dp in self.func["datapoints"]:
             yield make_row(dp, self.ui)
