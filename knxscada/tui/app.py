@@ -443,7 +443,8 @@ class ScadaApp(App):
         """
         if t["type"] == "read":
             return ""
-        return dptlib.fmt(self.ga(t["dst"]).get("dpt"), t.get("value"))
+        ga = self.ga(t["dst"])
+        return dptlib.fmt(ga.get("dpt"), t.get("value"), ga.get("unit"))
 
     def _on_server_message(self, msg: dict) -> None:
         """Callback from the client for every pushed message."""

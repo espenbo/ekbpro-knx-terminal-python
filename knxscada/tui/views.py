@@ -944,7 +944,8 @@ class MonitorView(View):
                     break
                 for t in page:  # the log stores the decoded value; the display text is made here
                     if t.get("type") != "read":
-                        t.setdefault("text", dptlib.fmt(app.ga(t["dst"]).get("dpt"), t.get("value")))
+                        t.setdefault("text", dptlib.fmt(app.ga(t["dst"]).get("dpt"), t.get("value"),
+                                                       app.ga(t["dst"]).get("unit")))
                 # Pages come oldest first within the page, newest page first: prepend to keep time order.
                 items[:0] = [t for t in page if t["ts"] >= since and self._match(t)]
                 # Stop once the page reaches before the period, or the server had no more (a short page).
@@ -1270,7 +1271,7 @@ class TrendView(View):
             p = self.points.get(key) or {}
             return p.get("conn", ""), p.get("description") or p.get("name") or key[len(POINT):], p.get("unit", "")
         g = self.scada.ga(key)
-        return key, g.get("name", ""), dptlib.unit(g.get("dpt"))
+        return key, g.get("name", ""), g.get("unit") or dptlib.unit(g.get("dpt"))
 
     def _color(self, addr: str) -> tuple[int, int, int]:
         """Series colour: position in self.series → palette entry."""

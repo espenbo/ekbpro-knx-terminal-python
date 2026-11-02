@@ -385,3 +385,15 @@ def test_point_rooms():
     assert (room.temp_ga, room.sp_ga, room.heat_ga) == ("pt:gw/RT205_PV", "pt:gw/RT205_SP", "pt:gw/RT205_VP")
     assert room.lights[0]["status"] == "pt:gw/Light Status"
     assert add_point_rooms(empty_model(), None, tags) == []
+
+
+def test_project_units_override_the_dpt_unit():
+    """project.units sets an address's unit (volts sent as DPT 9.020 mV); unknown addresses are skipped."""
+    from knxscada import dpt as dptlib
+
+    model = {"gas": {"0/1/17": {"dpt": "9.020", "name": "VL1"}}}
+    project.apply_units(model, {"0/1/17": "V", "9/9/9": "V"})
+    assert model["gas"]["0/1/17"]["unit"] == "V"
+    assert dptlib.fmt("9.020", 131.04, "V") == "131 V"
+    assert dptlib.fmt("9.020", 131.04) == "131 mV"
+    assert dptlib.fmt("9.020", 131.04, "") == "131 mV"

@@ -67,7 +67,7 @@ class Driver(BaseDriver):
         self._by_name: dict[str, str | None] = {}   # ETS name (lower case) → address, None when not unique
         for addr, ga in self.server.gas.items():
             self.tags[addr] = Tag(name=addr, address=addr, type=tag_type(ga.get("dpt")),
-                                  unit=dptlib.unit(ga.get("dpt")), description=ga.get("name") or "",
+                                  unit=ga.get("unit") or dptlib.unit(ga.get("dpt")), description=ga.get("name") or "",
                                   extra={"dpt": ga.get("dpt")})
             key = (ga.get("name") or "").strip().lower()
             if key:
@@ -113,5 +113,5 @@ class Driver(BaseDriver):
             value = HVAC_NAMES.get(int(value), value)
         payload = dptlib.encode(dpt, value)
         await self.server._send(tag.name, "write", payload)
-        shown = dptlib.fmt(dpt, dptlib.decode(dpt, payload))
+        shown = dptlib.fmt(dpt, dptlib.decode(dpt, payload), tag.unit)
         self.server.event("info", "operation", f"{tag.name} {tag.description} ← {shown}", user or "gateway")

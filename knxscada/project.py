@@ -134,6 +134,7 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
             fresh = all(not p["file"].exists() or cache.stat().st_mtime >= p["file"].stat().st_mtime for p in projects)
             if data.get("cache_version") == CACHE_VERSION and fresh and data.get("sources", sources) == sources:
                 add_extra_rooms(data, cfg.project.get("extra_rooms"))
+                apply_units(data, cfg.project.get("units"))
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # unreadable cache: rebuild below
@@ -158,6 +159,7 @@ def load_project(cfg: Config, force: bool = False) -> dict[str, Any]:
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
     add_extra_rooms(model, cfg.project.get("extra_rooms"))  # not cached: read from config.yaml every time
+    apply_units(model, cfg.project.get("units"))
     return model
 
 
@@ -165,6 +167,21 @@ def empty_model() -> dict[str, Any]:
     """The model of an installation without KNX: no addresses, no rooms."""
     return {"cache_version": CACHE_VERSION, "info": {"name": ""}, "gas": {}, "ranges": [], "floors": [],
             "functions": {}, "source": "none", "sources": []}
+
+
+def apply_units(model: dict[str, Any], units: dict | None) -> None:
+    """Set ``project.units`` (address → unit) on the model's addresses, after the cache is read.
+
+    For devices whose telegrams carry another unit than their DPT says – a PLC that sends volts in DPT 9.020
+    (mV), since KNX has no 2-byte volt type. The views and the log use the ``unit`` of an address before the DPT's
+    (:func:`.dpt.fmt`). Addresses not in the project are logged and skipped: a typo must not stop the server.
+    """
+    for addr, unit in (units or {}).items():
+        ga = model["gas"].get(str(addr))
+        if ga is None:
+            log.warning(_("project.units: {address} is not in the ETS project").format(address=addr))
+        else:
+            ga["unit"] = str(unit)
 
 
 #: ``usage`` of an extra card → the ETS usage text the views look for.

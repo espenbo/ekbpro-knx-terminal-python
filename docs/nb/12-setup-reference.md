@@ -350,6 +350,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `files` | liste | – | elementer: `{file (påkrevd), name (p1, p2 …), label (navnet), prefix (navnet; bokstaver/sifre; aldri på det første), password, rooms}` eller bare stien |
 | `rooms` | map | – | `pattern` (påkrevd), `floors`, `names`, `setpoint`, `read_only`, `exclude`; brukes bare når prosjektet ikke har ETS-funksjoner |
 | `extra_rooms` | liste | – | elementer: `floor` (`Other`), `name` (`Room N`), `cards[]`: `name`, `addresses`, `status`, `usage` (`light`, `dimmer`, `heating`, `other`; gjettes). Et `name` som allerede er et rom i den etasjen, får kortene lagt til (ikke et rom til). En adresse som ikke finnes i prosjektet, stopper programmet. |
+| `units` | kart | – | gruppeadresse → enhet som vises i stedet for DPT-ens, f.eks. `{"0/1/17": V}` for volt sendt som DPT 9.020 (mV); ukjente adresser logges og hoppes over |
 | `point_rooms` | liste | – | som `extra_rooms` med `building` (grupperer menyen), og `cards[].rows[]`: `point` (`tilk/tagg`, påkrevd), `status`, `label` (taggens beskrivelse), `role` (`temp`, `setpoint`, `heat`), `kind` (fra taggen). Ukjente tagger meldes, stopper ikke. Se [04](04-configuration.md#point-rooms). |
 
 ### `server`

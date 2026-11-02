@@ -1120,6 +1120,11 @@ class SystemsView(View):
             series = []
             for i, (curve_key, name) in enumerate(chart):
                 pts = [p for p in curves.get(curve_key, []) if p[0] >= start - 3600]
+                cur = self.values.get(curve_key)
+                if cur is not None and isinstance(cur[0], (int, float)) and not isinstance(cur[0], bool):
+                    # Values are logged on change, so the last one holds until now; a value that never changed in
+                    # 24 h (a limit, a count of 0) has no log at all and is drawn flat over the whole period.
+                    pts = [*(pts or [(start, float(cur[0]))]), (now, float(cur[0]))]
                 if pts:
                     series.append((_(name), pts, pal[i % len(pal)]))
             draw(plt, series, "line", start, now, plot.size.width)

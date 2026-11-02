@@ -222,7 +222,7 @@ class ScadaServer:
         # passed on to gateways: only values read or received from now on are.
         for ga, last in self.store.last_values(list(self.gas)).items():
             if ga in self.gas:
-                last["text"] = dptlib.fmt(self.gas[ga]["dpt"], last["value"])
+                last["text"] = dptlib.fmt(self.gas[ga]["dpt"], last["value"], self.gas[ga].get("unit"))
                 last["old"] = True
                 self.state[ga] = last
 
@@ -507,7 +507,7 @@ class ScadaServer:
             "type": kind,
             "raw": raw,
             "value": decoded,
-            "text": dptlib.fmt(dpt, decoded) if value is not None else "",
+            "text": dptlib.fmt(dpt, decoded, self.gas.get(dst, {}).get("unit")) if value is not None else "",
         }
         t["id"] = self.store.add_telegram(t)
         self.tel_count += 1
@@ -611,7 +611,7 @@ class ScadaServer:
         self._alarm_delay.pop(addr, None)
         if name is None:
             ga = self.gas[addr]
-            name, text_value = ga["name"], dptlib.fmt(ga["dpt"], value)
+            name, text_value = ga["name"], dptlib.fmt(ga["dpt"], value, ga.get("unit"))
         text = rule.format_text(name=name, address=addr, value=text_value if text_value is not None else str(value))
         aid = self.store.raise_alarm(addr, text, rule.severity, value)
         self.alarms[aid] = {
@@ -728,7 +728,7 @@ class ScadaServer:
             await self._send(ga, "write", payload)
             # Audit log: who wrote what (decoded back so the log shows the real value).
             name = self.gas.get(ga, {}).get("name", "")
-            shown = dptlib.fmt(dpt, dptlib.decode(dpt, payload))
+            shown = dptlib.fmt(dpt, dptlib.decode(dpt, payload), self.gas.get(ga, {}).get("unit"))
             self.event("info", "operation", f"{ga} {name} ← {shown}", user)
             return None
         if cmd == "read":

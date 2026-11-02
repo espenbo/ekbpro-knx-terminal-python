@@ -222,8 +222,13 @@ def enum_options(dpt: str | None) -> list[str]:
         return []
 
 
-def fmt(dpt: str | None, value: Any) -> str:
-    """Human-readable, translated text for a decoded value (``"–"`` for no value)."""
+def fmt(dpt: str | None, value: Any, unit_override: str | None = None) -> str:
+    """Human-readable, translated text for a decoded value (``"–"`` for no value).
+
+    Args:
+        unit_override: the address's own unit (``project.units`` in config.yaml) instead of the DPT's – a device
+            that sends volts in a DPT 9.020 (mV) telegram; None or "" keeps the DPT's unit.
+    """
     if value is None:
         return "–"
     main, sub = split(dpt)
@@ -233,7 +238,7 @@ def fmt(dpt: str | None, value: Any) -> str:
     if main == 20 and isinstance(value, str):
         return hvac_label(value)
     if isinstance(value, float):
-        u = unit(dpt)
+        u = unit_override or unit(dpt)
         if main == 9 and sub == 1:  # temperatures: always one decimal
             text = f"{value:.1f}"
         elif abs(value) >= 100:
@@ -242,7 +247,7 @@ def fmt(dpt: str | None, value: Any) -> str:
             text = f"{value:.2f}".rstrip("0").rstrip(".")
         return f"{text} {u}".strip()
     if isinstance(value, int):
-        return f"{value} {unit(dpt)}".strip()
+        return f"{value} {unit_override or unit(dpt)}".strip()
     if isinstance(value, dict):  # e.g. RGB colour, date/time structures
         return ", ".join(f"{k}={v}" for k, v in value.items())
     return str(value)

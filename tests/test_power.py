@@ -111,3 +111,11 @@ def test_render_power_over_the_limit_and_unknown_values():
     assert "Over the limit by 1.00 kW" in render_power(p, lambda k: vals.get(k) if k else None, colors()).plain
     empty = render_power(p, lambda _k: None, colors(), 100).plain
     assert "–" in empty and "Load 1" in empty
+
+
+def test_room_left_from_consumption_and_limit_when_the_plc_keeps_overuse_at_zero():
+    """A PLC that reports overuse 0 below the limit still gives the real room left (limit − consumption)."""
+    p, _ = parse_power(ENTRY, "plc", "")
+    vals = {**values(2.76), "plc/overforbruk": (0.0, "", "")}
+    text = render_power(p, lambda k: vals.get(k) if k else None, colors(), 110).plain
+    assert "Room left 6.24 kW" in text and "-0.00" not in text

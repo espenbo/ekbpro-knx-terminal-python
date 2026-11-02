@@ -917,6 +917,7 @@ CATALOGUE: dict[str, str] = {
     "no alarm": "ingen alarm",
     "ui.systems[{i}]: unknown type {type} – use ventilation, diagram, panel, power or energy":
         "ui.systems[{i}]: ukjent type {type} – bruk ventilation, diagram, panel, power eller energy",
+    "project.units: {address} is not in the ETS project": "project.units: {address} finnes ikke i ETS-prosjektet",
     # Power limiter card (tui/power.py)
     "Consumption": "Forbruk",
     "Limit": "Grense",

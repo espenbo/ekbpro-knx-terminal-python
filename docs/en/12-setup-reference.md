@@ -348,6 +348,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `files` | list | – | entries: `{file (required), name (p1, p2 …), label (the name), prefix (the name; letters/digits; never on the first), password, rooms}` or just the path |
 | `rooms` | map | – | `pattern` (required), `floors`, `names`, `setpoint`, `read_only`, `exclude`; only used when the project has no ETS functions |
 | `extra_rooms` | list | – | entries: `floor` (`Other`), `name` (`Room N`), `cards[]`: `name`, `addresses`, `status`, `usage` (`light`, `dimmer`, `heating`, `other`; guessed). A `name` that already is a room on that floor gets the cards added (no second room). An address that is not in the project stops the program. |
+| `units` | map | – | group address → unit shown instead of the DPT's, e.g. `{"0/1/17": V}` for volts sent as DPT 9.020 (mV); unknown addresses are logged and skipped |
 | `point_rooms` | list | – | like `extra_rooms` with `building` (groups the menu), and `cards[].rows[]`: `point` (`conn/tag`, required), `status`, `label` (tag description), `role` (`temp`, `setpoint`, `heat`), `kind` (from the tag). Unknown tags are reported, not fatal. See [04](04-configuration.md#point-rooms). |
 
 ### `server`

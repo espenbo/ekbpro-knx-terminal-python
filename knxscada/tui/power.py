@@ -234,14 +234,19 @@ def render_power(p: Power, get: Callable[[str | None], Value | None], c: Colors,
     out.append(figures + "\n")
 
     over = _num(val("overuse"))
+    if cons is not None and limit:
+        # Computed from the bar's own two figures: a PLC may keep its overuse at 0 while there is room left (it only
+        # counts consumption above the limit), which would read "room left 0".
+        over = cons - limit
     shed = _num(val("shed_count"))
     if shed is None:
         shed = float(sum(1 for load in p.loads if _flag(get(load.keys.get("shed")))))
     parts = []
     if over is not None:
         # The PLC's overuse is consumption − limit: negative means room left, which is what the user wants to see.
-        parts.append((_("Room left {value}").format(value=_kw((-over, val("overuse")[1], ""))) if over <= 0
-                      else _("Over the limit by {value}").format(value=_kw(val("overuse"))),
+        unit = (val("setpoint") or val("overuse") or (None, "kW", ""))[1]
+        parts.append((_("Room left {value}").format(value=_kw((abs(over), unit, ""))) if over <= 0
+                      else _("Over the limit by {value}").format(value=_kw((over, unit, ""))),
                       c.ok if over <= 0 else c.bad))
     if p.loads:
         parts.append((_("{n} of {total} loads switched off").format(n=int(shed), total=len(p.loads)),
