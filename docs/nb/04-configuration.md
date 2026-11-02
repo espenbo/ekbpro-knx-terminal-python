@@ -446,6 +446,40 @@ En måler bruker taggnavnene i utstyrsmalene (`Total active power`, `Total activ
 `type: panel` er et anlegg uten tegning – f.eks. en KNX→BACnet-gateway: det får en oppføring under Anlegg i menyen
 og åpner i fanen Innstillinger med taggene i `groups` (de skrivbare med Enter). Roller brukes ikke.
 
+#### Effektstyring (`type: power`)
+
+En effektstyring (maksvokter) i en PLS kobler ut laster (varmtvannsbereder, gulvvarme, elbillader) når forbruket
+i bygget nærmer seg en grense. Kortet viser forbruket som en stolpe mot grensen (grønn, gul fra 80 %, rød over;
+rammen blir rød over grensen), hvor mye som er ledig, hvor mange laster som er koblet ut, månedens høyeste forbruk
+og én linje per last. Grafene viser forbruk og grense, og antall laster koblet ut (logg de taggene). Kortet bare
+leser; innstillingene skrives i fanen Innstillinger.
+
+```yaml
+    - name: Effektstyring
+      type: power
+      connection: plc2
+      tags:                                       # alle valgfrie
+        consumption: {connection: knx, tag: "0/1/30"}   # finnes også på KNX: les den der
+        setpoint: forbrukSetpunkt
+        overuse: overforbruk                      # forbruk − grense (negativ = ledig)
+        shed_count: PRG_iTotalLoadsDisconnected
+        peak: {connection: plc2_bacnet, tag: rkWMaxMoth}
+      loads: 9                                    # eller en liste med navn: [VVB, Bad, …]
+      load_tags:                                  # {n} = 1, 2, …
+        name: "sLast_{n}_Navn"                    # navnet i PLS-en (en liste i loads vinner)
+        shed: "Last_{n}_kobletUt"
+        status: "Last_{n}_status"
+        count: "Last_{n}_gangerUtkoblet"
+        min_off: "Last_{n}_minUtkoblingstid"
+        max_off: "Last_{n}_maksUtkoblingstid"
+        min_on: "Last_{n}_minInnkoblingstid"
+      time_unit: min
+      groups:                                     # fanen Innstillinger, som for et panel
+        - {title: "Last 1", tags: ["Last_1_*"]}
+```
+
+En tagg er et navn i anleggets tilkobling (med `prefix`) eller `{connection: …, tag: …}` for en annen tilkobling.
+
 Fanen Innstillinger: en tagg havner i den første av `groups` den passer med. Tagger utenfor gruppene samles
 automatisk etter TFM-kode (`JV401_OP` → `JV401`) eller første ledd i navnet (`Sequence_Kp1` → `Sequence`) når minst
 to tagger har det samme; gruppen får navn etter ordene beskrivelsene begynner med. Resten havner under «Annet».

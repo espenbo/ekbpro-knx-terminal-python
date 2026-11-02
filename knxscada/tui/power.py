@@ -222,7 +222,7 @@ def render_power(p: Power, get: Callable[[str | None], Value | None], c: Colors,
     Returns:
         A Rich text of ``3 + 1 + len(loads)`` lines (the card height is set from that in the view).
     """
-    val = lambda role: get(p.keys.get(role))   # noqa: E731 – a one-line lookup reads better than a nested def
+    val = lambda role: get(p.keys.get(role))   # role → value of the limiter
     cons, limit = _num(val("consumption")), _num(val("setpoint"))
     out = Text()
     label = f"{_('Consumption'):<12}"

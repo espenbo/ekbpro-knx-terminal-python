@@ -231,6 +231,10 @@ Vannbårne anlegg (varmesentral, gulvvarme, tappevann) vises som et **rørskjema
 sikkerhetsbryteren er slått av, og verdier i rødt når en av alarmene deres er på. Grafene og fanen Innstillinger
 virker som for et aggregat. En oppføring med `type: panel` har ingen tegning, bare fanen Innstillinger.
 
+En **effektstyring** (`type: power`) viser forbruket som en stolpe mot grensen (gul fra 80 %, rød over), hvor mye
+som er ledig, hvor mange laster som er koblet ut og én linje per last: koblet ut eller inne, drift, hvor mange
+ganger den er koblet ut og min./maks. tider. Grafene viser forbruk, grense og laster koblet ut.
+
 Hva som vises, settes opp i [`ui.systems`](04-configuration.md#anleggsvisning-ctrle).
 
 ## Energimålere (Ctrl+G)

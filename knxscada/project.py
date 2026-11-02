@@ -174,6 +174,8 @@ USAGES = {"light": "switchable light", "dimmer": "dimmable light", "heating": "h
 def add_extra_rooms(model: dict[str, Any], rooms: list[dict] | None) -> None:
     """Add rooms defined in ``project.extra_rooms`` – for addresses no ETS room holds.
 
+    A room with the name of an existing room on the same floor is not added twice: its cards are added to it.
+
     ::
 
         extra_rooms:
@@ -200,7 +202,13 @@ def add_extra_rooms(model: dict[str, Any], rooms: list[dict] | None) -> None:
         if floor is None:
             floor = {"name": floor_name, "rooms": []}
             model["floors"].append(floor)
-        room = {"id": f"X-{i}", "name": str(spec.get("name") or f"Room {i + 1}"), "functions": []}
+        name = str(spec.get("name") or f"Room {i + 1}")
+        # A room the ETS project already has on this floor gets the cards added (a sensor the PLC puts on KNX
+        # without an ETS function); otherwise the room is new.
+        room = next((r for r in floor["rooms"] if r["name"] == name), None)
+        is_new = room is None
+        if room is None:
+            room = {"id": f"X-{i}", "name": name, "functions": []}
         for j, card in enumerate(spec.get("cards") or []):
             addrs = [str(a) for a in card.get("addresses") or []]
             explicit = {str(k): str(v) for k, v in (card.get("status") or {}).items()}
@@ -230,7 +238,8 @@ def add_extra_rooms(model: dict[str, Any], rooms: list[dict] | None) -> None:
             model["functions"][fid] = {"id": fid, "name": fake["name"], "usage": usage, "type": "",
                                        "room": room["name"], "datapoints": dps}
             room["functions"].append(fid)
-        floor["rooms"].append(room)
+        if is_new:
+            floor["rooms"].append(room)
     if unknown:
         raise ValueError(_("project.extra_rooms: not in the ETS project: {addresses}").format(
             addresses=", ".join(sorted(set(unknown)))))

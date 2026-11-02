@@ -444,6 +444,40 @@ A meter uses the tag names of the device templates (`Total active power`, `Total
 `type: panel` is a system without a drawing – e.g. a KNX→BACnet gateway: it gets a menu entry under Systems
 and opens on the Settings tab with its tags in `groups` (writable ones with Enter). Roles are not used.
 
+#### Power limiter (`type: power`)
+
+A power limiter in a PLC switches loads off (water heater, floor heating, EV charger) when the building's
+consumption gets close to a limit. The card shows the consumption as a bar against the limit (green, yellow from
+80 %, red over it; the border turns red over the limit), the room left, how many loads are switched off, the
+highest consumption of the month and one line per load. The charts show consumption and limit, and the number of
+loads switched off (log those tags). The card only reads; settings are written on the Settings tab.
+
+```yaml
+    - name: Power limiter
+      type: power
+      connection: plc2
+      tags:                                       # all optional
+        consumption: {connection: knx, tag: "0/1/30"}   # also on KNX: read it there
+        setpoint: forbrukSetpunkt
+        overuse: overforbruk                      # consumption − limit (negative = room left)
+        shed_count: PRG_iTotalLoadsDisconnected
+        peak: {connection: plc2_bacnet, tag: rkWMaxMoth}
+      loads: 9                                    # or a list of names: [Water heater, Bath, …]
+      load_tags:                                  # {n} = 1, 2, …
+        name: "sLast_{n}_Navn"                    # the PLC's name (a list in loads wins)
+        shed: "Last_{n}_kobletUt"
+        status: "Last_{n}_status"
+        count: "Last_{n}_gangerUtkoblet"
+        min_off: "Last_{n}_minUtkoblingstid"
+        max_off: "Last_{n}_maksUtkoblingstid"
+        min_on: "Last_{n}_minInnkoblingstid"
+      time_unit: min
+      groups:                                     # Settings tab, as for a panel
+        - {title: "Load 1", tags: ["Last_1_*"]}
+```
+
+A tag is a name of the entry's connection (with `prefix`) or `{connection: …, tag: …}` for another connection.
+
 Settings tab: a tag goes into the first of the `groups` it matches. Tags in no group are put into automatic
 sections by TFM code (`JV401_OP` → `JV401`) or by the first part of the name (`Sequence_Kp1` → `Sequence`) when at
 least two tags share it; the section is named after the words their descriptions start with. The rest is «Other».

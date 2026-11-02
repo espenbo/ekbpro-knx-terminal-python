@@ -81,7 +81,8 @@ venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null
   Anlegg (Ctrl+E, `systems.py`) viser ett anlegg om gangen (menyen: Anlegg → anlegg, data `("system", i)`), med
   tegning, grafer og fanen Innstillinger. Typer: `ventilation` (fast luftveitegning, `render_vent`), `diagram`
   (rørskjema skrevet som tekst i config.yaml med `{felt}`-plassholdere, `diagram.py`/`render_diagram`; ━ tur, ═ retur;
-  felt kan lese andre tilkoblinger), `panel` (bare Innstillinger) og `energy`. Energimålere (Ctrl+G, `energy.py`). Begge leser
+  felt kan lese andre tilkoblinger), `panel` (bare Innstillinger), `power` (effektstyring/maksvokter: forbruk mot grense og én linje per last,
+  `power.py`/`render_power`; tagger kan ligge i andre tilkoblinger) og `energy`. Energimålere (Ctrl+G, `energy.py`). Begge leser
   `ui.systems` (roller → tagger). Tegningen og forbruksberegningen er rene funksjoner (`render_vent`, `meter_cells`,
   `consumption`), så de testes uten terminal. Nye visninger legges i
   `MENU`, `KEYBAR_LABELS`, `VIEW_HINTS` og `compose()` i `app.py`, og får `points` via `_handle`.

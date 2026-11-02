@@ -135,3 +135,18 @@ def test_logged_tag_values_history_and_purge(store):
     assert store.logged_points() == ["vent/Drift", "vent/RT401", "vent/Status"]
     assert store.purge_batch(now - 3600) == 1
     assert store.history("vent/RT401", 0, point=True) == [(now - 60, 17.0)]
+
+
+def test_history_of_a_knx_point_reads_the_telegrams():
+    """``history`` with ``point: knx/<ga>`` (a view mixing KNX and other connections) reads that address's telegrams."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from knxscada.server import ScadaServer
+
+    calls = []
+    fake = SimpleNamespace(store=SimpleNamespace(read_history=lambda *a: calls.append(a) or []))
+    asyncio.run(ScadaServer._command(fake, {"cmd": "history", "point": "knx/0/1/30", "hours": 1}, "u"))
+    asyncio.run(ScadaServer._command(fake, {"cmd": "history", "point": "plc/x", "hours": 1}, "u"))
+    assert calls[0][0] == "0/1/30" and calls[0][3] is False
+    assert calls[1][0] == "plc/x" and calls[1][3] is True

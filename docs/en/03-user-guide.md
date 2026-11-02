@@ -231,6 +231,10 @@ Water-borne plants (boiler room, floor heating, tap water) are shown as a **pipi
 yellow when the safety switch is off, values in red when one of their alarms is on. The charts and the Settings
 tab work as for an air handling unit. A `type: panel` entry has no drawing, only the Settings tab.
 
+A **power limiter** (`type: power`) shows the consumption as a bar against the limit (yellow from 80 %, red over
+it), the room left, how many loads are switched off and one line per load: switched off or in, running, how many
+times it was switched off and its minimum/maximum times. The charts show consumption, limit and loads switched off.
+
 What is shown is set up in [`ui.systems`](04-configuration.md#systems-view-ctrle).
 
 ## Energy meters (Ctrl+G)

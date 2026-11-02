@@ -334,6 +334,20 @@ def test_extra_rooms():
     assert len(gas) == len(model["gas"])                  # nothing added to the addresses
 
 
+def test_extra_rooms_add_cards_to_an_existing_room():
+    """An extra room named like an ETS room on the same floor adds its cards to that room instead of a second one."""
+    model = project.build_model(raw_project())
+    floor = next(f for f in model["floors"] if f["rooms"])
+    room = floor["rooms"][0]
+    before, rooms = len(room["functions"]), len(floor["rooms"])
+    temp = next(a for a, g in model["gas"].items() if g["dpt"] == "9.001")
+    project.add_extra_rooms(model, [{"floor": floor["name"], "name": room["name"], "cards": [
+        {"name": "Water inlet", "addresses": [temp], "usage": "other"}]}])
+    assert len(floor["rooms"]) == rooms
+    assert len(room["functions"]) == before + 1
+    assert model["functions"][room["functions"][-1]]["name"] == "Water inlet"
+
+
 def test_extra_rooms_reject_unknown_addresses():
     """An extra room with an address not in the project is refused with the address in the message."""
     model = project.build_model(raw_project())

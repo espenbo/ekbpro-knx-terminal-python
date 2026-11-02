@@ -764,10 +764,15 @@ class ScadaServer:
         if cmd == "history":
             # In a worker thread: a 30-day trend of a busy address must not stop the telegram handling.
             # {"point": "connection/tag"} instead of {"ga": …}: a logged tag of protocols.yaml.
+            point = req.get("point")
+            if point and point.startswith("knx/"):
+                # The hub's KNX connection is always named "knx" and its values are telegrams, not logged tags:
+                # a view that mixes KNX with other connections (power limiter, diagram) gets the telegram history.
+                point, req = None, {**req, "ga": point[4:]}
             return await asyncio.to_thread(
-                self.store.read_history, req.get("point") or req["ga"],
+                self.store.read_history, point or req["ga"],
                 time.time() - _bounded(req.get("hours", 24), MAX_HOURS) * 3600,
-                _bounded(req.get("max_points", 4000), 20000), bool(req.get("point")))
+                _bounded(req.get("max_points", 4000), 20000), bool(point))
         raise ValueError(_("Unknown command {cmd}").format(cmd=repr(cmd)))
 
 
