@@ -62,6 +62,7 @@ venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null
   (`store.py`, SQLite WAL, commit én gang i sekundet), alarmene og Unix-socketen. Klientene (TUI-ene) snakker JSON
   med serveren (`request` → `cmd`).
 - `knxscada/opcua_bridge.py` + `plc.py`: den gamle PLS-broen (`plc:` i config.yaml, `plc_map.yaml`, GVL).
+  `./scada plc-gateway` (`plc.gateway_config`) gjør den samme koblingen om til en OPC UA-tilkobling og gatewayer.
 - `knxscada/protocols/`: modulære protokoller.
   - `__init__.py`: registeret `PROTOCOLS` med `Field`-er for innstillinger og taggfelt. Skjemaet i F11 og
     valideringen bygges fra dem, så nye innstillinger legges inn her.
@@ -70,6 +71,8 @@ venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null
   - `hub.py`: én per server; starter driverne, holder `values["conn/tag"]`, logger (`log`), sender verdier til
     gateway-motoren og til `ScadaServer.point_value` (alarmer).
   - `gateway.py`: lenker mellom tilkoblinger (nytt navn, skala, retning, ekko-sperre, dødbånd, rate).
+    Mot KNX har den samme vakt som PLS-broen (`settle_ms`, `burst_limit`, `restart_quiet_s`, dårlig status =
+    ukjent). Ikke svekk den.
   - `config.py`: lesing, validering (ukjente nøkler er lov), `settings_of` (standardverdier + utstyrsmal), lagring.
   - `devices/*.yaml`: utstyrsmaler (`model:`). De gjelder Modbus: WAGO 879-30xx, Carlo Gavazzi, Solar-Log.
     `./scada simulate MODELL` lager en testslave.

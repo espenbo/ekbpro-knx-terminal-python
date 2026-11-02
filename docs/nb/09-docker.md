@@ -45,11 +45,13 @@ docker build -t ekbpro-knx .
 
 Dette laster ned Python-grunnbildet og avhengighetene – noen minutter på en PFC.
 
-For Modbus (RS485 eller TCP), MQTT, OPC UA-serveren eller BACnet/IP legger du til protokollmodulene
-([Protokoller og gatewayer](11-protocols-gateways.md)):
+Bildet installerer KNX-modulen som standard (`MODULES="knx"`). For Modbus (RS485 eller TCP), MQTT, OPC UA-serveren
+eller BACnet/IP lister du protokollmodulene ([Protokoller og gatewayer](11-protocols-gateways.md)) – ta med `knx` når
+anlegget har KNX, eller utelat den for et mindre bilde uten KNX-pakkene:
 
 ```sh
-docker build --build-arg MODULES="modbus mqtt" -t ekbpro-knx .
+docker build --build-arg MODULES="knx modbus mqtt" -t ekbpro-knx .
+docker build --build-arg MODULES="modbus opcua" -t ekbpro-gateway .     # uten KNX
 ```
 
 En Modbus RTU-linje trenger serieporten i containeren, f.eks. `--device /dev/ttyUSB0` på `docker run`.

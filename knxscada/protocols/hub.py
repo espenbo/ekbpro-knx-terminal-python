@@ -220,6 +220,10 @@ class Hub:
             self.engine.on_value(conn, tag, value, initial)
             if drv is not None:
                 self._log(drv, tag, value, rec["ts"])
+        else:
+            # A bad status (e.g. a PLC loading a new application): the gateways forget the value, so the next good
+            # one is only remembered, and changes from this connection towards KNX pause for a while.
+            self.engine.on_bad(conn, tag)
         if hasattr(self.server, "point_value"):
             self.server.point_value(key, value, quality)
 

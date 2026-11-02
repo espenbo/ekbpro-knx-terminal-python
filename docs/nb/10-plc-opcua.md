@@ -190,6 +190,29 @@ serveren på nytt. På WAGO PFC stiller du inn hvilke policyer som tilbys under 
   variablene virker som før. Broen sjekker hvert minutt om de har dukket opp (etter en online change),
   og kobler seg da til på nytt av seg selv, med de samme oppstartsreglene – du trenger ikke starte serveren på nytt.
 
+## Over til gatewayene (`plc-gateway`)
+
+Den samme utvekslingen kan gå gjennom protokoll-gatewayene ([Protokoller og gatewayer](11-protocols-gateways.md)) i
+stedet for broen – ett sted for alle tilkoblinger (F11, Monitor › OPC UA, logging og alarmer på PLS-taggene). GVL-en i
+PLS-en blir som den er. `./scada plc-gateway` gjør `plc:` og `plc_map.yaml` om til:
+
+- en OPC UA-klienttilkobling med én tagg per variabel som utveksles (node-ID-ene finnes ved å bla i PLS-en etter
+  GVL-en, slik broen gjør; `--prefix` setter dem uten tilkobling). Bare variabler som skrives fra KNX, er skrivbare;
+- gatewayen `knx-<pls>` for linjer med `to_plc` og `both`, med `initial: true` – PLS-en får KNX-statusene etter en
+  oppstart, slik broen synkroniserte den;
+- gatewayen `<pls>-knx` for linjer med `to_knx`.
+
+Broens vakter blir med: gatewayens **omstartsvern** mot KNX (`settle_ms`, `burst_limit`, `restart_quiet_s`, samme
+standardverdier og virkemåte) og `min_interval_ms` mot KNX. KNX får aldri startverdier.
+
+```bash
+./scada plc-gateway            # skriver ut resultatet (passordet maskert) – kontroller det
+./scada plc-gateway --write    # legger det inn i protocols.yaml (en .bak-kopi beholdes)
+```
+
+Sett deretter `plc.enabled: false` i `config.yaml` (ellers skriver både broen og gatewayene) og start serveren på
+nytt. Tilbake til broen: `plc.enabled: true` og fjern (eller `enabled: false`) de to gatewayene.
+
 ## Feilsøking
 
 | Problem | Løsning |

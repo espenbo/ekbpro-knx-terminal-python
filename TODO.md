@@ -1,6 +1,6 @@
 # TODO – EKBPRO KNX Terminal Python
 
-Gren: `feature/modulaer-protokoller`. Filen ligger i et offentlig repo: ingen IP-adresser, passord eller anleggsdetaljer
+Gren: `main` (feature/modulaer-protokoller ble slått inn 2026-11-02). Filen ligger i et offentlig repo: ingen IP-adresser, passord eller anleggsdetaljer
 her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anlegg>/CLAUDE.md` (ikke i git).
 
 ## Beslutninger
@@ -15,13 +15,13 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 - **Oppstart:** ingen protokoll sender endringer ved oppstart eller gjenoppkobling. Statusene leses først.
   Gamle verdier fra databasen vises bare (dempet/kursiv) og sendes aldri videre. Startverdier går bare til egne
   servere, aldri til KNX. `read_on_start: status` er standard. Se docstringen i `knxscada/protocols/gateway.py`.
-- Den gamle PLS-broen (`plc:` / `opcua_bridge.py`) kan erstattes av gatewayen, men først når det finnes en annen
-  måte å flytte KNX-variabler til OPC UA-tagger på (et av anleggene bruker broen).
+- Den gamle PLS-broen (`plc:` / `opcua_bridge.py`) erstattes av gatewayen (`./scada plc-gateway`, 2026-11-02).
+  Broen blir værende til anlegget som bruker den, er flyttet over og har gått en stund uten feil.
 
 ## Status
 
-- 2026-11-02: 419 tester grønne (1 hoppet over), ruff 0. Ingenting fra Runde 2 er committet ennå.
-  `noqa`). Ingenting fra Runde 2 er committet ennå.
+- 2026-11-02: 427 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Runde 2 er slått inn i `main`;
+  KNX valgfri og KNX → OPC UA via gatewayen er ikke committet ennå.
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
       `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
       utstyrssærheter og ytelse. Kontrollert: AST uten docstrings lik før og etter (ingen kodeendring), ruff 0,
@@ -57,9 +57,18 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       `usage: light` for å telle som lys og komme i «Lys på».
 - [ ] MQTT Sparkplug B (ny modul).
 - [ ] Matter (ny modul).
-- [ ] Modulært per prosjekt: gjøre xknx valgfri (`./scada modules install knx`), slik at et prosjekt med bare
-      Modbus, eller bare OPC UA og Modbus, ikke trenger KNX-pakkene. TUI og server må tåle at modulen mangler.
-- [ ] KNX → OPC UA via gatewayen (erstatning for `plc_map.yaml` + GVL): først da kan PLS-broen fases ut.
+- [x] KNX som valgfri modul (2026-11-02): `knx` er en modul (`xknx`, `xknxproject`); grunnpakken er textual,
+      textual-plotext og PyYAML (asyncua flyttet til `opcua`). `dpt.py`/`server.py`/`project.py` tåler at KNX mangler;
+      et KNX-anlegg uten modulen stopper med `./scada modules install knx` (exit 2). `setup.sh` og Docker har `knx`
+      som standard. Test `tests/test_optional_knx.py` (pakkene skjult i en egen prosess). Dok 01/09/11/12 (en+nb), README.
+- [x] KNX → OPC UA via gatewayen (2026-11-02): `./scada plc-gateway [--write]` lager en OPC UA-tilkobling og
+      gatewayene `knx-<pls>`/`<pls>-knx` fra `plc_map.yaml` (`plc.gateway_config`, prefikset fra `plc.node_prefix`
+      eller ved bla). Gatewayen har fått PLS-broens vakter mot KNX: `settle_ms` (500), `burst_limit` (8),
+      `restart_quiet_s` (15) – en bølge av endringer (nedlasting/omstart) sendes ikke, stillhet, deretter får
+      PLS-en KNX-verdiene igjen; dårlig status gjør taggen ukjent. Tester `test_gateway_guard.py`, `test_plc.py`,
+      dok 10/11/12 (en+nb), README. Prøvd lesende mot et anlegg: samme 435 variabler som broen.
+  - [ ] Bytte over på anlegget som bruker broen (`plc-gateway --write`, `plc.enabled: false`, omstart) – etter avtale.
+  - [ ] Deretter: fase ut `opcua_bridge.py` når ingen anlegg bruker `plc:`.
 
 ## Runde 2 – åpent
 

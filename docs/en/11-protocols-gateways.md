@@ -26,15 +26,18 @@ Each protocol is a module with its own Python packages. They are only installed 
 
 ```bash
 ./scada modules                       # which modules exist, are installed and are used
-./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua · bacnet: bacpypes3
+./scada modules install modbus mqtt   # knx: xknx + xknxproject · modbus: pymodbus + pyserial · mqtt: aiomqtt
+                                      # opcua: asyncua (also for the PLC bridge) · bacnet: bacpypes3
 ```
 
 Restart the server afterwards. A connection whose module is missing is shown in F11 and in `./scada gateway`
-with the command that installs it; the other connections run anyway.
+with the command that installs it; the other connections run anyway. KNX is a module too: a site without KNX
+(`knx: {enabled: false}`, no `project:`) needs neither `xknx` nor `xknxproject`, and a site with KNX whose module is
+missing stops at start-up with `./scada modules install knx`.
 
 | Module   | Client (we fetch from a device)        | Server (others fetch from us)               |
 |----------|----------------------------------------|---------------------------------------------|
-| `knx`    | always on when KNX is set up in `config.yaml` | –                                   |
+| `knx`    | the KNX bus, when KNX is set up in `config.yaml` (`setup.sh` installs it by default) | – |
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | subscribe and publish to a broker      | –                                           |
 | `opcua`  | client of a PLC or another server      | our own OPC UA server for SCADA systems     |
@@ -343,7 +346,8 @@ A mapping line is one of:
 - `{from: …, to: …, …}` with `direction` (`forward` or `both`), `scale`, `offset`, `invert`, `deadband`,
   `min_interval_ms`, `initial`, and for a new target tag `type`, `unit` and `description`.
 
-Settings of the whole gateway: `direction`, `deadband`, `min_interval_ms`, `initial` and `enabled`.
+Settings of the whole gateway: `direction`, `deadband`, `min_interval_ms`, `initial`, `enabled`, and the restart
+guard towards KNX: `settle_ms`, `burst_limit`, `restart_quiet_s`.
 
 Rules that keep the plant safe and quiet:
 
@@ -375,6 +379,15 @@ Rules that keep the plant safe and quiet:
 - **Rate limit** (`min_interval_ms`): at most one write per line and direction in that time; the latest value is
   sent when the time is up.
 - KNX HVAC modes (DPT 20.102) become numbers (0 auto, 1 comfort, 2 standby, 3 economy, 4 protection) and back.
+- **Restart guard towards KNX** (as the PLC bridge has it), so a PLC download or reset – its variables jump to their
+  start values while the connection may stay up – never reaches the bus:
+  - a tag with a bad status is unknown again: its next good value is only remembered;
+  - changes towards KNX wait `settle_ms` (500); more than `burst_limit` (8) from one connection in that time is a
+    restart, and nothing is sent;
+  - after a burst or a bad status, changes from that connection are only remembered for `restart_quiet_s` (15); then
+    it gets the KNX values again through its links from KNX.
+
+  `settle_ms: 0` turns the guard off for a gateway. It only acts on changes going to KNX.
 
 The target tag is created by itself when the target is a server (OPC UA server, Modbus slave, MQTT). A client target
 (Modbus master, OPC UA client) must have the tag under `tags:`.

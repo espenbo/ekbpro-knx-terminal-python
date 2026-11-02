@@ -33,6 +33,21 @@ Rules that keep the plant safe and quiet (the same as for the PLC bridge):
 * **Deadband** (``deadband``): numbers that changed less than this are not sent.
 * **Rate limit** (``min_interval_ms``): at most one write per link and direction in
   that time; the latest value is sent when the interval is over.
+* **Restart guard for KNX** – as the old PLC bridge, so a PLC download or reset (which
+  resets its variables to their start values while the connection may stay up) never
+  reaches the bus. It applies to changes going *to* a target that never takes initial
+  values (KNX):
+
+  1. A tag that reports a bad status is unknown again: its next good value is only
+     remembered, like the first after a start-up (:meth:`GatewayEngine.on_bad`).
+  2. Changes towards KNX are held for ``settle_ms`` (500 ms). When more than
+     ``burst_limit`` (8) of them come from the same connection in that time, it is a
+     restart, not the program: nothing is sent.
+  3. After such a burst or a bad status, changes from that connection are only
+     remembered for ``restart_quiet_s`` (15 s); then the other ends of its two-way and
+     towards-it links get the KNX values again, so the device shows what is on the bus.
+
+  ``settle_ms: 0`` turns the guard off for a gateway (changes go out at once).
 """
 
 from __future__ import annotations
@@ -56,6 +71,11 @@ MISSING: Any = object()
 #: Keys of a mapping line that belong to the engine; the others are passed on to a new target tag.
 ENGINE_KEYS = ("from", "to", "direction", "scale", "offset", "invert", "deadband", "min_interval_ms", "initial",
                "type", "unit", "description")
+
+#: Restart guard defaults (seconds / count), the same as the PLC bridge's (``knxscada/opcua_bridge.py``).
+SETTLE_S = 0.5          # changes towards KNX wait this long, so a burst can be recognised
+BURST_LIMIT = 8         # more changes than this from one connection within SETTLE_S = a restart
+RESTART_QUIET_S = 15.0  # after a restart or a bad status, changes are only remembered this long
 
 #: DPT 20.102 (HVAC mode) names and their numbers, for gateways between KNX and number-only protocols.
 HVAC_CODES = {"AUTO": 0, "COMFORT": 1, "STANDBY": 2, "ECONOMY": 3, "BUILDING_PROTECTION": 4}
@@ -89,6 +109,11 @@ class Link:
     deadband: float = 0.0
     min_interval: float = 0.0      # seconds
     initial: bool | None = None    # None: as the target driver says (Driver.initial_default)
+    #: Restart guard for changes towards KNX (see the module docstring): settle time (s, 0 = off), burst size,
+    #: quiet time (s).
+    settle: float = SETTLE_S
+    burst_limit: int = BURST_LIMIT
+    quiet: float = RESTART_QUIET_S
     #: Last value known on each side (received or sent) – the echo and "already has it" checks compare with it.
     last_a: Any = MISSING
     last_b: Any = MISSING
@@ -174,6 +199,14 @@ class GatewayEngine:
         self._checked: set[tuple[str, str]] = set()                        # tags already matched with the patterns
         self._made: set[str] = set()                                       # link keys, so a tag is linked once
         self.problems: list[str] = []                                      # build errors, shown in the TUI
+        # Restart guard (changes towards KNX): the changes held per (gateway, source connection) during the settle
+        # time with their timer, the end of the quiet time per source connection (monotonic seconds), and the tags
+        # whose next good value is only a status (after a bad one).
+        self._batch: dict[tuple[str, str], dict[tuple[str, bool], tuple[Link, bool, str, str, Any]]] = {}
+        self._batch_timer: dict[tuple[str, str], asyncio.TimerHandle] = {}
+        self.quiet_until: dict[str, float] = {}
+        self._quiet_timer: dict[str, asyncio.TimerHandle] = {}
+        self.unknown: set[tuple[str, str]] = set()
 
     # -- building ---------------------------------------------------------------------------------
     def build(self) -> None:
@@ -232,6 +265,9 @@ class GatewayEngine:
             deadband=_num(line.get("deadband", gw.get("deadband")), 0.0) or 0.0,
             min_interval=(_num(line.get("min_interval_ms", gw.get("min_interval_ms")), 0.0) or 0.0) / 1000,
             initial=_flag(line.get("initial", gw.get("initial"))),
+            settle=(_num(gw.get("settle_ms"), SETTLE_S * 1000) or 0.0) / 1000,
+            burst_limit=int(_num(gw.get("burst_limit"), BURST_LIMIT) or BURST_LIMIT),
+            quiet=_num(gw.get("restart_quiet_s"), RESTART_QUIET_S) or 0.0,
         )
         if link.key in self._made:
             return None
@@ -275,6 +311,10 @@ class GatewayEngine:
     def on_value(self, conn: str, tag: str, value: Any, initial: bool = False) -> None:
         """A tag got a new value: pass it on through every link that starts (or, with both, ends) there."""
         key = (conn, tag)
+        if key in self.unknown:
+            # The first good value after a bad status is a status (e.g. the PLC's start value), not a change.
+            self.unknown.discard(key)
+            initial = True
         if self._patterns and key not in self._checked:
             self._expand(conn, tag)
         for link, forward in self.by_tag.get(key, ()):
@@ -321,7 +361,95 @@ class GatewayEngine:
         if drv.connected and not drv.ready:
             link.held[forward] = out   # the target is still reading its values: wait for them
             return
+        if not drv.initial_allowed and link.settle > 0:
+            self._guard(link, forward, dst_conn, dst_tag, out)   # towards KNX: through the restart guard
+            return
         self._send(link, forward, dst_conn, dst_tag, out)
+
+    # -- restart guard (changes towards KNX) -------------------------------------------------------
+    def _guard(self, link: Link, forward: bool, dst_conn: str, dst_tag: str, out: Any) -> None:
+        """Hold a change towards KNX for the settle time; in the quiet time after a restart only remember it.
+
+        The changes are collected per gateway and source connection, the latest per link and direction, and
+        judged together when the settle time is over (:meth:`_flush`).
+        """
+        src_conn = link.a_conn if forward else link.b_conn
+        if time.monotonic() < self.quiet_until.get(src_conn, 0.0):
+            return   # quiet time: the source value is remembered (in _deliver), nothing goes to KNX
+        key = (link.gateway, src_conn)
+        self._batch.setdefault(key, {})[(link.key, forward)] = (link, forward, dst_conn, dst_tag, out)
+        if key not in self._batch_timer:
+            loop = asyncio.get_running_loop()
+            self._batch_timer[key] = loop.call_later(link.settle, self._flush, key)
+
+    def _flush(self, key: tuple[str, str]) -> None:
+        """The settle time is over: send the held changes, or – when there were more than ``burst_limit`` – drop
+        them all as a restart of the source and start its quiet time."""
+        self._batch_timer.pop(key, None)
+        held = list(self._batch.pop(key, {}).values())
+        if not held:
+            return
+        gateway, src_conn = key
+        link = held[0][0]
+        if len(held) > link.burst_limit:
+            self.hub.event("warning", _(
+                "{gateway}: {n} changes from {connection} within {ms} ms – looks like a restart of the device; "
+                "nothing is sent to KNX for {s} s").format(gateway=gateway, n=len(held), connection=src_conn,
+                                                           ms=round(link.settle * 1000), s=round(link.quiet)))
+            self._start_quiet(src_conn, link.quiet)
+            return
+        for lk, forward, dst_conn, dst_tag, out in held:
+            self._send(lk, forward, dst_conn, dst_tag, out)
+
+    def on_bad(self, conn: str, tag: str) -> None:
+        """*conn/tag* reported a bad status (no value, uncertain, the PLC loading an application).
+
+        Its last value is forgotten on every link, so its next good value is only remembered (:meth:`on_value`);
+        if *conn* sends changes towards KNX, its quiet time starts as after a restart.
+        """
+        key = (conn, tag)
+        self.unknown.add(key)
+        quiet = 0.0
+        for link, forward in self.by_tag.get(key, ()):
+            self._set_last(link, forward, MISSING)
+            dst = self.hub.drivers.get(link.b_conn if forward else link.a_conn)
+            if dst is not None and not dst.initial_allowed and link.settle > 0:
+                quiet = max(quiet, link.quiet)
+            self._batch.get((link.gateway, conn), {}).pop((link.key, forward), None)   # a held change is void
+        if quiet:
+            self._start_quiet(conn, quiet)
+
+    def _start_quiet(self, conn: str, seconds: float) -> None:
+        """Start (or extend) the quiet time of *conn*; at its end the devices get the KNX values again."""
+        if seconds <= 0:
+            return
+        self.quiet_until[conn] = time.monotonic() + seconds
+        loop = asyncio.get_running_loop()
+        old = self._quiet_timer.pop(conn, None)
+        if old is not None:
+            old.cancel()
+        self._quiet_timer[conn] = loop.call_later(seconds, self._end_quiet, conn)
+
+    def _end_quiet(self, conn: str) -> None:
+        """The quiet time of *conn* is over: write the current KNX values to it again (as the PLC bridge did after
+        a restart), so the device shows what is really on the bus. Only through links that write towards *conn*."""
+        self._quiet_timer.pop(conn, None)
+        self.quiet_until.pop(conn, None)
+        for link in self.links:
+            for forward in (True, False):
+                dst_conn = link.b_conn if forward else link.a_conn
+                src_conn = link.a_conn if forward else link.b_conn
+                if dst_conn != conn or (not forward and not link.both):
+                    continue
+                src_drv = self.hub.drivers.get(src_conn)
+                if src_drv is None or src_drv.initial_allowed:
+                    continue   # only re-sync from KNX, the side the guard protects
+                src = self.hub.values.get(f"{src_conn}/{link.a_tag if forward else link.b_tag}")
+                if src is None or src.get("q") != "good":
+                    continue
+                self._set_last(link, forward, MISSING)        # so the unchanged KNX value is passed on again
+                self._set_last(link, not forward, MISSING)    # and the device's (restarted) value is not trusted
+                self._deliver(link, forward, src["v"], initial=False)
 
     @staticmethod
     def _sends_initial(link: Link, drv, tag) -> bool:
@@ -423,8 +551,13 @@ class GatewayEngine:
             self.hub.event("error", f"{link.gateway}: {text}")
 
     def stop(self) -> None:
-        """Cancel every rate-limited write still waiting (the engine is being replaced or the server stops)."""
+        """Cancel every rate-limited write and guard timer still waiting (the engine is replaced or the server stops)."""
         for link in self.links:
             for h in link.pending.values():
                 h.cancel()
             link.pending.clear()
+        for h in (*self._batch_timer.values(), *self._quiet_timer.values()):
+            h.cancel()
+        self._batch_timer.clear()
+        self._quiet_timer.clear()
+        self._batch.clear()

@@ -375,3 +375,62 @@ def same_value(a: Any, b: Any) -> bool:
         except (TypeError, ValueError):
             return False
     return a == b
+
+
+#: IEC 61131-3 type of a mapping line → value type of the OPC UA tag (the driver writes with the node's own type).
+def tag_type(iec: str) -> str:
+    """``BOOL`` → bool, ``REAL`` → float, ``STRING(n)`` → str, every integer type → int."""
+    if iec == "BOOL":
+        return "bool"
+    if iec == "REAL":
+        return "float"
+    if iec.startswith("STRING"):
+        return "str"
+    return "int"
+
+
+def gateway_config(plc: dict[str, Any], entries: list[PlcEntry], node_prefix: str, namespace: int,
+                   conn_name: str | None = None) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """The PLC bridge of one PLC as protocols.yaml content: ``(connection name, connection, gateways)``.
+
+    This is how a site moves from the old bridge (``plc:`` + ``plc_map.yaml``) to the gateways, with the same
+    variables, directions and types – the GVL in the PLC stays as it is:
+
+    * one OPC UA client connection with a tag per exchanged variable (node id from *node_prefix*, which is what
+      the bridge finds by browsing for the GVL); only variables written from KNX (``to_plc``, ``both``) are
+      writable, so nothing else in the PLC can be written;
+    * gateway ``knx-<plc>``: ``to_plc`` lines one way, ``both`` lines both ways, with ``initial: true`` – the PLC gets
+      the KNX statuses after a start-up, as the bridge wrote the KNX values before subscribing (KNX itself never
+      gets initial values);
+    * gateway ``<plc>-knx``: the ``to_knx`` lines, PLC → KNX.
+
+    The bridge's guards come along: ``settle_ms``, ``burst_limit`` and ``restart_quiet_s`` (the gateway's restart
+    guard towards KNX, same defaults) and ``min_interval_ms`` per line towards KNX (default 200 ms, as the bridge).
+    """
+    name = conn_name or str(plc.get("name") or "plc")
+    tags: dict[str, dict[str, Any]] = {}
+    for e in entries:
+        tag: dict[str, Any] = {"node": f"ns={namespace};s={node_prefix}{e.var}", "type": tag_type(e.type),
+                               "writable": e.dir in ("to_plc", "both")}
+        if e.name:
+            tag["description"] = e.name
+        tags[e.var] = tag
+    conn: dict[str, Any] = {"protocol": "opcua", "role": "client",
+                            "endpoint": str(plc.get("endpoint") or "opc.tcp://127.0.0.1:4840")}
+    for key in ("username", "password", "security", "publish_interval_ms"):
+        if plc.get(key) not in (None, ""):
+            conn[key] = plc[key]
+    conn["tags"] = tags
+    rate = int(plc.get("min_interval_ms", 200))
+    guard = {k: plc[k] for k in ("settle_ms", "burst_limit", "restart_quiet_s") if plc.get(k) not in (None, "")}
+    to_plc = [{"from": e.ga, "to": e.var} if e.dir == "to_plc" else
+              {"from": e.ga, "to": e.var, "direction": "both", "min_interval_ms": rate}
+              for e in entries if e.dir in ("to_plc", "both")]
+    to_knx = [{"from": e.var, "to": e.ga} for e in entries if e.dir == "to_knx"]
+    gateways: list[dict[str, Any]] = []
+    if to_plc:
+        gateways.append({"name": f"knx-{name}", "from": "knx", "to": name, "initial": True, **guard, "map": to_plc})
+    if to_knx:
+        gateways.append({"name": f"{name}-knx", "from": name, "to": "knx", "min_interval_ms": rate, **guard,
+                         "map": to_knx})
+    return name, conn, gateways

@@ -188,6 +188,29 @@ the server. On the WAGO PFC, the policies offered are set under *OPC UA Server S
   variables keep working. The bridge checks every minute whether they have appeared (after an online change)
   and then reconnects by itself, with the same start-up rules – no server restart needed.
 
+## Moving to the gateways (`plc-gateway`)
+
+The same exchange can run through the protocol gateways ([Protocols and gateways](11-protocols-gateways.md)) instead
+of the bridge – one place for all connections (F11, Monitor › OPC UA, logging and alarms on the PLC tags). The GVL in
+the PLC stays as it is. `./scada plc-gateway` turns `plc:` and `plc_map.yaml` into:
+
+- an OPC UA client connection with one tag per exchanged variable (the node ids are found by browsing the PLC for the
+  GVL, as the bridge does; `--prefix` sets them without a connection). Only variables written from KNX are writable;
+- the gateway `knx-<plc>` for `to_plc` and `both` lines, with `initial: true` – the PLC gets the KNX statuses after a
+  start-up, as the bridge synced it;
+- the gateway `<plc>-knx` for `to_knx` lines.
+
+The bridge's guards come along: the gateway's **restart guard** towards KNX (`settle_ms`, `burst_limit`,
+`restart_quiet_s`, same defaults and behaviour) and `min_interval_ms` towards KNX. KNX never gets initial values.
+
+```bash
+./scada plc-gateway            # prints the result (password masked) – check it
+./scada plc-gateway --write    # adds it to protocols.yaml (a .bak copy is kept)
+```
+
+Then set `plc.enabled: false` in `config.yaml` (otherwise both the bridge and the gateways write) and restart the
+server. Back to the bridge: `plc.enabled: true` and remove (or `enabled: false`) the two gateways.
+
 ## Troubleshooting
 
 | Problem | Solution |

@@ -28,15 +28,18 @@ Hver protokoll er en modul med sine egne Python-pakker. De installeres bare når
 
 ```bash
 ./scada modules                       # hvilke moduler som finnes, er installert og er i bruk
-./scada modules install modbus mqtt   # modbus: pymodbus + pyserial · mqtt: aiomqtt · opcua: asyncua · bacnet: bacpypes3
+./scada modules install modbus mqtt   # knx: xknx + xknxproject · modbus: pymodbus + pyserial · mqtt: aiomqtt
+                                      # opcua: asyncua (også for PLS-broen) · bacnet: bacpypes3
 ```
 
 Start serveren på nytt etterpå. En tilkobling der modulen mangler, vises i F11 og i `./scada gateway`
-med kommandoen som installerer den; de andre tilkoblingene kjører likevel.
+med kommandoen som installerer den; de andre tilkoblingene kjører likevel. KNX er også en modul: et anlegg uten KNX
+(`knx: {enabled: false}`, ingen `project:`) trenger hverken `xknx` eller `xknxproject`, og et anlegg med KNX der
+modulen mangler, stopper ved oppstart med `./scada modules install knx`.
 
 | Modul    | Klient (vi henter fra utstyr)          | Server (andre henter fra oss)               |
 |----------|----------------------------------------|---------------------------------------------|
-| `knx`    | alltid på når KNX er satt opp i `config.yaml` | –                                    |
+| `knx`    | KNX-bussen, når KNX er satt opp i `config.yaml` (`setup.sh` installerer den som standard) | – |
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | abonnere og publisere mot en broker    | –                                           |
 | `opcua`  | klient mot en PLS eller en annen server | vår egen OPC UA-server for SCADA-systemer  |
@@ -345,7 +348,8 @@ En koblingslinje er en av disse:
 - `{from: …, to: …, …}` med `direction` (`forward` eller `both`), `scale`, `offset`, `invert`, `deadband`,
   `min_interval_ms`, `initial`, og for en ny måltag `type`, `unit` og `description`.
 
-Innstillinger for hele gatewayen: `direction`, `deadband`, `min_interval_ms`, `initial` og `enabled`.
+Innstillinger for hele gatewayen: `direction`, `deadband`, `min_interval_ms`, `initial`, `enabled`, og
+omstartsvernet mot KNX: `settle_ms`, `burst_limit`, `restart_quiet_s`.
 
 Regler som holder anlegget trygt og rolig:
 
@@ -377,6 +381,15 @@ Regler som holder anlegget trygt og rolig:
 - **Hastighetsgrense** (`min_interval_ms`): høyst én skriving per linje og retning i løpet av den tiden; siste verdi
   sendes når tiden er ute.
 - KNX HVAC-moduser (DPT 20.102) blir tall (0 auto, 1 komfort, 2 standby, 3 natt/eco, 4 frostsikring) og tilbake.
+- **Omstartsvern mot KNX** (slik PLS-broen har det), så en nedlasting eller reset av en PLS – variablene hopper til
+  startverdiene mens forbindelsen kan stå – aldri når bussen:
+  - en tagg med dårlig status er ukjent igjen: neste gode verdi blir bare husket;
+  - endringer mot KNX venter `settle_ms` (500); flere enn `burst_limit` (8) fra én tilkobling i den tiden er en
+    omstart, og ingenting sendes;
+  - etter en burst eller en dårlig status blir endringer fra den tilkoblingen bare husket i `restart_quiet_s` (15);
+    deretter får den KNX-verdiene på nytt gjennom lenkene fra KNX.
+
+  `settle_ms: 0` slår vernet av for en gateway. Det virker bare på endringer som går til KNX.
 
 Måltaggen lages av seg selv når målet er en server (OPC UA-server, Modbus slave, MQTT). Et klientmål
 (Modbus master, OPC UA-klient) må ha taggen under `tags:`.

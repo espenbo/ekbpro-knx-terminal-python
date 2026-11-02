@@ -45,9 +45,12 @@ You need no web browser, no per-view licence and no special hardware.
 - **Protocol modules:** KNX, Modbus TCP and RTU (master and slave, device templates for WAGO 879-30xx energy
   meters, Carlo Gavazzi and Solar-Log), OPC UA (client and server, block-wise reads for WAGO PFC), MQTT, and
   BACnet/IP (client with ReadPropertyMultiple and COV, and a BACnet device of our own). Each module's packages are
-  installed only when it is used: `./scada modules install bacnet modbus`.
+  installed only when it is used: `./scada modules install bacnet modbus`. KNX is a module too (installed by
+  default by `setup.sh` and Docker), so a Modbus- or BACnet-only site needs no KNX packages: `./setup.sh modbus opcua`.
 - **Gateways** between any two connections: renaming, scaling, direction, echo suppression, deadband and rate
-  limits – e.g. KNX → BACnet for a BMS, or Modbus energy meters → OPC UA.
+  limits – e.g. KNX → BACnet for a BMS, or Modbus energy meters → OPC UA. Changes towards KNX pass a **restart
+  guard** (as the PLC bridge has), so a PLC download or reset never reaches the bus; `./scada plc-gateway` moves an
+  existing PLC bridge to the gateways.
 - **Logging, trends and alarms for protocol tags** as for group addresses (`log`, `match_point`, `delay_s`).
 - **Safe by design:** nothing is sent to equipment at start-up or reconnect (statuses are read first, old values
   are only shown); every tag towards equipment is read-only until writing is enabled; every write is confirmed and
@@ -60,7 +63,7 @@ You need no web browser, no per-view licence and no special hardware.
 ```bash
 git clone https://github.com/espenbo/ekbpro-knx-terminal-python.git
 cd ekbpro-knx-terminal-python
-./setup.sh                                                   # installs everything
+./setup.sh                                                   # base packages + the KNX module (asks for more)
 ./scada init ~/MyHouse.knxproj --gateway 192.168.1.50        # your ETS project and IP interface
 ./scada server &                                             # starts the KNX connection
 ./scada                                                      # starts the visualisation
@@ -130,7 +133,8 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | `./scada plan-dxf [file.dxf]` | Exports the floor plan to DXF |
 | `./scada plc-map [--all\|--marked] [--rename] [--plc NAME]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL, for every PLC or one |
 | `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
-| `./scada modules [install NAME …]` | Lists the protocol modules (Modbus, MQTT, OPC UA, BACnet), or installs their packages |
+| `./scada plc-gateway [--plc NAME] [--write]` | Moves the PLC bridge to the gateways: an OPC UA connection and gateways in `protocols.yaml`, with the same variables, directions and guards |
+| `./scada modules [install NAME …]` | Lists the protocol modules (KNX, Modbus, MQTT, OPC UA, BACnet), or installs their packages |
 | `./scada gateway` | Checks `protocols.yaml` and shows connections and gateways (live when the server runs) |
 | `./scada simulate [MODEL] [--port 5020] [--device TTY]` | Plays a device template (WAGO, Carlo Gavazzi …) as a Modbus slave, for tests without equipment |
 | `./scada bacnet-scan [ADDRESS] [--device N] [--yaml]` | Finds BACnet devices (Who-Is), or lists the objects of one device – as tags for `protocols.yaml` with `--yaml`. Works across a VPN too (devices whose I-Am is a broadcast are read directly) |

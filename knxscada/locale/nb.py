@@ -335,6 +335,19 @@ CATALOGUE: dict[str, str] = {
     "Priority {priority} overrides the automatic control (priority {default}) until the value is released again with Release.":
         "Prioritet {priority} overstyrer automatikken (prioritet {default}) til verdien slippes igjen med Slipp.",
     "Release": "Slipp",
+    "Add them with --write (the password is filled in there), then set plc.enabled: false and restart.":
+        "Legg dem inn med --write (der fylles passordet inn), sett så plc.enabled: false og start på nytt.",
+    "Note: plc.server_certificate is not used by the OPC UA connection – the PLC's certificate is taken from the endpoint.":
+        "Merk: plc.server_certificate brukes ikke av OPC UA-tilkoblingen – PLS-ens sertifikat hentes fra endepunktet.",
+    "Wrote {path}. Now set plc.enabled: false in config.yaml (else the bridge and the gateways both write) and restart the server.":
+        "Skrev {path}. Sett nå plc.enabled: false i config.yaml (ellers skriver både broen og gatewayene) og start serveren på nytt.",
+    "The OPC UA module is not installed. Install it with: ./scada modules install opcua":
+        "OPC UA-modulen er ikke installert. Installer den med: ./scada modules install opcua",
+    "{plc}: {n} variables → connection {name}, gateways {gateways}": "{plc}: {n} variabler → tilkobling {name}, gatewayer {gateways}",
+    "{path} does not exist – run ./scada plc-map first": "{path} finnes ikke – kjør ./scada plc-map først",
+    "protocols.yaml not written: {error}": "protocols.yaml ble ikke skrevet: {error}",
+    "{gateway}: {n} changes from {connection} within {ms} ms – looks like a restart of the device; nothing is sent to KNX for {s} s":
+        "{gateway}: {n} endringer fra {connection} innen {ms} ms – ser ut som en omstart av utstyret; ingenting sendes til KNX i {s} s",
     "Sky": "Himmel",
     "Ventilation": "Ventilasjon",
     "Heat map": "Varmekart",

@@ -87,6 +87,14 @@ def _run(argv: list[str] | None = None) -> int:
     p.add_argument("--rename", action="store_true",
                    help="give every variable a fresh name (e.g. after setting plc.tag_prefix) instead of keeping var")
     p.add_argument("--plc", help="only this PLC (name from plc.controllers); default: all")
+    p = sub.add_parser("plc-gateway",
+                       help="turn the PLC bridge (plc: + plc_map.yaml) into an OPC UA connection and gateways")
+    p.add_argument("--plc", help="only this PLC (name from plc.controllers); default: all")
+    p.add_argument("--prefix", help="node id prefix of the GVL, e.g. '|var|WAGO 750-8212 PFC200 G2 2ETH RS"
+                                    ".Application.GVL_KNX.' (default: plc.node_prefix, else found by browsing the PLC)")
+    p.add_argument("--namespace", type=int, help="namespace index of the GVL (default: plc.namespace or the browse)")
+    p.add_argument("--write", action="store_true",
+                   help="add them to protocols.yaml (a .bak copy is kept) instead of printing them")
     p = sub.add_parser("plc-browse", help="list the variables of the PLC's OPC UA server (uses the plc: settings)")
     p.add_argument("filter", nargs="?", default="", help="only show node ids containing this text, e.g. GVL_KNX")
     p.add_argument("--endpoints", action="store_true", help="only show the security modes and login types the PLC offers")
@@ -176,6 +184,8 @@ def _run(argv: list[str] | None = None) -> int:
     if cmd == "bacnet-scan":
         return bacnet_scan(args)
 
+    if cmd == "plc-gateway":
+        return plc_gateway(cfg, args)
     if cmd == "plc-browse":
         from .opcua_bridge import browse, endpoints
 
@@ -280,6 +290,86 @@ def plc_map(cfg, args) -> int:
         if not active:
             print(_("Mark addresses with use: true in {path} (or use --all) and run plc-map again.").format(path=path.name))
     return 0
+
+
+def plc_gateway(cfg, args) -> int:
+    """``plc-gateway``: the PLC bridge's mapping as an OPC UA connection and gateways for ``protocols.yaml``.
+
+    The node id prefix of the GVL comes from ``--prefix``/``plc.node_prefix`` or from browsing the PLC (read-only,
+    like the bridge does). Without ``--write`` the result is printed with the password masked; with ``--write`` it is
+    merged into protocols.yaml (connections and gateways of the same name are replaced; the old file is kept as
+    ``.bak``). The bridge must then be switched off (``plc.enabled: false``), or both would write.
+    """
+    _quiet_project_logging()
+    from .plc import gateway_config, load_map
+    from .project import load_project
+    from .protocols import config as pconf
+    from .protocols import installed
+
+    model = load_project(cfg)
+    connections: dict[str, dict] = {}
+    gateways: list[dict] = []
+    for plc in _select_plcs(cfg, args.plc):
+        path = cfg.resolve(plc["map"])
+        if not path.exists():
+            print(_("{path} does not exist – run ./scada plc-map first").format(path=path))
+            return 1
+        entries = load_map(path, model["gas"]).active()
+        prefix = args.prefix or plc.get("node_prefix")
+        namespace = args.namespace if args.namespace is not None else plc.get("namespace")
+        if not prefix:
+            if not installed("opcua"):
+                print(_("The OPC UA module is not installed. Install it with: ./scada modules install opcua"))
+                return 1
+            logging.getLogger("asyncua").setLevel(logging.ERROR)   # it logs every step; only errors matter here
+            try:
+                found = asyncio.run(_gvl_prefix(cfg, plc))
+            except Exception as exc:  # noqa: BLE001 - connection, login or certificate problem: say so and stop
+                print(_("Could not connect to the PLC at {endpoint}: {error}").format(
+                    endpoint=plc.get("endpoint"), error=f"{type(exc).__name__}: {exc}"))
+                return 1
+            if found is None:
+                print(_("GVL {gvl} not found on the PLC – is it in the Symbol Configuration?").format(gvl=plc["gvl"]))
+                return 1
+            namespace, prefix = found
+        if plc.get("server_certificate"):
+            print(_("Note: plc.server_certificate is not used by the OPC UA connection – the PLC's certificate is "
+                    "taken from the endpoint."))
+        name, conn, gws = gateway_config(plc, entries, str(prefix), int(namespace if namespace is not None else 4))
+        connections[name] = conn
+        gateways += gws
+        print(_("{plc}: {n} variables → connection {name}, gateways {gateways}").format(
+            plc=plc["name"], n=len(entries), name=name, gateways=", ".join(g["name"] for g in gws) or "–"))
+    if not args.write:
+        shown = {n: {**c, **({"password": "********"} if c.get("password") else {})} for n, c in connections.items()}
+        print(pconf.dump({"connections": shown, "gateways": gateways}))
+        print(_("Add them with --write (the password is filled in there), then set plc.enabled: false and restart."))
+        return 0
+    path = pconf.protocols_path(cfg)
+    data = pconf.load_data(path) if path.exists() else pconf.empty()
+    data.setdefault("connections", {}).update(connections)
+    names = {g["name"] for g in gateways}
+    data["gateways"] = [g for g in data.get("gateways") or [] if g.get("name") not in names] + gateways
+    try:
+        pconf.save(path, data, cfg.knx_enabled)
+    except ValueError as exc:
+        print(_("protocols.yaml not written: {error}").format(error=exc))
+        return 1
+    print(_("Wrote {path}. Now set plc.enabled: false in config.yaml (else the bridge and the gateways both write) "
+            "and restart the server.").format(path=path))
+    return 0
+
+
+async def _gvl_prefix(cfg, plc: dict) -> tuple[int, str] | None:
+    """Connect to the PLC (read-only) and find the GVL's namespace and node id prefix, as the bridge does."""
+    from .opcua_bridge import find_gvl, make_client
+
+    client = await make_client(cfg, plc)
+    await client.connect()
+    try:
+        return await find_gvl(client, str(plc["gvl"]))
+    finally:
+        await client.disconnect()
 
 
 def simulate(args) -> int:

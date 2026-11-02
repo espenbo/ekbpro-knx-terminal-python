@@ -60,7 +60,8 @@ LINK_KEYS = ("from", "to", "direction", "scale", "offset", "invert", "type", "de
              "initial", "unit", "description")
 
 #: Keys a gateway may have (the defaults for its lines are the same as in LINK_KEYS).
-GATEWAY_KEYS = ("name", "from", "to", "direction", "map", "initial", "deadband", "min_interval_ms", "enabled")
+GATEWAY_KEYS = ("name", "from", "to", "direction", "map", "initial", "deadband", "min_interval_ms", "enabled",
+                "settle_ms", "burst_limit", "restart_quiet_s")
 
 HEADER = """\
 # Connections and gateways – EKBPRO KNX Terminal Python

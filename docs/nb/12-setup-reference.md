@@ -63,13 +63,16 @@ programmappen. Uten kommando starter `tui`.
 | `plan-dxf [FILE]` | | Plantegningen til DXF (standard `plan.dxf` i gjeldende mappe) |
 | `plc-map` | `--all`, `--marked`, `--rename`, `--plc NAME` | Skriver `plc_map.yaml` og GVL-en |
 | `plc-browse [FILTER]` | `--endpoints`, `--plc NAME` | Lister PLS-ens OPC UA-variabler / endpoints |
+| `plc-gateway` | `--plc NAME`, `--prefix`, `--namespace`, `--write` | PLS-broen (`plc:` + `plc_map.yaml`) som OPC UA-tilkobling og gatewayer; skrives ut, eller legges inn i protocols.yaml med `--write` |
 | `modules` | `install NAME …` | Lister protokollmodulene, eller installerer dem |
 | `gateway` | | Sjekker `protocols.yaml`, med direktestatus når serveren kjører |
 | `simulate [MODELL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Spiller en utstyrsmal som Modbus-slave, for test uten utstyr; uten modell lister den malene |
 | `bacnet-scan [ADRESSE]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Uten adresse: BACnet-enhetene på nettet (Who-Is); med adresse: objektene i enheten, `--yaml` som en tilkobling for `protocols.yaml` |
 
-`./setup.sh [modbus mqtt opcua]` lager `venv/`, installerer pakkene (og protokollmodulene du nevner) og kjører
-`./scada import` når `config.yaml` finnes.
+`./setup.sh [knx modbus mqtt opcua bacnet]` lager `venv/`, installerer grunnpakkene og protokollmodulene du nevner
+(ingen nevnt: den spør, standard `knx`), og kjører `./scada import` når `config.yaml` finnes og KNX er installert.
+Grunnpakker: `textual`, `textual-plotext`, `PyYAML`. Moduler: `knx` (`xknx`, `xknxproject`), `modbus`, `mqtt`,
+`opcua` (`asyncua`, trengs også av PLS-broen `plc:`), `bacnet`.
 
 ## Oppgaver
 
@@ -77,7 +80,7 @@ programmappen. Uten kommando starter `tui`.
 
 ```bash
 git clone <repository> ~/knx_scada && cd ~/knx_scada
-./setup.sh                                   # venv og pakker; legg til modbus mqtt opcua ved behov
+./setup.sh knx                               # venv, grunnpakker og KNX-modulen; legg til modbus mqtt opcua ved behov
 ./scada init ~/MyHouse.knxproj --gateway 192.168.1.50 --language nb
 ./scada info                                 # sjekk: adresser, kort og rom er der
 ./scada server                               # første test i en terminal; Ctrl+C stopper den
@@ -115,7 +118,10 @@ knx:
 
 Når `keyring_file` er satt, er forbindelsen sikker uansett hva `connection` sier.
 
-### D. Kjøre uten KNX (bare Modbus/MQTT/OPC UA)
+### D. Kjøre uten KNX (bare Modbus/MQTT/OPC UA/BACnet)
+
+Installer uten KNX-modulen – `./setup.sh modbus opcua` (eller modulene du trenger) – så blir `xknx` og `xknxproject`
+ikke installert i det hele tatt.
 
 ```yaml
 # config.yaml
@@ -523,6 +529,9 @@ gateways:
     # initial: true                   # utelatt = startverdier bare til egne servere; true = også utstyr (aldri KNX); false = ingen
     deadband: 0                       # standard for linjene
     min_interval_ms: 0                # standard for linjene
+    # settle_ms: 500                  # omstartsvern mot KNX: holdetid; 0 = av
+    # burst_limit: 8                  # flere endringer enn dette fra én tilkobling innen settle_ms = en omstart
+    # restart_quiet_s: 15             # etter omstart eller dårlig status: endringer bare husket så lenge
     enabled: true                     # false = av
     map:
       - Total active power -> 320.001-OE001.P                        # kilde -> mål
@@ -563,6 +572,7 @@ Tilkoblingsinnstillinger for **Modbus**, **MQTT**, **OPC UA** og **BACnet**: se 
 | `direction` | gateway, linje | `forward` | `forward`, `both` |
 | `initial` | gateway, linje | bare egne servere | `true`, `false` |
 | `deadband`, `min_interval_ms` | gateway, linje | `0` | tall |
+| `settle_ms`, `burst_limit`, `restart_quiet_s` | gateway | `500`, `8`, `15` | omstartsvern for endringer mot KNX; `settle_ms: 0` = av |
 | `scale`, `offset`, `invert`, `type`, `unit`, `description` | bare linje | – | `type`/`unit`/`description` teller bare når måltaggen opprettes |
 | `enabled` | gateway | `true` | `false` |
 

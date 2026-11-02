@@ -26,14 +26,21 @@ cd ekbpro-knx-terminal-python
 ./setup.sh
 ```
 
-`setup.sh` creates a virtual environment in `venv/` and installs the packages from `requirements.txt`:
+`setup.sh` creates a virtual environment in `venv/`, installs the base packages from `requirements.txt` and then
+the protocol modules you choose (it asks; Enter or no terminal = `knx`):
 
-- `xknx`: KNX communication
-- `xknxproject`: reading `.knxproj` files
-- `textual` and `textual-plotext`: terminal user interface and charts
-- `PyYAML`: configuration
+- base: `textual` and `textual-plotext` (terminal user interface and charts), `PyYAML` (configuration)
+- module `knx`: `xknx` (KNX communication) and `xknxproject` (reading `.knxproj` files)
+- modules `modbus`, `mqtt`, `opcua`, `bacnet`: see [Protocols and gateways](11-protocols-gateways.md)
 
-If a `config.yaml` already exists, `setup.sh` also re-reads the project (`./scada import`).
+```bash
+./setup.sh knx modbus     # KNX and Modbus
+./setup.sh modbus opcua   # a site without KNX: the KNX packages are left out
+```
+
+`./scada modules` shows what is installed; `./scada modules install NAME …` adds a module later. A site with KNX
+whose module is missing stops with the command that installs it. If a `config.yaml` already exists, `setup.sh`
+also re-reads the project (`./scada import`).
 
 ## Set up your project
 
@@ -79,6 +86,7 @@ To run the server permanently as a service that starts automatically, see [Opera
 ```bash
 git pull
 venv/bin/pip install -r requirements.txt
+./scada modules install knx          # once, when updating from a version before 2026-11 (KNX became a module)
 sudo systemctl restart knxscada      # if the server runs as a service
 ```
 

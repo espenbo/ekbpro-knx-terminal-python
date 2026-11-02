@@ -61,13 +61,16 @@ the program folder. Without a command, `tui` starts.
 | `plan-dxf [FILE]` | | Floor plan to DXF (default `plan.dxf` in the current folder) |
 | `plc-map` | `--all`, `--marked`, `--rename`, `--plc NAME` | Writes `plc_map.yaml` and the GVL |
 | `plc-browse [FILTER]` | `--endpoints`, `--plc NAME` | Lists the PLC's OPC UA variables / endpoints |
+| `plc-gateway` | `--plc NAME`, `--prefix`, `--namespace`, `--write` | The PLC bridge (`plc:` + `plc_map.yaml`) as an OPC UA connection and gateways; printed, or added to protocols.yaml with `--write` |
 | `modules` | `install NAME …` | Lists the protocol modules, or installs them |
 | `gateway` | | Checks `protocols.yaml`, with live status when the server runs |
 | `simulate [MODEL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Plays a device template as a Modbus slave, for tests without equipment; without a model it lists the templates |
 | `bacnet-scan [ADDRESS]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Without an address: the BACnet devices on the network (Who-Is); with one: the objects of the device, `--yaml` as a connection for `protocols.yaml` |
 
-`./setup.sh [modbus mqtt opcua]` creates `venv/`, installs the packages (and the named protocol modules) and runs
-`./scada import` when `config.yaml` exists.
+`./setup.sh [knx modbus mqtt opcua bacnet]` creates `venv/`, installs the base packages and the named protocol
+modules (none named: it asks, default `knx`), and runs `./scada import` when `config.yaml` exists and KNX is
+installed. Base packages: `textual`, `textual-plotext`, `PyYAML`. Modules: `knx` (`xknx`, `xknxproject`), `modbus`,
+`mqtt`, `opcua` (`asyncua`, also needed by the PLC bridge `plc:`), `bacnet`.
 
 ## Tasks
 
@@ -75,7 +78,7 @@ the program folder. Without a command, `tui` starts.
 
 ```bash
 git clone <repository> ~/knx_scada && cd ~/knx_scada
-./setup.sh                                   # venv and packages; add modbus mqtt opcua if needed
+./setup.sh knx                               # venv, base packages and the KNX module; add modbus mqtt opcua if needed
 ./scada init ~/MyHouse.knxproj --gateway 192.168.1.50 --language nb
 ./scada info                                 # check: addresses, cards and rooms are there
 ./scada server                               # first test in a terminal; Ctrl+C stops it
@@ -113,7 +116,10 @@ knx:
 
 With `keyring_file` set, the connection is secure whatever `connection` says.
 
-### D. Run without KNX (only Modbus/MQTT/OPC UA)
+### D. Run without KNX (only Modbus/MQTT/OPC UA/BACnet)
+
+Install without the KNX module – `./setup.sh modbus opcua` (or the modules you need) – so `xknx` and `xknxproject`
+are not installed at all.
 
 ```yaml
 # config.yaml
@@ -521,6 +527,9 @@ gateways:
     # initial: true                   # left out = start values only to own servers; true = also devices (never KNX); false = none
     deadband: 0                       # default for the lines
     min_interval_ms: 0                # default for the lines
+    # settle_ms: 500                  # restart guard towards KNX: hold time; 0 = off
+    # burst_limit: 8                  # more changes than this from one connection within settle_ms = a restart
+    # restart_quiet_s: 15             # after a restart or a bad status: changes only remembered this long
     enabled: true                     # false = off
     map:
       - Total active power -> 320.001-OE001.P                        # source -> target
@@ -561,6 +570,7 @@ Connection settings for **Modbus**, **MQTT**, **OPC UA** and **BACnet**: see the
 | `direction` | gateway, line | `forward` | `forward`, `both` |
 | `initial` | gateway, line | own servers only | `true`, `false` |
 | `deadband`, `min_interval_ms` | gateway, line | `0` | numbers |
+| `settle_ms`, `burst_limit`, `restart_quiet_s` | gateway | `500`, `8`, `15` | restart guard for changes towards KNX; `settle_ms: 0` = off |
 | `scale`, `offset`, `invert`, `type`, `unit`, `description` | line only | – | `type`/`unit`/`description` only count when the target tag is created |
 | `enabled` | gateway | `true` | `false` |
 

@@ -228,3 +228,71 @@ def test_plc_configs_invalid(controllers):
 
     with pytest.raises(ValueError):
         plc_configs({"controllers": controllers})
+
+
+def _entries():
+    """Three mapping lines, one per direction, as plc_map.yaml would have them (use: true)."""
+    return [plc.PlcEntry("1/1/1", True, "to_plc", "REAL", "GA_1_1_1_Temp", "Temperatur", "9.001"),
+            plc.PlcEntry("1/1/2", True, "both", "BOOL", "GA_1_1_2_Lys", "Lys", "1.001"),
+            plc.PlcEntry("1/1/3", True, "to_knx", "USINT", "GA_1_1_3_Modus", "Modus", "20.102")]
+
+
+def test_gateway_config_from_the_bridge_mapping():
+    """``plc-gateway``: the bridge's mapping becomes an OPC UA client with one tag per variable (node id from the GVL
+    prefix, writable only towards the PLC) and two gateways – KNX → PLC with initial values (as the bridge synced the
+    PLC at start-up) and PLC → KNX – with the bridge's rate limit and guard settings."""
+    from knxscada.protocols import config as pconf
+
+    cfg = {"name": "plc", "endpoint": "opc.tcp://192.168.1.10:4840", "username": "admin", "password": "x",
+           "security": "None", "min_interval_ms": 300, "burst_limit": 6}
+    name, conn, gws = plc.gateway_config(cfg, _entries(), "|var|PLC.Application.GVL_KNX.", 4)
+    assert name == "plc" and conn["protocol"] == "opcua" and conn["role"] == "client"
+    assert conn["password"] == "x" and conn["endpoint"].endswith(":4840")
+    t = conn["tags"]
+    assert t["GA_1_1_1_Temp"] == {"node": "ns=4;s=|var|PLC.Application.GVL_KNX.GA_1_1_1_Temp", "type": "float",
+                                  "writable": True, "description": "Temperatur"}
+    assert t["GA_1_1_2_Lys"]["type"] == "bool" and t["GA_1_1_3_Modus"]["type"] == "int"
+    assert t["GA_1_1_3_Modus"]["writable"] is False          # PLC → KNX only: the PLC variable is never written
+    to_plc, to_knx = gws
+    assert to_plc["name"] == "knx-plc" and to_plc["from"] == "knx" and to_plc["initial"] is True
+    assert to_plc["map"] == [{"from": "1/1/1", "to": "GA_1_1_1_Temp"},
+                             {"from": "1/1/2", "to": "GA_1_1_2_Lys", "direction": "both", "min_interval_ms": 300}]
+    assert to_knx["name"] == "plc-knx" and to_knx["map"] == [{"from": "GA_1_1_3_Modus", "to": "1/1/3"}]
+    assert to_knx["min_interval_ms"] == 300 and to_knx["burst_limit"] == 6 and to_plc["burst_limit"] == 6
+    data = {"connections": {name: conn}, "gateways": gws}
+    assert pconf.validate(data, knx=True) == []
+
+
+def test_bridge_mapping_through_the_gateways(tmp_path):
+    """The generated gateways move values as the bridge did: KNX statuses fill the PLC at start-up, the PLC's own
+    start values never reach KNX, a two-way light and a PLC → KNX mode go to KNX after the settle time."""
+    import asyncio
+
+    from tests.test_protocols import Mem, make_hub, until
+
+    _name, _conn, gws = plc.gateway_config({"name": "plc", "settle_ms": 50}, _entries(), "P.", 4)
+
+    async def run():
+        """KNX and the PLC as in-memory connections, with the generated gateways between them."""
+        knx = Mem("knx", {"tags": {"1/1/1": {}, "1/1/2": {}, "1/1/3": {}}}, None, initial_allowed=False, server=False,
+                  reads_first=True)
+        dev = Mem("plc", {"tags": {"GA_1_1_1_Temp": {}, "GA_1_1_2_Lys": {}, "GA_1_1_3_Modus": {}}}, None,
+                  server=False, reads_first=True)
+        hub = await make_hub(tmp_path, {"gateways": gws}, {"knx": knx, "plc": dev})
+        try:
+            hub.update("plc", "GA_1_1_2_Lys", False)          # the PLC's start values: statuses
+            hub.update("plc", "GA_1_1_3_Modus", 1)
+            dev.set_ready()
+            hub.update("knx", "1/1/1", 21.5)                   # KNX statuses read at start-up
+            hub.update("knx", "1/1/2", True)
+            knx.set_ready()
+            await until(lambda: ("GA_1_1_1_Temp", 21.5) in dev.writes and ("GA_1_1_2_Lys", True) in dev.writes, 2)
+            await asyncio.sleep(0.1)
+            assert knx.writes == []                            # nothing to KNX at start-up
+            hub.update("plc", "GA_1_1_2_Lys", False)           # the PLC switches the light off
+            hub.update("plc", "GA_1_1_3_Modus", 3)             # and sets the mode
+            await until(lambda: ("1/1/2", False) in knx.writes and ("1/1/3", 3) in knx.writes, 2)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

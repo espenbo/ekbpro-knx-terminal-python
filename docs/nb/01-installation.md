@@ -28,14 +28,21 @@ cd ekbpro-knx-terminal-python
 ./setup.sh
 ```
 
-`setup.sh` lager et virtuelt miljø i `venv/` og installerer pakkene fra `requirements.txt`:
+`setup.sh` lager et virtuelt miljø i `venv/`, installerer grunnpakkene fra `requirements.txt` og deretter
+protokollmodulene du velger (den spør; Enter eller ingen terminal = `knx`):
 
-- `xknx`: KNX-kommunikasjon
-- `xknxproject`: leser `.knxproj`-filer
-- `textual` og `textual-plotext`: brukergrensesnitt i terminalen og grafer
-- `PyYAML`: konfigurasjon
+- grunnpakker: `textual` og `textual-plotext` (brukergrensesnitt i terminalen og grafer), `PyYAML` (konfigurasjon)
+- modulen `knx`: `xknx` (KNX-kommunikasjon) og `xknxproject` (leser `.knxproj`-filer)
+- modulene `modbus`, `mqtt`, `opcua`, `bacnet`: se [Protokoller og gatewayer](11-protocols-gateways.md)
 
-Finnes det allerede en `config.yaml`, leser `setup.sh` også inn prosjektet på nytt (`./scada import`).
+```bash
+./setup.sh knx modbus     # KNX og Modbus
+./setup.sh modbus opcua   # et anlegg uten KNX: KNX-pakkene utelates
+```
+
+`./scada modules` viser hva som er installert; `./scada modules install NAVN …` legger til en modul senere. Et anlegg
+med KNX der modulen mangler, stopper med kommandoen som installerer den. Finnes det allerede en `config.yaml`, leser
+`setup.sh` også inn prosjektet på nytt (`./scada import`).
 
 ## Sett opp prosjektet ditt
 
@@ -81,6 +88,7 @@ For å kjøre serveren fast som en tjeneste som starter av seg selv, se [Drift o
 ```bash
 git pull
 venv/bin/pip install -r requirements.txt
+./scada modules install knx          # én gang, ved oppdatering fra en versjon før 2026-11 (KNX ble en modul)
 sudo systemctl restart knxscada      # hvis serveren kjører som tjeneste
 ```
 
