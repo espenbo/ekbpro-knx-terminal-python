@@ -119,3 +119,55 @@ def test_room_left_from_consumption_and_limit_when_the_plc_keeps_overuse_at_zero
     vals = {**values(2.76), "plc/overforbruk": (0.0, "", "")}
     text = render_power(p, lambda k: vals.get(k) if k else None, colors(), 110).plain
     assert "Room left 6.24 kW" in text and "-0.00" not in text
+
+
+def test_loads_with_room_temperature_and_heat_demand():
+    """A load list with own tags adds the room columns; a shed heater whose room asks for heat is marked "wanted"."""
+    entry = {**ENTRY, "loads": [
+        {},
+        {"name": "Bath", "tags": {"temp": {"connection": "knx", "tag": "3/0/1"},
+                                  "heat": {"connection": "knx", "tag": "3/2/15"}}},
+        {"tags": {"heat": {"connection": "knx", "tag": "3/2/0"}}},
+    ]}
+    p, problems = parse_power(entry, "plc", "")
+    assert problems == []
+    assert p.loads[1].keys["temp"] == "knx/3/0/1" and p.loads[1].keys["shed"] == "plc/Last_2_kobletUt"
+    assert "knx" in p.connections()
+    vals = {**values(5.0, shed=(2,)), "knx/3/0/1": (20.4, "°C", ""), "knx/3/2/15": (True, "", ""),
+            "knx/3/2/0": (False, "", "")}
+    lines = render_power(p, lambda k: vals.get(k) if k else None, colors(), 140).plain.splitlines()
+    assert "Heat demand" in lines[3]
+    assert "20.4°" in lines[5] and "wanted" in lines[5]
+    assert "off" in lines[6] and "wanted" not in lines[6]
+    _p, problems = parse_power({**entry, "loads": [{"tags": {"tmp": "x"}}]}, "plc", "")
+    assert problems
+
+
+def test_relay_status_column_and_failed_shedding():
+    """A relay tag adds the Relay column; a shed load whose relay still reports on is flagged as a fault."""
+    entry = {**ENTRY, "loads": [{"tags": {"relay": {"connection": "knx", "tag": "0/3/1"}}},
+                                {"tags": {"relay": {"connection": "knx", "tag": "0/3/4"}}}, {}]}
+    p, _ = parse_power(entry, "plc", "")
+    vals = {**values(5.0, shed=(1, 2)), "knx/0/3/1": (True, "", ""), "knx/0/3/4": (False, "", "")}
+    text = render_power(p, lambda k: vals.get(k) if k else None, colors(), 140)
+    lines = text.plain.splitlines()
+    assert "Relay" in lines[3]
+    assert "⚠ on" in lines[4] and "○ off" in lines[5]
+    i = text.plain.index("⚠ on")
+    assert any(s.start <= i < s.end and "BAD" in str(s.style) for s in text.spans)
+
+
+def test_plain_loads_keep_the_narrow_table():
+    """Without room tags the table has no room columns."""
+    p, _ = parse_power(ENTRY, "plc", "")
+    plain = render_power(p, lambda _k: None, colors(), 140).plain
+    assert "Heat demand" not in plain and "Relay" not in plain
+
+
+def test_running_column_only_with_a_status_tag():
+    """The PLC's status column ("Running") is drawn only when a load has a status tag."""
+    entry = {**ENTRY, "load_tags": {k: v for k, v in ENTRY["load_tags"].items() if k != "status"}}
+    p, _ = parse_power(entry, "plc", "")
+    assert "Running" not in render_power(p, lambda _k: None, colors(), 140).plain
+    p, _ = parse_power(ENTRY, "plc", "")
+    assert "Running" in render_power(p, lambda _k: None, colors(), 140).plain

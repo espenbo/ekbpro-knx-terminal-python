@@ -480,6 +480,17 @@ leser; innstillingene skrives i fanen Innstillinger.
 
 En tagg er et navn i anleggets tilkobling (med `prefix`) eller `{connection: …, tag: …}` for en annen tilkobling.
 
+For elektriske varmelaster kan `loads` være en liste med `tags` per last (over `load_tags`): `relay` (aktuatorens
+status) gir «Relé» (en utkoblet last der reléet fortsatt melder på, merkes ⚠); `temp` (romtemperaturen) og `heat`
+(termostatens varmebehov) gir «Rom» og «Varmebehov». En last som er koblet
+ut mens rommet vil ha varme, viser «♨ ønskes» i varselfargen.
+
+```yaml
+      loads:
+        - {}                                                  # 1: varmtvannsbereder – intet rom
+        - {tags: {temp: {connection: knx, tag: "3/0/1"}, heat: {connection: knx, tag: "3/2/15"}}}
+```
+
 Fanen Innstillinger: en tagg havner i den første av `groups` den passer med. Tagger utenfor gruppene samles
 automatisk etter TFM-kode (`JV401_OP` → `JV401`) eller første ledd i navnet (`Sequence_Kp1` → `Sequence`) når minst
 to tagger har det samme; gruppen får navn etter ordene beskrivelsene begynner med. Resten havner under «Annet».

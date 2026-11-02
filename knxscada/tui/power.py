@@ -16,7 +16,7 @@ was switched off and its timing)::
         overuse: overforbruk
         shed_count: PRG_iTotalLoadsDisconnected
         peak: {connection: plc2_bacnet, tag: rkWMaxMoth}
-      loads: 9                                          # or a list of names: [VVB, Bath, …]
+      loads: 9                                          # or a list: names, or {name:, tags:} per load
       load_tags:                                        # {n} = 1, 2, … – one set of tags per load
         name: "sLast_{n}_Navn"
         shed: "Last_{n}_kobletUt"
@@ -26,6 +26,17 @@ was switched off and its timing)::
         max_off: "Last_{n}_maksUtkoblingstid"
         min_on: "Last_{n}_minInnkoblingstid"
       time_unit: min
+
+Where the loads are electric heaters, each load can show its room: ``loads`` as a list with ``tags`` per load
+(merged over ``load_tags``) for the relay's status, the room temperature and the thermostat's heat demand::
+
+      loads:
+        - {}                                            # 1: water heater – no room
+        - {tags: {relay: {connection: knx, tag: "0/3/4"}, temp: {connection: knx, tag: "3/0/1"},
+                  heat: {connection: knx, tag: "3/2/15"}}}
+
+A load that is switched off while its room asks for heat is marked, so it is seen when shedding makes a room cold;
+a load that is switched off while its relay still reports on is marked as a fault (the shedding did not work).
 
 A tag is either a name of the entry's connection (with its ``prefix``) or ``{connection: …, tag: …}`` for
 another connection – values that also exist on KNX are read from KNX, so the card and the overview show the
@@ -55,10 +66,11 @@ if TYPE_CHECKING:
 #: consumption of the month.
 POWER_ROLES = ("consumption", "setpoint", "overuse", "shed_count", "peak")
 
-#: Roles of one load (keys under ``load_tags:``): its name, switched off by the limiter, its own status
-#: (in operation), how many times it was switched off, and its timing (minimum/maximum time off, minimum
-#: time on – in ``time_unit``).
-LOAD_ROLES = ("name", "shed", "status", "count", "min_off", "max_off", "min_on")
+#: Roles of one load (keys under ``load_tags:`` or a load's ``tags:``): its name, switched off by the limiter, its
+#: own status (in operation), how many times it was switched off, its timing (minimum/maximum time off, minimum
+#: time on – in ``time_unit``), the status of the relay that switches it (the actuator's feedback: is it really on),
+#: and for a heater the temperature of its room and the room's heat demand.
+LOAD_ROLES = ("name", "shed", "status", "count", "min_off", "max_off", "min_on", "relay", "temp", "heat")
 
 #: The bar's scale: the limit sits at this share of the bar, so some overuse still fits on it.
 LIMIT_AT = 0.8
@@ -134,20 +146,25 @@ def parse_power(e: dict, conn: str, prefix: str) -> tuple[Power, list[str]]:
         elif (key := tag_key(spec, conn, prefix)) is not None:
             p.keys[str(role)] = key
     loads = e.get("loads")
+    own: list[dict] = []                    # per load: its own tags (a list entry {name:, tags:})
     if isinstance(loads, int) and not isinstance(loads, bool):
         names = [""] * max(0, loads)
     elif isinstance(loads, list):
-        names = [str(n or "") for n in loads]
+        names = [str((n.get("name") if isinstance(n, dict) else n) or "") for n in loads]
+        own = [dict(n.get("tags") or {}) if isinstance(n, dict) else {} for n in loads]
     else:
         names = []
         problems.append(_("loads: a number or a list of names"))
+    for tags in own:
+        problems += [_("unknown load role {role}").format(role=repr(r)) for r in tags if r not in LOAD_ROLES]
     templates = e.get("load_tags") or {}
     for role in templates:
         if role not in LOAD_ROLES:
             problems.append(_("unknown load role {role}").format(role=repr(role)))
     for n, name in enumerate(names, 1):
         keys = {}
-        for role, spec in templates.items():
+        # A load's own tags win over the templates.
+        for role, spec in {**templates, **(own[n - 1] if n <= len(own) else {})}.items():
             if role not in LOAD_ROLES:
                 continue
             # {n} in the tag name (or in the tag of a {connection:, tag:} setting) is the load's number.
@@ -262,11 +279,22 @@ def render_power(p: Power, get: Callable[[str | None], Value | None], c: Colors,
         return out
     unit = p.time_unit
     name_w = max(8, *(len(_load_name(load, get)) for load in p.loads)) + 2
-    head = (f"{'#':>2}  {_('Load'):<{name_w}}{_('State'):<17}{_('Running'):<9}{_('Times off'):>10}"
-            f"{_('Min off'):>10}{_('Max off'):>10}{_('Min on'):>10}")
+    # The room columns only when some load has a room (heaters); a limiter of other loads keeps the narrow table.
+    rooms = any("temp" in load.keys or "heat" in load.keys for load in p.loads)
+    relays = any("relay" in load.keys for load in p.loads)
+    # The PLC's own status column only when a load has a status tag (what it means differs between PLC programs).
+    running = any("status" in load.keys for load in p.loads)
+    head = f"{'#':>2}  {_('Load'):<{name_w}}{_('State'):<17}"
+    if running:
+        head += f"{_('Running'):<9}"
+    if relays:
+        head += f"{_('Relay'):<10}"
+    if rooms:
+        head += f"{_('Room'):>8}  {_('Heat demand'):<13}"
+    head += f"{_('Times off'):>10}{_('Min off'):>10}{_('Max off'):>10}{_('Min on'):>10}"
     out.append(head[:width] + "\n", "bold")
     for load in p.loads:
-        out.append_text(_load_line(load, get, c, name_w, unit, width))
+        out.append_text(_load_line(load, get, c, name_w, unit, width, rooms, relays, running))
         out.append("\n")
     out.rstrip()
     return out
@@ -281,8 +309,14 @@ def _load_name(load: Load, get: Callable[[str | None], Value | None]) -> str:
 
 
 def _load_line(load: Load, get: Callable[[str | None], Value | None], c: Colors, name_w: int, unit: str,
-               width: int) -> Text:
-    """One row of the load table (see :func:`render_power` for the columns)."""
+               width: int, rooms: bool = False, relays: bool = False, running: bool = True) -> Text:
+    """One row of the load table (see :func:`render_power` for the columns).
+
+    Args:
+        rooms: add the room temperature and heat demand columns (some load of the limiter has them).
+        relays: add the relay status column (some load has a ``relay`` tag).
+        running: add the PLC's status column (some load has a ``status`` tag).
+    """
     shed = _flag(get(load.keys.get("shed")))
     status = _flag(get(load.keys.get("status")))
     line = Text(f"{load.number:>2}  ")
@@ -290,8 +324,29 @@ def _load_line(load: Load, get: Callable[[str | None], Value | None], c: Colors,
     state = (("○ " + _("unknown"), c.dim) if shed is None else
              ("● " + _("SWITCHED OFF"), f"bold {c.bad}") if shed else ("● " + _("in"), c.ok))
     line.append(f"{state[0]:<17}", state[1])
-    running = "–" if status is None else _("on") if status else _("off")
-    line.append(f"{running:<9}", c.ok if status else c.dim)
+    if running:
+        text = "–" if status is None else _("on") if status else _("off")
+        line.append(f"{text:<9}", c.ok if status else c.dim)
+    if relays:
+        relay = _flag(get(load.keys.get("relay")))
+        if relay is None:
+            line.append(f"{'–' if 'relay' in load.keys else '':<10}", c.dim)
+        elif relay and shed:
+            # Switched off by the limiter but the actuator still reports on: the shedding did not reach the relay.
+            line.append(f"{'⚠ ' + _('on'):<10}", f"bold {c.bad}")
+        else:
+            line.append(f"{('● ' + _('on')) if relay else ('○ ' + _('off')):<10}", c.ok if relay else c.dim)
+    if rooms:
+        temp = _num(get(load.keys.get("temp")))
+        line.append(f"{'–' if temp is None else f'{temp:.1f}°':>8}  ", "bold" if temp is not None else c.dim)
+        demand = _flag(get(load.keys.get("heat")))
+        if demand is None:
+            line.append(f"{'–' if 'heat' in load.keys else '':<13}", c.dim)
+        elif demand and shed:
+            # The room asks for heat while the limiter holds its heater off: the case to watch.
+            line.append(f"{'♨ ' + _('wanted'):<13}", f"bold {c.warn}")
+        else:
+            line.append(f"{('♨ ' + _('on')) if demand else _('off'):<13}", c.ok if demand else c.dim)
 
     def num(role: str, suffix: str) -> str:
         """A load figure right-aligned in its column (``–`` when unknown)."""

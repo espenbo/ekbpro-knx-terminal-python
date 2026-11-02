@@ -478,6 +478,17 @@ loads switched off (log those tags). The card only reads; settings are written o
 
 A tag is a name of the entry's connection (with `prefix`) or `{connection: …, tag: …}` for another connection.
 
+For electric heaters, `loads` can be a list with `tags` per load (over `load_tags`): `relay` (the actuator's status)
+adds «Relay» (a shed load whose relay still reports on is marked ⚠); `temp` (the room temperature) and `heat`
+(the thermostat's heat demand) add «Room» and «Heat demand». A load switched off while its
+room asks for heat shows «♨ wanted» in the warning colour.
+
+```yaml
+      loads:
+        - {}                                                  # 1: water heater – no room
+        - {tags: {temp: {connection: knx, tag: "3/0/1"}, heat: {connection: knx, tag: "3/2/15"}}}
+```
+
 Settings tab: a tag goes into the first of the `groups` it matches. Tags in no group are put into automatic
 sections by TFM code (`JV401_OP` → `JV401`) or by the first part of the name (`Sequence_Kp1` → `Sequence`) when at
 least two tags share it; the section is named after the words their descriptions start with. The rest is «Other».
