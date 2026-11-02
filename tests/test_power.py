@@ -109,6 +109,8 @@ def test_render_power_over_the_limit_and_unknown_values():
     p, _ = parse_power(ENTRY, "plc", "")
     vals = values(10.0)
     assert "Over the limit by 1.00 kW" in render_power(p, lambda k: vals.get(k) if k else None, colors()).plain
+    vals = {**values(2.66), "plc/forbrukSetpunkt": (0.028, "kW", "")}
+    assert "(>999%)" in render_power(p, lambda k: vals.get(k) if k else None, colors(), 110).plain
     empty = render_power(p, lambda _k: None, colors(), 100).plain
     assert "–" in empty and "Load 1" in empty
 
@@ -171,3 +173,32 @@ def test_running_column_only_with_a_status_tag():
     assert "Running" not in render_power(p, lambda _k: None, colors(), 140).plain
     p, _ = parse_power(ENTRY, "plc", "")
     assert "Running" in render_power(p, lambda _k: None, colors(), 140).plain
+
+
+def test_inverted_relay_shows_whether_the_load_gets_power():
+    """relay_inverted: a contactor that cuts the load when on – feedback on reads "off", and a shed load is fine."""
+    entry = {**ENTRY, "loads": [{"relay_inverted": True, "tags": {"relay": {"connection": "knx", "tag": "0/2/1"}}},
+                                {}, {}]}
+    p, _ = parse_power(entry, "plc", "")
+    assert p.loads[0].relay_inverted and not p.loads[1].relay_inverted
+    vals = {**values(5.0, shed=(1,)), "knx/0/2/1": (True, "", "")}
+    line = render_power(p, lambda k: vals.get(k) if k else None, colors(), 140).plain.splitlines()[4]
+    assert "○ off" in line and "⚠" not in line
+
+
+def test_systems_view_takes_knx_values_from_telegrams():
+    """KNX values are not in the hub's points messages: the Systems and Energy views read them from telegrams."""
+    from types import SimpleNamespace
+
+    from knxscada.tui.energy import EnergyView
+    from knxscada.tui.systems import SystemsView
+
+    for cls in (SystemsView, EnergyView):
+        got = []
+        fake = SimpleNamespace(connections=lambda: ["plc", "knx"], on_points=got.append)
+        cls.on_telegram(fake, {"type": "write", "dst": "0/1/30", "value": 2.5, "ts": 1.0})
+        cls.on_telegram(fake, {"type": "read", "dst": "0/1/30", "value": None, "ts": 2.0})
+        assert got == [{"knx/0/1/30": [2.5, 1.0, "good"]}]
+        fake.connections = lambda: ["plc"]
+        cls.on_telegram(fake, {"type": "write", "dst": "0/1/30", "value": 3.0, "ts": 3.0})
+        assert len(got) == 1

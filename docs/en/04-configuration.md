@@ -479,7 +479,8 @@ loads switched off (log those tags). The card only reads; settings are written o
 A tag is a name of the entry's connection (with `prefix`) or `{connection: …, tag: …}` for another connection.
 
 For electric heaters, `loads` can be a list with `tags` per load (over `load_tags`): `relay` (the actuator's status)
-adds «Relay» (a shed load whose relay still reports on is marked ⚠); `temp` (the room temperature) and `heat`
+adds «Relay» (a shed load whose relay still reports on is marked ⚠; `relay_inverted: true` on a load whose
+feedback is on when the load is cut, e.g. a contactor in front of a water heater); `temp` (the room temperature) and `heat`
 (the thermostat's heat demand) add «Room» and «Heat demand». A load switched off while its
 room asks for heat shows «♨ wanted» in the warning colour.
 

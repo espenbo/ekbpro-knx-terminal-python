@@ -209,6 +209,16 @@ class EnergyView(View):
         """Worker for :meth:`_load_history` after a meter or period change; exclusive, so only the last one counts."""
         await self._load_history()
 
+    def on_telegram(self, t: dict) -> None:
+        """A KNX telegram (every one, from the app): the value of ``knx/<address>`` when this view shows KNX tags.
+
+        The hub leaves KNX out of its ``points`` messages – the clients get the telegrams anyway – so tags read
+        from the ``knx`` connection (a meter, a limiter's consumption, a room temperature) are kept live here.
+        """
+        if t.get("type") == "read" or "knx" not in self.connections():
+            return
+        self.on_points({f"knx/{t['dst']}": [t.get("value"), t.get("ts"), "good"]})
+
     def on_points(self, values: dict[str, list]) -> None:
         """Live values (``points`` messages): keep those of the meter connections and extend the selected meter's curves.
 

@@ -904,6 +904,16 @@ class SystemsView(View):
         if index == self.index:
             self.replot()
 
+    def on_telegram(self, t: dict) -> None:
+        """A KNX telegram (every one, from the app): the value of ``knx/<address>`` when this view shows KNX tags.
+
+        The hub leaves KNX out of its ``points`` messages – the clients get the telegrams anyway – so tags read
+        from the ``knx`` connection (a meter, a limiter's consumption, a room temperature) are kept live here.
+        """
+        if t.get("type") == "read" or "knx" not in self.connections():
+            return
+        self.on_points({f"knx/{t['dst']}": [t.get("value"), t.get("ts"), "good"]})
+
     def on_points(self, values: dict[str, list]) -> None:
         """Live values (``points`` messages): only the keys of the configured units are kept."""
         conns = self.connections()
@@ -1110,7 +1120,9 @@ class SystemsView(View):
         for plot_id, chart, title in (("#sys-temp-plot", temps, titles[0]), ("#sys-out-plot", outputs, titles[1])):
             plot = self.query_one(plot_id, CachedPlot)
             # Back on a unit whose curves did not change: its figure is kept, nothing to draw.
-            key = (self.index, tuple(len(curves.get(k, ())) for k, _n in chart))
+            # The live values are part of the key: a curve without log entries is drawn from its current value.
+            key = (self.index, tuple(len(curves.get(k, ())) for k, _n in chart),
+                   tuple((self.values.get(k) or (None,))[0] for k, _n in chart))
             if plot.cached(key):
                 plot.changed(key)
                 continue

@@ -481,7 +481,8 @@ leser; innstillingene skrives i fanen Innstillinger.
 En tagg er et navn i anleggets tilkobling (med `prefix`) eller `{connection: …, tag: …}` for en annen tilkobling.
 
 For elektriske varmelaster kan `loads` være en liste med `tags` per last (over `load_tags`): `relay` (aktuatorens
-status) gir «Relé» (en utkoblet last der reléet fortsatt melder på, merkes ⚠); `temp` (romtemperaturen) og `heat`
+status) gir «Relé» (en utkoblet last der reléet fortsatt melder på, merkes ⚠; `relay_inverted: true` på en last
+der tilbakemeldingen er på når lasten er koblet ut, f.eks. en kontaktor foran en varmtvannsbereder); `temp` (romtemperaturen) og `heat`
 (termostatens varmebehov) gir «Rom» og «Varmebehov». En last som er koblet
 ut mens rommet vil ha varme, viser «♨ ønskes» i varselfargen.
 

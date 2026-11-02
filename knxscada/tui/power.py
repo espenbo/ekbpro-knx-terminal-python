@@ -34,6 +34,7 @@ Where the loads are electric heaters, each load can show its room: ``loads`` as 
         - {}                                            # 1: water heater – no room
         - {tags: {relay: {connection: knx, tag: "0/3/4"}, temp: {connection: knx, tag: "3/0/1"},
                   heat: {connection: knx, tag: "3/2/15"}}}
+        - {relay_inverted: true, tags: {relay: {connection: knx, tag: "0/3/1"}}}   # feedback on = load cut
 
 A load that is switched off while its room asks for heat is marked, so it is seen when shedding makes a room cold;
 a load that is switched off while its relay still reports on is marked as a fault (the shedding did not work).
@@ -89,6 +90,9 @@ class Load:
     number: int
     name: str = ""
     keys: dict[str, str] = field(default_factory=dict)
+    #: The relay's feedback is on when the load is OFF – a contactor that cuts a water heater when energised
+    #: (``relay_inverted: true`` on the load). The Relay column always shows whether the load gets power.
+    relay_inverted: bool = False
 
 
 @dataclass
@@ -147,11 +151,13 @@ def parse_power(e: dict, conn: str, prefix: str) -> tuple[Power, list[str]]:
             p.keys[str(role)] = key
     loads = e.get("loads")
     own: list[dict] = []                    # per load: its own tags (a list entry {name:, tags:})
+    inverted: list[bool] = []               # per load: relay_inverted
     if isinstance(loads, int) and not isinstance(loads, bool):
         names = [""] * max(0, loads)
     elif isinstance(loads, list):
         names = [str((n.get("name") if isinstance(n, dict) else n) or "") for n in loads]
         own = [dict(n.get("tags") or {}) if isinstance(n, dict) else {} for n in loads]
+        inverted = [isinstance(n, dict) and n.get("relay_inverted") is True for n in loads]
     else:
         names = []
         problems.append(_("loads: a number or a list of names"))
@@ -172,7 +178,7 @@ def parse_power(e: dict, conn: str, prefix: str) -> tuple[Power, list[str]]:
                 else str(spec).replace("{n}", str(n))
             if (key := tag_key(spec, conn, prefix)) is not None:
                 keys[str(role)] = key
-        p.loads.append(Load(n, name, keys))
+        p.loads.append(Load(n, name, keys, n <= len(inverted) and inverted[n - 1]))
     return p, problems
 
 
@@ -245,7 +251,8 @@ def render_power(p: Power, get: Callable[[str | None], Value | None], c: Colors,
     label = f"{_('Consumption'):<12}"
     figures = f"  {_kw(val('consumption'))} / {_kw(val('setpoint'))}"
     if cons is not None and limit:
-        figures += f"  ({cons / limit:.0%})"
+        # A limit set very low (a test, a typo) gives silly shares like 9500 %: above 999 % the figure says only that.
+        figures += f"  ({cons / limit:.0%})" if cons / limit < 10 else "  (>999%)"
     out.append(label, "bold")
     out.append_text(bar(cons, limit, max(10, width - len(label) - len(figures) - 1), c))
     out.append(figures + "\n")
@@ -329,6 +336,8 @@ def _load_line(load: Load, get: Callable[[str | None], Value | None], c: Colors,
         line.append(f"{text:<9}", c.ok if status else c.dim)
     if relays:
         relay = _flag(get(load.keys.get("relay")))
+        if relay is not None and load.relay_inverted:
+            relay = not relay              # feedback on = cut: show whether the load gets power
         if relay is None:
             line.append(f"{'–' if 'relay' in load.keys else '':<10}", c.dim)
         elif relay and shed:
