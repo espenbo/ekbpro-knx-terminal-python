@@ -20,7 +20,7 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
-- 2026-11-02: 438 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Runde 2 er slått inn i `main`;
+- 2026-11-02: 439 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Runde 2 er slått inn i `main`;
   KNX valgfri og KNX → OPC UA via gatewayen er ikke committet ennå.
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
       `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
@@ -78,6 +78,9 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       (`{connection: knx, tag: …}`); `history` med `point: knx/<ga>` leser telegrammene. `extra_rooms` med navnet til
       et ETS-rom legger kortene til det rommet. Tester `test_power.py`, `test_project.py`, `test_store.py`,
       dok 03/04/12 (en+nb). «Ledig» = grense − forbruk; grafkurvene trekkes til nå (verdier logges ved endring).
+- [x] Flere temperaturfølere per rom (2026-11-02): `Room.temps` (`home.extra_temps`, `short_label`) – alle
+      DPT 9.001-verdier i rommets kort unntatt duggpunkt/settpunkt; Klima-tabellen får en linje `└ navn` per føler med
+      minigraf, romkortene viser verdiene ved lysene. Test `test_home.py`, dok 03 (en+nb).
 - [x] `project.units` (2026-11-02): enhet per gruppeadresse (volt sendt som DPT 9.020 mV) – `dpt.fmt(…, unit)`,
       KNX-taggene, trender og hendelsesloggen. Dok 12 (en+nb), test i `test_project.py`.
 - [x] BACnet over VPN (2026-11-02): `bacnet-scan ADRESSE` leser jokerinstansen 4194303 når Who-Is ikke får svar

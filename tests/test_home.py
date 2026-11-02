@@ -39,3 +39,30 @@ def test_old_values_are_marked():
     assert home.room_status(room, state, [])["old"] == {"temp", "heating"}
     state["2/0/0"] = {"value": 21.4}
     assert home.room_status(room, state, [])["old"] == {"heating"}
+
+
+def test_other_temperature_sensors_of_a_room():
+    """Every other temperature of a room is listed once with a short label; dew points and setpoints are not, and a
+    one-sensor card from extra_rooms is named after the card."""
+    from knxscada.tui.home import short_label
+
+    m = _model()
+    m["functions"]["f1"]["datapoints"] += [
+        {"label": "H1001 Vf heating current temperature bryter", "role": "", "kind": "value", "ga": None,
+         "status": "2/0/1", "dpt": "9.001"},
+        {"label": "Dew.point", "role": "", "kind": "value", "ga": None, "status": "2/0/2", "dpt": "9.001"},
+        {"label": "Er-Verdi", "role": "", "kind": "value", "ga": None, "status": "2/0/0", "dpt": "9.001"},
+    ]
+    m["functions"]["f2"] = {"id": "f2", "name": "Smoke detector", "usage": "custom", "datapoints": [
+        {"label": "Room smoke temperature 3", "role": "", "kind": "value", "ga": None, "status": "2/0/3",
+         "dpt": "9.001"},
+        {"label": "Alarm", "role": "", "kind": "bool", "ga": None, "status": "0/6/1", "dpt": "1.001"}]}
+    m["floors"][0]["rooms"][0]["functions"].append("f2")
+    home = HomeModel(m, {})
+    (room,) = home.rooms
+    assert room.temps == [("bryter", "2/0/1"), ("Smoke detector", "2/0/3")]
+    assert "2/0/3" in home.trend_gas()
+    state = {"2/0/0": {"value": 21.3}, "2/0/1": {"value": 22.0, "old": True}}
+    assert home.room_status(room, state, [])["temps"] == [("bryter", 22.0, True), ("Smoke detector", None, False)]
+    assert short_label("Stue heating current TV temperature", "Stue") == "TV"
+    assert short_label("Stue heating current room temperature", "Stue") == ""

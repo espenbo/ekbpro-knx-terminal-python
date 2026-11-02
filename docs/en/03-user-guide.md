@@ -65,7 +65,9 @@ The terminal is cleared when you quit.
   - **KNX tlg/s** shows the traffic.
   - **Alarms** shows active and unacknowledged alarms.
   - The colour has a meaning: green is normal, yellow is a warning, red is critical and grey is no data.
-- **Climate:** actual temperature, setpoint, mode, heating and a sparkline for the last 24 hours per room.
+- **Climate:** actual temperature, setpoint, mode, heating and a sparkline for the last 24 hours per room. A room
+  with more temperature sensors (a switch, a smoke detector, a CO₂ sensor) gets one line per sensor under it
+  (`└ name`); the room cards show their values next to the lights.
   The temperature turns yellow when the room is more than 1.5° below its setpoint. Enter opens the room.
 - **Temperature chart:** outdoor and indoor average for the last 24 hours.
 - **Room status:** one card per room.

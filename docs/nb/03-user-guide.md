@@ -67,7 +67,9 @@ Terminalen tømmes når du avslutter.
   - **KNX tlg/s** viser trafikken.
   - **Alarmer** viser aktive og ukvitterte alarmer.
   - Fargen betyr noe: grønt er normalt, gult er advarsel, rødt er kritisk og grått er ingen data.
-- **Klima:** faktisk temperatur, settpunkt, modus, varme og en minigraf for siste døgn per rom.
+- **Klima:** faktisk temperatur, settpunkt, modus, varme og en minigraf for siste døgn per rom. Et rom med flere
+  temperaturfølere (bryter, røykvarsler, CO₂-føler) får én linje per føler under seg (`└ navn`); romkortene viser
+  verdiene ved siden av lysene.
   Temperaturen blir gul når rommet er mer enn 1,5° under settpunktet. Enter åpner rommet.
 - **Temperaturgraf:** ute og snitt inne for siste døgn.
 - **Romstatus:** ett kort per rom.

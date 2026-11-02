@@ -58,13 +58,12 @@ def short_label(label: str, room: str) -> str:
         room: the room's name, removed when the label starts with it.
 
     Returns:
-        What is left (e.g. ``bryter``, ``Kjøkken bryter``, ``Smoke``), or ``°C`` when nothing is.
+        What is left (e.g. ``bryter``, ``Kjøkken bryter``, ``Smoke``), or ``""`` when nothing is.
     """
     text = label.strip()
     if room and text.lower().startswith(room.lower()):
         text = text[len(room):]
-    text = re.sub(r"\s+", " ", LABEL_NOISE.sub(" ", text)).strip(" -–·:")
-    return text or "°C"
+    return re.sub(r"\s+", " ", LABEL_NOISE.sub(" ", text)).strip(" -–·:")
 
 
 def extra_temps(functions: list[dict], room: str, main: str | None) -> list[tuple[str, str]]:
@@ -89,8 +88,9 @@ def extra_temps(functions: list[dict], room: str, main: str | None) -> list[tupl
             if ga in seen:
                 continue
             seen.add(ga)
-            label = f["name"] if f.get("usage") == "custom" and len(rows) == 1 else short_label(d["label"], room)
-            out.append((label, ga))
+            label = "" if f.get("usage") == "custom" and len(rows) == 1 else short_label(d["label"], room)
+            # Nothing left of the label ("Hall heating current room temperature"): the card's name says where it is.
+            out.append((label or f["name"], ga))
     return out
 
 
