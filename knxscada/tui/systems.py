@@ -628,11 +628,16 @@ def theme_colors(app: Any) -> Colors:
                   dim="dim", accent=tv.get("accent", "cyan"))
 
 
+#: The colour of return / cold-water pipes in a piping diagram (a blue that reads on dark and light themes).
+COLD_PIPE = "#3b8eea"
+
+
 def diagram_colors(app: Any) -> DiagramColors:
     """The colours of a piping diagram from the active theme: supply pipes in the error colour (hot), return pipes
-    in the primary colour (cold), states in success/warning/error. Called at every redraw (theme changes)."""
+    always blue (cold) – the primary colour of some themes is green, which would read as a running state –, states
+    in success/warning/error. Called at every redraw (theme changes)."""
     tv = getattr(app, "theme_variables", {}) or {}
-    return DiagramColors(hot=tv.get("error", "red"), cold=tv.get("primary", "blue"), ok=tv.get("success", "green"),
+    return DiagramColors(hot=tv.get("error", "red"), cold=COLD_PIPE, ok=tv.get("success", "green"),
                          warn=tv.get("warning", "yellow"), bad=tv.get("error", "red"), dim="dim", value="bold")
 
 
