@@ -67,7 +67,7 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       `restart_quiet_s` (15) – en bølge av endringer (nedlasting/omstart) sendes ikke, stillhet, deretter får
       PLS-en KNX-verdiene igjen; dårlig status gjør taggen ukjent. Tester `test_gateway_guard.py`, `test_plc.py`,
       dok 10/11/12 (en+nb), README. Prøvd lesende mot et anlegg: samme 435 variabler som broen.
-  - [ ] Bytte over på anlegget som bruker broen (`plc-gateway --write`, `plc.enabled: false`, omstart) – etter avtale.
+  - [x] Byttet over på anlegget som brukte broen (2026-11-02): gatewayen kjører; følges med noen dager.
   - [ ] Deretter: fase ut `opcua_bridge.py` når ingen anlegg bruker `plc:`.
 
 ## Runde 2 – åpent

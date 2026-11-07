@@ -389,6 +389,15 @@ def tag_type(iec: str) -> str:
     return "int"
 
 
+#: ``plc:`` settings that ``plc-gateway`` copies to the OPC UA connection unchanged. The connection's driver hands them
+#: to the same :func:`knxscada.opcua_bridge.make_client` as the bridge, and both resolve relative paths against
+#: config.yaml, so they mean the same. Leaving one out weakens the migrated connection silently: without
+#: ``server_certificate`` the PLC's certificate is taken from the unauthenticated endpoint list again (no pinning),
+#: without ``certificate``/``private_key`` the client presents a new self-signed certificate the PLC has not trusted.
+CONNECTION_KEYS = ("username", "password", "security", "publish_interval_ms", "timeout_s",
+                   "certificate", "private_key", "server_certificate")
+
+
 def gateway_config(plc: dict[str, Any], entries: list[PlcEntry], node_prefix: str, namespace: int,
                    conn_name: str | None = None) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
     """The PLC bridge of one PLC as protocols.yaml content: ``(connection name, connection, gateways)``.
@@ -406,6 +415,8 @@ def gateway_config(plc: dict[str, Any], entries: list[PlcEntry], node_prefix: st
 
     The bridge's guards come along: ``settle_ms``, ``burst_limit`` and ``restart_quiet_s`` (the gateway's restart
     guard towards KNX, same defaults) and ``min_interval_ms`` per line towards KNX (default 200 ms, as the bridge).
+    So do the client settings in :data:`CONNECTION_KEYS` – among them the certificate pinning and the client
+    certificate – so the connection is as secure as the bridge was.
     """
     name = conn_name or str(plc.get("name") or "plc")
     tags: dict[str, dict[str, Any]] = {}
@@ -417,7 +428,7 @@ def gateway_config(plc: dict[str, Any], entries: list[PlcEntry], node_prefix: st
         tags[e.var] = tag
     conn: dict[str, Any] = {"protocol": "opcua", "role": "client",
                             "endpoint": str(plc.get("endpoint") or "opc.tcp://127.0.0.1:4840")}
-    for key in ("username", "password", "security", "publish_interval_ms"):
+    for key in CONNECTION_KEYS:
         if plc.get(key) not in (None, ""):
             conn[key] = plc[key]
     conn["tags"] = tags

@@ -337,8 +337,6 @@ CATALOGUE: dict[str, str] = {
     "Release": "Slipp",
     "Add them with --write (the password is filled in there), then set plc.enabled: false and restart.":
         "Legg dem inn med --write (der fylles passordet inn), sett så plc.enabled: false og start på nytt.",
-    "Note: plc.server_certificate is not used by the OPC UA connection – the PLC's certificate is taken from the endpoint.":
-        "Merk: plc.server_certificate brukes ikke av OPC UA-tilkoblingen – PLS-ens sertifikat hentes fra endepunktet.",
     "Wrote {path}. Now set plc.enabled: false in config.yaml (else the bridge and the gateways both write) and restart the server.":
         "Skrev {path}. Sett nå plc.enabled: false i config.yaml (ellers skriver både broen og gatewayene) og start serveren på nytt.",
     "The OPC UA module is not installed. Install it with: ./scada modules install opcua":
@@ -620,6 +618,15 @@ CATALOGUE: dict[str, str] = {
     "Security": "Sikkerhet",
     "Namespace URI": "Namespace-URI",
     "Publish interval (ms)": "Publiseringsintervall (ms)",
+    "Own certificate": "Eget sertifikat",
+    "Empty = var/opcua/client_cert.der (client) or server_cert.der (server), made automatically":
+        "Tom = var/opcua/client_cert.der (klient) eller server_cert.der (server), lages automatisk",
+    "Own private key": "Egen privat nøkkel",
+    "Empty = var/opcua/client_key.pem (client) or server_key.pem (server)":
+        "Tom = var/opcua/client_key.pem (klient) eller server_key.pem (server)",
+    "Server certificate (pinned)": "Serversertifikat (låst)",
+    "The PLC's certificate file (.der) – recommended with security":
+        "Sertifikatfilen til PLS-en (.der) – anbefalt med security",
     "Node id": "Node-id",
     "Client: e.g. ns=4;s=|var|PLC.Application.GVL.rTemp · server: empty = the tag name":
         "Klient: f.eks. ns=4;s=|var|PLC.Application.GVL.rTemp · server: tom = tagnavnet",
