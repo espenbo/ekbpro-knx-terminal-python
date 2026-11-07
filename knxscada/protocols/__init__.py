@@ -109,6 +109,10 @@ _LOG_SETTINGS = (
           help=N_("At most one stored value per tag in this time (on/off changes are always stored)")),
 )
 
+#: OPC UA ``security`` values that sign or encrypt: only with these are certificates used.
+_OPCUA_SECURE = ("Basic256Sha256,Sign", "Basic256Sha256,SignAndEncrypt",
+                 "Aes128Sha256RsaOaep,SignAndEncrypt", "Aes256Sha256RsaPss,SignAndEncrypt")
+
 MODBUS_TYPES = ("bool", "int16", "uint16", "int32", "uint32", "float32", "int64", "uint64", "float64")
 
 PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
@@ -210,11 +214,21 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
                   help=N_("Server: opc.tcp://0.0.0.0:4840 listens on every address")),
             Field("username", N_("User name"), "str", "", help=N_("Empty = anonymous")),
             Field("password", N_("Password"), "password", ""),
-            Field("security", N_("Security"), "choice", "None",
-                  ("None", "Basic256Sha256,Sign", "Basic256Sha256,SignAndEncrypt",
-                   "Aes128Sha256RsaOaep,SignAndEncrypt", "Aes256Sha256RsaPss,SignAndEncrypt")),
+            Field("security", N_("Security"), "choice", "None", ("None", *_OPCUA_SECURE)),
             Field("namespace", N_("Namespace URI"), "str", "urn:ekbpro:gateway", show={"role": ("server",)}),
             Field("publish_interval_ms", N_("Publish interval (ms)"), "int", 500, show={"role": ("client",)}),
+            # Same default as the PLC bridge (opcua_bridge.make_client), which the client driver uses.
+            Field("timeout_s", N_("Timeout (s)"), "float", 10, show={"role": ("client",)}),
+            # Paths are relative to config.yaml. No default here: an empty value would resolve to the config folder,
+            # so the client (make_client) and the server driver fill in their own file names instead.
+            Field("certificate", N_("Own certificate"), "str", None, show={"security": _OPCUA_SECURE},
+                  help=N_("Empty = var/opcua/client_cert.der (client) or server_cert.der (server), made automatically")),
+            Field("private_key", N_("Own private key"), "str", None, show={"security": _OPCUA_SECURE},
+                  help=N_("Empty = var/opcua/client_key.pem (client) or server_key.pem (server)")),
+            # Pinning: without it the client trusts whatever certificate the (unauthenticated) endpoint list offers.
+            Field("server_certificate", N_("Server certificate (pinned)"), "str", None,
+                  show={"role": ("client",), "security": _OPCUA_SECURE},
+                  help=N_("The PLC's certificate file (.der) – recommended with security")),
             *_LOG_SETTINGS,
         ),
         tag_fields=(

@@ -202,6 +202,9 @@ the PLC stays as it is. `./scada plc-gateway` turns `plc:` and `plc_map.yaml` in
 
 The bridge's guards come along: the gateway's **restart guard** towards KNX (`settle_ms`, `burst_limit`,
 `restart_quiet_s`, same defaults and behaviour) and `min_interval_ms` towards KNX. KNX never gets initial values.
+So do the client settings: `username`, `password`, `security`, `publish_interval_ms`, `timeout_s`, `certificate`,
+`private_key` and `server_certificate` (the pinned PLC certificate). Paths stay relative to `config.yaml`, as for the
+bridge.
 
 ```bash
 ./scada plc-gateway            # prints the result (password masked) – check it

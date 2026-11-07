@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/bin/python -m pytest -q tests/test_plc.py tests/test_i18n.py tests/test_protocols.py)",
+      "Bash(venv/bin/ruff check *)",
+      "Bash(venv/bin/python -m pytest -q)"
+    ]
+  }
+}

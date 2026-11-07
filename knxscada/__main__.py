@@ -332,9 +332,6 @@ def plc_gateway(cfg, args) -> int:
                 print(_("GVL {gvl} not found on the PLC – is it in the Symbol Configuration?").format(gvl=plc["gvl"]))
                 return 1
             namespace, prefix = found
-        if plc.get("server_certificate"):
-            print(_("Note: plc.server_certificate is not used by the OPC UA connection – the PLC's certificate is "
-                    "taken from the endpoint."))
         name, conn, gws = gateway_config(plc, entries, str(prefix), int(namespace if namespace is not None else 4))
         connections[name] = conn
         gateways += gws

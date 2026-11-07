@@ -204,6 +204,9 @@ PLS-en blir som den er. `./scada plc-gateway` gjør `plc:` og `plc_map.yaml` om 
 
 Broens vakter blir med: gatewayens **omstartsvern** mot KNX (`settle_ms`, `burst_limit`, `restart_quiet_s`, samme
 standardverdier og virkemåte) og `min_interval_ms` mot KNX. KNX får aldri startverdier.
+Det gjør også klientinnstillingene: `username`, `password`, `security`, `publish_interval_ms`, `timeout_s`,
+`certificate`, `private_key` og `server_certificate` (det låste PLS-sertifikatet). Stiene er fortsatt relative til
+`config.yaml`, som for broen.
 
 ```bash
 ./scada plc-gateway            # skriver ut resultatet (passordet maskert) – kontroller det

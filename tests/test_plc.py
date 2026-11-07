@@ -263,6 +263,90 @@ def test_gateway_config_from_the_bridge_mapping():
     assert pconf.validate(data, knx=True) == []
 
 
+#: A bridge set up with encryption, its own client certificate, a pinned PLC certificate and a longer timeout.
+_SECURE_PLC = {"name": "plc", "endpoint": "opc.tcp://192.168.1.10:4840", "username": "admin", "password": "x",
+               "security": "Basic256Sha256,SignAndEncrypt", "timeout_s": 25,
+               "certificate": "var/opcua/site_cert.der", "private_key": "var/opcua/site_key.pem",
+               "server_certificate": "var/opcua/plc_cert.der"}
+
+
+def test_gateway_config_keeps_the_security_settings():
+    """``plc-gateway`` copies the certificate pinning, the client certificate and key and the timeout unchanged
+    (paths stay relative to config.yaml, as for the bridge), and the result passes validation."""
+    from knxscada.protocols import config as pconf
+
+    name, conn, _gws = plc.gateway_config(_SECURE_PLC, _entries(), "P.", 4)
+    for key in ("security", "timeout_s", "certificate", "private_key", "server_certificate", "username", "password"):
+        assert conn[key] == _SECURE_PLC[key], key
+    assert pconf.validate({"connections": {name: conn}, "gateways": _gws}, knx=True) == []
+
+
+def test_gateway_config_adds_no_empty_security_settings():
+    """A bridge without certificates or timeout gives a connection without those keys, so the driver's defaults
+    (the same as the bridge's) apply – no empty path that would resolve to the config folder."""
+    _name, conn, _gws = plc.gateway_config({"name": "plc", "endpoint": "opc.tcp://192.168.1.10:4840",
+                                             "server_certificate": "", "certificate": None}, _entries(), "P.", 4)
+    assert not {"timeout_s", "certificate", "private_key", "server_certificate"} & conn.keys()
+
+
+def test_opcua_security_settings_are_validated():
+    """The OPC UA connection knows the settings now: a timeout that is not a number is refused."""
+    from knxscada.protocols import config as pconf
+
+    conn = {"protocol": "opcua", "endpoint": "opc.tcp://192.168.1.10:4840", "timeout_s": "ten"}
+    errors = pconf.validate({"connections": {"plc": conn}})
+    assert len(errors) == 1 and "timeout_s" in errors[0]
+
+
+def test_migrated_security_settings_survive_saving(tmp_path):
+    """Written with --write (``config.save``) and read back, the settings are unchanged; the file stays 0600 because
+    it holds the password, and the previous file is kept as ``.bak``."""
+    from knxscada.protocols import config as pconf
+
+    name, conn, gws = plc.gateway_config(_SECURE_PLC, _entries(), "P.", 4)
+    path = tmp_path / "protocols.yaml"
+    pconf.save(path, {"connections": {name: conn}, "gateways": gws}, knx=True)
+    pconf.save(path, pconf.load_data(path), knx=True)          # a second save, as F11 does after an edit
+    back = pconf.load_data(path)["connections"][name]
+    for key in ("security", "timeout_s", "certificate", "private_key", "server_certificate", "password"):
+        assert back[key] == _SECURE_PLC[key], key
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.with_suffix(".yaml.bak").exists()
+
+
+def test_migrated_connection_pins_the_plc_certificate(tmp_path, monkeypatch):
+    """The migrated connection, as the OPC UA driver gets it (``settings_of``), makes the same client as the bridge:
+    the pinned PLC certificate, the site's own certificate and key (resolved against config.yaml) and the timeout.
+    Nothing connects – ``set_security`` is recorded and certificate creation is skipped."""
+    import asyncio
+
+    from asyncua import Client
+
+    from knxscada import opcua_bridge
+    from knxscada.config import Config
+    from knxscada.protocols import config as pconf
+
+    seen: dict = {}
+
+    async def set_security(self, policy, cert, key, server_certificate=None, mode=None):
+        """Record what the client would use instead of loading certificate files."""
+        seen.update(policy=policy.__name__, cert=cert, key=key, pinned=server_certificate, mode=mode)
+
+    async def no_certificate(cert, key):
+        """Skip making a self-signed certificate: only the paths matter here."""
+
+    monkeypatch.setattr(Client, "set_security", set_security)
+    monkeypatch.setattr(opcua_bridge, "ensure_certificate", no_certificate)
+    _name, conn, _gws = plc.gateway_config(_SECURE_PLC, _entries(), "P.", 4)
+    cfg = Config(path=tmp_path / "config.yaml")
+    client = asyncio.run(opcua_bridge.make_client(cfg, pconf.settings_of(conn)))
+    assert seen["pinned"] == str(tmp_path / "var/opcua/plc_cert.der")
+    assert seen["cert"] == str(tmp_path / "var/opcua/site_cert.der")
+    assert seen["key"] == str(tmp_path / "var/opcua/site_key.pem")
+    assert seen["policy"] == "SecurityPolicyBasic256Sha256" and seen["mode"].name == "SignAndEncrypt"
+    assert client.uaclient._timeout == 25
+
+
 def test_bridge_mapping_through_the_gateways(tmp_path):
     """The generated gateways move values as the bridge did: KNX statuses fill the PLC at start-up, the PLC's own
     start values never reach KNX, a two-way light and a PLC → KNX mode go to KNX after the settle time."""
