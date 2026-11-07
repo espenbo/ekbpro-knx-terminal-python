@@ -1,4 +1,4 @@
-# Protocols and gateways (Modbus, MQTT, OPC UA, BACnet)
+# Protocols and gateways (Modbus, MQTT, Sparkplug B, OPC UA, BACnet)
 
 Besides KNX the server can talk Modbus, MQTT, OPC UA and BACnet/IP, and move values between them. All protocols are equal:
 KNX is one module among the others, and the server also runs **without KNX**, e.g. as a plain Modbus → OPC UA
@@ -27,7 +27,8 @@ Each protocol is a module with its own Python packages. They are only installed 
 ```bash
 ./scada modules                       # which modules exist, are installed and are used
 ./scada modules install modbus mqtt   # knx: xknx + xknxproject · modbus: pymodbus + pyserial · mqtt: aiomqtt
-                                      # opcua: asyncua (also for the PLC bridge) · bacnet: bacpypes3
+                                      # sparkplug: aiomqtt · opcua: asyncua (also for the PLC bridge)
+                                      # bacnet: bacpypes3
 ```
 
 Restart the server afterwards. A connection whose module is missing is shown in F11 and in `./scada gateway`
@@ -40,10 +41,11 @@ missing stops at start-up with `./scada modules install knx`.
 | `knx`    | the KNX bus, when KNX is set up in `config.yaml` (`setup.sh` installs it by default) | – |
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | subscribe and publish to a broker      | –                                           |
+| `sparkplug` | host application of a Sparkplug B edge node | our own Sparkplug B edge node           |
 | `opcua`  | client of a PLC or another server      | our own OPC UA server for SCADA systems     |
 | `bacnet` | BACnet/IP client of a device (read, write, COV) | our own BACnet device for BMS/SCADA systems |
 
-MQTT Sparkplug B and Matter are planned.
+Matter is planned.
 
 ## 2. Connections
 
@@ -213,6 +215,43 @@ Tags: `topic` (default prefix + tag name), `json_key` (pick the value out of a l
 (where writes go; empty = the tag's own topic, and `<topic>/set` for tags found through `subscribe`). A gateway target is published to prefix + name; with `direction: both` the gateway also listens
 to `<topic>/set`.
 
+### MQTT Sparkplug B
+
+Sparkplug B (Eclipse Tahu, v3.0) carries values with a type, birth and death over an MQTT broker, on the topics
+`spBv1.0/<group>/<type>/<edge node>[/<device>]`. Many SCADA systems (Ignition with MQTT Engine, AVEVA, …) read it
+directly. The module needs only `aiomqtt`, like `mqtt`: the protobuf messages are encoded in the module itself.
+
+| Setting | Default | |
+|---|---|---|
+| `role` | `client` | `server`: we are an edge node · `client`: a host application that follows one |
+| `host`, `port`, `username`, `password`, `tls`, `client_id` | `127.0.0.1`, `1883` | The broker, as for `mqtt` |
+| `group_id` | `knxscada` | The Sparkplug group |
+| `edge_node` | server `knxscada`, client `+` | Server: our edge node id · client: the node to follow (`+` = every node) |
+| `rebirth_request` | `true` | Client: ask the node for its birth after connecting (NCMD `Node Control/Rebirth`) |
+| `qos` | `0` | `0` or `1` |
+
+- **Server (edge node):** every gateway target is a metric. Connecting publishes NBIRTH with all of them (type,
+  alias, current value) plus `bdSeq` and `Node Control/Rebirth`; each change is NDATA. When the server stops or the
+  connection is lost, NDEATH tells the host applications (also as the MQTT will). An NCMD for a metric of a
+  `direction: both` line is passed back to the source, like `<topic>/set` for MQTT; `Node Control/Rebirth` gives a
+  new NBIRTH.
+- **Client (host application):** every metric in a birth becomes a tag by itself (`<device>/<metric>` for device
+  metrics), read-only. Tags under `tags:` pick a metric (`metric`, `device`) to give it a name, scale, unit or
+  `writable: true`; writing sends NCMD/DCMD with the metric's type from the birth. A death marks the tags "bad".
+  Asking for a rebirth is a standard control command, not a process value.
+
+```yaml
+connections:
+  sparkplug:                       # knxscada as an edge node: the KNX values for a SCADA system
+    protocol: sparkplug
+    role: server
+    host: 192.168.1.20
+    group_id: Building1
+    edge_node: knx
+gateways:
+  - {name: knx-sparkplug, from: knx, to: sparkplug, map: ["3/0/*"]}
+```
+
 ### OPC UA
 
 | Setting | Default | |
@@ -262,7 +301,8 @@ Tags name an object: `object: av:3` (short names `ai ao av bi bo bv msi mso msv 
 write `priority`. Inputs (`ai`, `bi`, `msi`) are read-only unless the tag says `writable: true`. An operator can
 choose another priority for a single write, and release a priority again, in the TUI's write dialog (user guide,
 "Writing to BACnet"); `point_write` takes `priority` and `release: true` for this. Priorities 1, 2 and 5 are
-refused for operators.
+refused for operators. `point_priorities` (read-only) returns the object's `priority-array` and
+`relinquish-default`, which the dialog shows.
 
 `./scada bacnet-scan ADDRESS` finds the device with a Who-Is sent to its address. Many devices (Siemens Climatix,
 Belimo) answer with a broadcast I-Am that never crosses a VPN; the scan then reads the wildcard device instance

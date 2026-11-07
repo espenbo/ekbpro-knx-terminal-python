@@ -15,6 +15,22 @@
 
 ## The server as a systemd service
 
+The simplest way is `./scada service`, run as the user that owns the program folder:
+
+```bash
+./scada service install                                   # the default config.yaml → knxscada
+./scada -c sites/house/config.yaml service install        # a site → knxscada-house
+./scada service status                                    # installed, enabled, running, since when
+./scada service remove
+```
+
+`install` makes the unit from [`deploy/knxscada.service`](../../deploy/knxscada.service) for the configuration in
+use: your user, the site folder's group, `-c <config.yaml>` for a site and `ReadWritePaths` = the folder of the
+database. Without root it writes the unit to `var/systemd/<name>.service` and prints the `sudo` commands (install,
+`daemon-reload`, `enable`, `restart`), so nothing changes before you run them. `--name` sets another service name.
+
+By hand:
+
 [`deploy/knxscada.service`](../../deploy/knxscada.service) contains the placeholders `YOUR_USER` and `INSTALL_DIR`.
 Run this from the program directory as the user that owns it – it fills them in and installs the service:
 

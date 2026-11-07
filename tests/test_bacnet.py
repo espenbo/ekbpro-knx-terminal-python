@@ -386,3 +386,76 @@ def test_find_device_without_i_am():
     assert device_id == 11030 and app.asked == [f"device,{WILDCARD_INSTANCE} object-identifier"]
     with pytest.raises(ConnectionError, match="no answer"):
         asyncio.run(find_device(App(answer=False), "192.168.1.76"))
+
+
+@pytestmark_bacnet
+def test_priority_values_and_text():
+    """A priority array becomes 16 plain values (None = empty; binary objects as True/False), and the write dialog's
+    line names the slots in use with the deciding one first – or the relinquish default when all are empty."""
+    from bacpypes3.basetypes import PriorityArray, PriorityValue
+    from bacpypes3.primitivedata import Enumerated, Null, Real
+
+    from knxscada.protocols.bacnet import priority_values
+    from knxscada.tui.gateways import priority_text
+
+    slots = [PriorityValue(null=Null(())) for _ in range(16)]
+    slots[7], slots[15] = PriorityValue(real=Real(21.5)), PriorityValue(real=Real(19.0))
+    assert priority_values(PriorityArray(slots), "analog-value") == [None] * 7 + [21.5] + [None] * 7 + [19.0]
+    binary = [PriorityValue(null=Null(())) for _ in range(16)]
+    binary[15] = PriorityValue(enumerated=Enumerated(1))
+    assert priority_values(PriorityArray(binary), "binary-value")[15] is True
+    line = priority_text({"slots": [None] * 7 + [21.5] + [None] * 7 + [19.0], "default": 20.0}).plain
+    assert line == "Priority array: 8 = 21.5  ·  16 = 19   (8 decides)"
+    assert "default 20 decides" in priority_text({"slots": [None] * 16, "default": 20.0}).plain
+
+
+@pytestmark_bacnet
+def test_client_reads_the_priority_array(tmp_path):
+    """``point_priorities`` reads priority-array and relinquish-default of a client tag (a read, nothing written);
+    a device whose object is not commandable gives a clear error, and a connection without priorities refuses."""
+    from bacpypes3.basetypes import PriorityArray, PriorityValue
+    from bacpypes3.primitivedata import Null, Real
+
+    port = free_port()
+
+    async def run():
+        """Our BACnet device and a client of it; the client's ReadProperty is answered by a stand-in for one object."""
+        src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False)
+        data = {"connections": {"bac": _device(port)}, "gateways": [
+            {"name": "to-bacnet", "from": "src", "to": "bac", "map": [{"from": "t", "to": "Temp"}]}]}
+        hub = _hub(tmp_path, data, (src,))
+        await asyncio.sleep(0.05)
+        await hub.start()
+        try:
+            await until(lambda: hub.drivers["bac"].connected, 10)
+            hub.update("src", "t", 20.0)
+            hub._make("cli", _client(port, {"Temp": {"object": "av:1"}}, priority=16))
+            hub._build_engine()
+            cli = hub.drivers["cli"]
+            await until(lambda: cli.ready, 10)
+            # Our own objects are not commandable: the device answers with an error.
+            with pytest.raises(ValueError, match="no priority array"):
+                await hub.command({"cmd": "point_priorities", "conn": "cli", "tag": "Temp"}, "test")
+            real_read = cli.app.read_property
+
+            async def commandable(address, objid, prop, *args, **kw):
+                """Answer priority-array and relinquish-default like a commandable analog value."""
+                if prop == "priority-array":
+                    slots = [PriorityValue(null=Null(())) for _ in range(16)]
+                    slots[7] = PriorityValue(real=Real(22.0))
+                    return PriorityArray(slots)
+                if prop == "relinquish-default":
+                    return Real(20.0)
+                return await real_read(address, objid, prop, *args, **kw)
+
+            cli.app.read_property = commandable
+            res = await hub.command({"cmd": "point_priorities", "conn": "cli", "tag": "Temp"}, "test")
+            assert res == {"slots": [None] * 7 + [22.0] + [None] * 8, "default": 20.0}
+            with pytest.raises(ValueError, match="no write priorities"):
+                await hub.command({"cmd": "point_priorities", "conn": "src", "tag": "t"}, "test")
+            with pytest.raises(ValueError, match="Unknown tag"):
+                await hub.command({"cmd": "point_priorities", "conn": "cli", "tag": "nope"}, "test")
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

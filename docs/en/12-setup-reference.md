@@ -55,7 +55,8 @@ the program folder. Without a command, `tui` starts.
 |---|---|---|
 | `tui` | `--language en\|nb` | The terminal user interface (needs a running server) |
 | `server` | `--demo` (simulated bus, own database), `-v` (debug log) | KNX, logging, alarms, PLC bridge, protocols, socket |
-| `init PROJECT` | `--gateway IP`, `--connection TYPE`, `--password PW`, `--language en\|nb`, `--force` | Writes `config.yaml` from the template and imports the project |
+| `setup` | – | Questions in the terminal: ETS project, KNX connection (search, USB), modules, equipment search, config.yaml, service |
+| `init PROJECT` | `--gateway IP`, `--connection TYPE`, `--password PW`, `--keyring FILE`, `--keyring-password PW`, `--user-id N`, `--usb-device DEV`, `--language en\|nb`, `--force` | Writes `config.yaml` from the template and imports the project |
 | `import` | | Re-reads the ETS project(s), rebuilds the cache |
 | `info` | | Summary of the project: addresses, cards, floors and rooms |
 | `plan-dxf [FILE]` | | Floor plan to DXF (default `plan.dxf` in the current folder) |
@@ -65,12 +66,14 @@ the program folder. Without a command, `tui` starts.
 | `modules` | `install NAME …` | Lists the protocol modules, or installs them |
 | `gateway` | | Checks `protocols.yaml`, with live status when the server runs |
 | `simulate [MODEL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Plays a device template as a Modbus slave, for tests without equipment; without a model it lists the templates |
+| `service install\|remove\|status` | `--name NAME` | The server as a systemd service from `deploy/knxscada.service` for this config; without root the `sudo` commands are printed |
+| `knx-usb [DEVICE]` | `--listen SECONDS` | The KNX USB interfaces (path, USB id, serial number, access); with `--listen` the telegrams seen through one, nothing is sent |
 | `bacnet-scan [ADDRESS]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Without an address: the BACnet devices on the network (Who-Is); with one: the objects of the device, `--yaml` as a connection for `protocols.yaml` |
 
 `./setup.sh [knx modbus mqtt opcua bacnet]` creates `venv/`, installs the base packages and the named protocol
 modules (none named: it asks, default `knx`), and runs `./scada import` when `config.yaml` exists and KNX is
 installed. Base packages: `textual`, `textual-plotext`, `PyYAML`. Modules: `knx` (`xknx`, `xknxproject`), `modbus`,
-`mqtt`, `opcua` (`asyncua`, also needed by the PLC bridge `plc:`), `bacnet`.
+`mqtt`, `sparkplug`, `opcua` (`asyncua`, also needed by the PLC bridge `plc:`), `bacnet`.
 
 ## Tasks
 
@@ -86,7 +89,7 @@ git clone <repository> ~/knx_scada && cd ~/knx_scada
 ```
 
 `--gateway` empty = automatic discovery. `--connection`: `tunneling` (default with a gateway), `tunneling_tcp`,
-`routing`, `automatic`, `tunneling_secure`, `routing_secure` – it is not checked by `init`, a typo only shows when
+`routing`, `automatic`, `tunneling_secure`, `routing_secure`, `usb` – it is not checked by `init`, a typo only shows when
 the server starts. Then install the service: [Operation and SSH](05-operation-and-ssh.md).
 
 ### B. Another site on the same machine
@@ -202,7 +205,7 @@ Every key, with its default where it has one. Keys marked *optional* can be left
 ```yaml
 knx:
   enabled: true                       # optional; false = no KNX (protocols.yaml only)
-  connection: automatic               # tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure
+  connection: automatic               # tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure | usb
   gateway_ip: 192.168.1.50            # not needed for routing/automatic
   gateway_port: 3671
   local_ip: 192.168.1.10              # optional; machines with several networks
@@ -320,12 +323,13 @@ plc:
 | Key | Type | Default | Valid values |
 |---|---|---|---|
 | `enabled` | bool | on when `knx:` or `project:` is filled in | only `false` turns KNX off |
-| `connection` | text | `automatic` | `tunneling`, `tunneling_tcp`, `routing`, `automatic`, `tunneling_secure`, `routing_secure`. Anything else stops the server. |
+| `connection` | text | `automatic` | `tunneling`, `tunneling_tcp`, `routing`, `automatic`, `tunneling_secure`, `routing_secure`, `usb`. Anything else stops the server. |
 | `gateway_ip` | IP | – | |
 | `gateway_port` | int | `3671` | |
 | `local_ip` | IP | automatic | |
 | `route_back` | bool | `false` | |
 | `individual_address` | text | – | `1.1.250` |
+| `usb_device` | text | first found | `usb` only: serial number, `/dev/hidrawN` or `vvvv:pppp` |
 | `keyring_file` | path | – | `.knxkeys`; turns on KNX Secure |
 | `keyring_password` | text | – | |
 | `user_id` | int | – | |
@@ -334,7 +338,7 @@ plc:
 | `interfaces` | list | – | see below |
 
 `interfaces[]`: `name` (default `gateway_ip`, else `knx1` …; unique), `gateway_ip`, `gateway_port`,
-`individual_address` (never inherited), `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`,
+`individual_address`, `usb_device` (never inherited), `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`,
 `user_id`, `dedup_ms` (inherited from `knx:`), `addresses` (glob or list of globs, default none), `default` (bool,
 at most one per project), `project` (a `project.files[].name`, default the first project).
 
@@ -443,7 +447,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 ```yaml
 connections:
   meter1:                             # name: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" is reserved
-    protocol: modbus                  # modbus | mqtt | opcua | bacnet
+    protocol: modbus                  # modbus | mqtt | sparkplug | opcua | bacnet
     role: client                      # client (master) | server (slave)
     model: WAGO 879-3000              # optional device template (list: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
@@ -480,6 +484,18 @@ connections:
     retain: true
     tags:
       Outdoor: {topic: weather/temp, type: float, json_key: value, unit: °C}
+
+  sparkplug:
+    protocol: sparkplug
+    role: server                      # server = our edge node | client = host application of one
+    host: 127.0.0.1
+    port: 1883
+    group_id: knxscada
+    edge_node: knx                    # server: our node id · client: the node to follow (+ = all)
+    rebirth_request: true             # client: ask for the birth after connecting
+    qos: '0'                          # 0 | 1
+    tags:                             # client: name, scale, unit or writable for chosen metrics
+      Outdoor: {metric: Outdoor temp, device: "", type: float, unit: °C, writable: false}
 
   plc1:
     protocol: opcua

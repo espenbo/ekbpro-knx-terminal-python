@@ -118,7 +118,10 @@ protocol in an installation without KNX); pressed again, it moves on to the next
 
 ### Monitor › Modbus, OPC UA, BACnet, MQTT
 
-On top, the connections of the protocol with role, address, number of tags and state (as in F11). Below, every
+On top, the connections of the protocol with role, address, number of tags and state (as in F11), and counters since
+the server started: **Reads** (every value read, changed or not), **/min** (reads per minute), **Changes**,
+**Errors** (values with bad quality, red when there are any) and **Lost** (connections lost). The counters are
+updated every 10 seconds. Below, every
 **value change** of their tags (← time, connection, tag, description, value with unit, quality when it is not
 good) and every **write** (→ value and the user who wrote it), live. Values that do not change are not shown:
 the hub passes on changes only.
@@ -126,6 +129,9 @@ the hub passes on changes only.
 - **`/`** filters on connection, tag, description, value or user; `write` lists only writes, `released`
   the releases.
 - **`p`** pauses and resumes, **`c`** clears the view.
+- **`f`** hides the tags that change all the time – more than 20 times in the last minute, for example a PLC clock
+  (`Act_Time`) – so the other changes are easier to see. The badge next to the filter says how many are hidden; `f`
+  again shows them. Writes are never hidden.
 - **Enter, click or `w`** on a line writes a new value to its tag, with confirmation – only for tags with
   `writable: true`. For BACnet the dialog also offers the write priority (see "Writing to BACnet" below).
 
@@ -142,6 +148,13 @@ field preset to the tag's or connection's `priority` (16 when none is set):
 - **Release** writes "nothing" into the chosen slot, so the value with the next lower priority takes over again.
   Release the same priority you wrote with.
 - 1, 2 and 5 (life safety and critical equipment) are never offered, and the server refuses them.
+- Under the priority the dialog shows the device's **priority array**: the slots in use, highest first, and which
+  one decides the value now (or that the relinquish default decides when all are empty). If a higher priority than
+  yours is in use, your write will not show until that one is released. Objects that are not commandable say so.
+
+On a **room card** (rooms from `project.point_rooms`) the switch, `−` / `+` and the other controls write with the
+tag's default priority, so normal operation stays one click. Press **`p`** on the row of a BACnet tag to get the
+write dialog with the priority choice and **Release**; the tooltip of such a row says so.
 
 The event log shows each write with the priority when it was not the default, and releases as
 "released (priority 8)".
@@ -241,9 +254,11 @@ What is shown is set up in [`ui.systems`](04-configuration.md#systems-view-ctrle
 
 ## Energy meters (Ctrl+G)
 
-A table of the meters: power, energy, current and voltage per phase, cos φ, frequency and the last 24 hours of
-power. The meter under the cursor (`↑` / `↓`) gets a power curve and the consumption per hour or day, worked out
-from its energy counter, and the consumption today and in the period. `d` / `w` / `m` choose 24 hours, 7 days or
+A table of the meters: power, energy, current and voltage per phase, cos φ, frequency, the consumption **yesterday**
+and **this month** (kWh), and the last 24 hours of power. The meter under the cursor (`↑` / `↓`) gets a power curve
+and the consumption per hour or day, worked out from its energy counter, and the consumption today, yesterday, this
+month, last month and in the period. Days and months follow local time (midnight, the first of the month), also when
+summer time starts or ends. A period the log does not reach back to shows "–". `d` / `w` / `m` choose 24 hours, 7 days or
 30 days. The curves need the power and energy tags to be logged (`log` in `protocols.yaml`).
 
 ## F8 Floor plan

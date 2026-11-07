@@ -130,6 +130,25 @@ def from_bacnet(value: Any) -> Any:
     return str(value)
 
 
+def priority_values(array: Any, object_type: str) -> list[Any]:
+    """A ``priority-array`` (16 ``PriorityValue`` choices) as plain values, None for an empty slot (Null).
+
+    Binary objects come back as enumerations (active = 1) and are shown as True/False, like their present value.
+    """
+    out: list[Any] = []
+    for pv in array or []:
+        value = None
+        for key in getattr(pv, "_elements", {}):
+            v = getattr(pv, key, None)
+            if v is not None:
+                value = None if key == "null" else from_bacnet(v)
+                break
+        if value is not None and object_type.startswith("binary") and not isinstance(value, bool):
+            value = int(value) == 1
+        out.append(value)
+    return out
+
+
 def to_bacnet(object_type: str, prop: str, raw: Any) -> Any:
     """A raw value → what the present value of *object_type* takes (other properties: unchanged)."""
     if prop != "present-value":
@@ -572,6 +591,32 @@ class Driver(BaseDriver):
         self.publish(tag, from_bacnet(value))
 
     # -- values -----------------------------------------------------------------------------------
+    async def priority_array(self, tag: Tag) -> dict[str, Any]:
+        """Read the object's ``priority-array`` and ``relinquish-default`` (client only) for the write dialog: which
+        slots command the value now, so the operator sees whether a higher priority overrides their write.
+
+        Objects that are not commandable have no priority array: the device's error is passed on as ValueError.
+        """
+        if self.role == "server":
+            raise ValueError(_("{tag}: our own objects have no priority array to release").format(tag=tag.name))
+        if self.app is None or not self.connected:
+            raise ConnectionError(_("{connection} is not connected").format(connection=self.name))
+        otype, instance = self.objects[tag.name]
+        obj = f"{otype},{instance}"
+        try:
+            array = await self.app.read_property(self.target, obj, "priority-array")
+        except _failures() as exc:
+            if _no_answer(exc):
+                raise ConnectionError(_("no answer from {where}").format(where=self.target)) from None
+            raise ValueError(_("{tag}: no priority array ({error})").format(tag=tag.name, error=exc)) from None
+        try:
+            default = from_bacnet(await self.app.read_property(self.target, obj, "relinquish-default"))
+        except _failures():
+            default = None                  # optional for some objects: the slots alone are still useful
+        if default is not None and otype.startswith("binary") and not isinstance(default, bool):
+            default = int(default) == 1
+        return {"slots": priority_values(array, otype), "default": default}
+
     async def write(self, tag: Tag, value: Any, user: str = "", priority: int | None = None,
                     release: bool = False) -> None:
         """Write *value* to the device (client) or to our own object (server).

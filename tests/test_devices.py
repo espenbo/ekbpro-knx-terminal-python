@@ -113,6 +113,36 @@ def test_master_identifies_the_meter(tmp_path):
     asyncio.run(run())
 
 
+@pytest.mark.skipif(not installed("modbus"), reason="pymodbus is not installed")
+def test_identification_retries_unanswered_registers(tmp_path, monkeypatch):
+    """A register that gets no answer once (an RS485 gateway drops a request now and then) is asked again, so the
+    report shows the baud rate instead of "?"; one that never answers is left out after IDENTIFY_TRIES."""
+    from knxscada.protocols import modbus
+    from knxscada.protocols.hub import Hub
+
+    from .test_protocols import FakeServer
+
+    monkeypatch.setattr(modbus, "IDENTIFY_RETRY_S", 0)
+    hub = Hub(FakeServer(tmp_path))
+    drv = modbus.Driver("m", settings_of({"protocol": "modbus", "host": "127.0.0.1", "model": "WAGO 879-3000"}), hub)
+    answers = {0x4002: [0x1112], 0x4003: [4], 0x4004: [6], 0x4011: [2], 0x4000: [0x0161, 0x9A89]}
+    asked: list[int] = []
+
+    async def read(table, unit, start, count):
+        """The baud rate answers on the second try, the parity never."""
+        asked.append(start)
+        if start == 0x4004 and asked.count(start) == 1:
+            return None
+        if start == 0x4011:
+            return None
+        return answers[start]
+
+    monkeypatch.setattr(drv, "_read", read)
+    asyncio.run(drv._identify())
+    assert "9600" in drv.identity and "unit 4" in drv.identity and "serial 01619A89" in drv.identity
+    assert asked.count(0x4004) == 2 and asked.count(0x4011) == modbus.IDENTIFY_TRIES
+
+
 # -- Carlo Gavazzi ---------------------------------------------------------------------------------------
 @pytest.mark.parametrize(("model", "n_tags", "max_regs", "max_gap"), [
     ("Carlo Gavazzi EM111", 17, 50, 8), ("Carlo Gavazzi EM112", 17, 50, 8), ("Carlo Gavazzi ET112", 18, 50, 8),

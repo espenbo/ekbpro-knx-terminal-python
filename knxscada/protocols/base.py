@@ -318,6 +318,13 @@ class Driver:
         """
         raise NotImplementedError
 
+    async def priority_array(self, tag: Tag) -> dict[str, Any]:
+        """Who commands *tag* now: ``{"slots": [16 values, None = empty], "default": relinquish default}``.
+
+        Only drivers with :attr:`priorities` (BACnet client) can answer; called by the hub for the write dialog.
+        """
+        raise ValueError(_("{connection} has no write priorities (only BACnet has)").format(connection=self.name))
+
     def publish(self, tag: Tag, raw: Any, quality: str = "good") -> None:
         """Report a raw value read from or sent by the other side."""
         try:

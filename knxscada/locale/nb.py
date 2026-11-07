@@ -310,7 +310,6 @@ CATALOGUE: dict[str, str] = {
     "last 24 hours": "siste døgn",
     "INDOOR CLIMATE": "INNEKLIMA",
     "Press a key and go to F5 to acknowledge": "Trykk en tast og gå til F5 for å kvittere",
-    "/: filter  p: pause  c: clear  Enter/w: write": "/: filter  p: pause  c: tøm  Enter/w: skriv",
     "Connections": "Tilkoblinger",
     "Connection": "Tilkobling",
     "{protocol} – value changes and writes": "{protocol} – verdiendringer og skrivinger",
@@ -1008,4 +1007,110 @@ CATALOGUE: dict[str, str] = {
     "Filter by tag or description …": "Filtrer på tagg eller beskrivelse …",
     "project.point_rooms: no tag {tag} in protocols.yaml": "project.point_rooms: taggen {tag} finnes ikke i protocols.yaml",
     "Main building": "Hovedbygg",
+    # KNX USB interfaces (knx_usb.py, ./scada knx-usb)
+    "No KNX USB interface found.": "Fant ingen KNX USB-grensesnitt.",
+    "ok": "ok",
+    "no access – see deploy/99-knx-usb.rules": "ingen tilgang – se deploy/99-knx-usb.rules",
+    "{path} {name}: listening for {seconds} s (nothing is sent) …": "{path} {name}: lytter i {seconds} s (ingenting sendes) …",
+    "KNX USB interface not open": "KNX USB-grensesnittet er ikke åpnet",
+    "KNX USB interface not connected": "KNX USB-grensesnittet er ikke tilkoblet",
+    "KNX USB interface {wanted} not found – found: {have}": "Fant ikke KNX USB-grensesnittet {wanted} – fant: {have}",
+    "KNX USB interface {path} does not take data": "KNX USB-grensesnittet {path} tar ikke imot data",
+    "No access to {path} – install deploy/99-knx-usb.rules and add the service user to the plugdev group":
+        "Ingen tilgang til {path} – installer deploy/99-knx-usb.rules og legg tjenestebrukeren i gruppen plugdev",
+    "{name} ({path}) does not support cEMI – only interfaces with cEMI can be used":
+        "{name} ({path}) støtter ikke cEMI – bare grensesnitt med cEMI kan brukes",
+    "{path}: no answer from the KNX USB interface": "{path}: KNX USB-grensesnittet svarer ikke",
+    "{path}: the KNX USB interface refused setting {pid:#x} (error {code})":
+        "{path}: KNX USB-grensesnittet avviste innstillingen {pid:#x} (feil {code})",
+    # ./scada service (service.py)
+    "Run as root:": "Kjør som root:",
+    "systemctl not found – this system does not use systemd.": "Fant ikke systemctl – dette systemet bruker ikke systemd.",
+    "{name}: {active} ({sub}), {enabled}, since {since}, PID {pid}": "{name}: {active} ({sub}), {enabled}, siden {since}, PID {pid}",
+    "Invalid service name {name}": "Ugyldig tjenestenavn {name}",
+    "{name}: not installed": "{name}: ikke installert",
+    "Note: {path} exists and differs – it is replaced.": "Merk: {path} finnes og er annerledes – den erstattes.",
+    "Log: journalctl -u {name} -f": "Logg: journalctl -u {name} -f",
+    # Energy meters: calendar consumption (tui/energy.py)
+    "Yesterday": "I går",
+    "This month": "Denne måneden",
+    "Last month": "Forrige måned",
+    # Room card rows: BACnet priority (tui/widgets.py)
+    "p: write with another priority, or release": "p: skriv med en annen prioritet, eller slipp",
+    "Priority and Release are only for BACnet tags that can be written.":
+        "Prioritet og Slipp gjelder bare BACnet-tagger som kan skrives.",
+    # BACnet priority array in the write dialog (protocols/bacnet.py, tui/gateways.py)
+    "{tag}: no priority array ({error})": "{tag}: ingen prioritetstabell ({error})",
+    "Unknown tag {tag}": "Ukjent tagg {tag}",
+    "Priority array:": "Prioritetstabell:",
+    "empty – the relinquish default {value} decides": "tom – standardverdien {value} (relinquish default) bestemmer",
+    "({slot} decides)": "({slot} bestemmer)",
+    "Priority array not available: {error}": "Prioritetstabellen er ikke tilgjengelig: {error}",
+    "Reading the priority array …": "Leser prioritetstabellen …",
+    # Monitor: counters and fast tags (tui/protomon.py)
+    "/: filter  p: pause  f: hide fast  c: clear  Enter/w: write": "/: filter  p: pause  f: skjul raske  c: tøm  Enter/w: skriv",
+    "Hide fast tags": "Skjul raske tagger",
+    "{n} fast tags hidden (f)": "{n} raske tagger skjult (f)",
+    "Reads": "Lest",
+    "/min": "/min",
+    "Changes": "Endret",
+    "Errors": "Feil",
+    "Lost": "Brudd",
+    # ./scada setup (setup_wizard.py)
+    "Is KNX used?": "Brukes KNX?",
+    "The password was not accepted.": "Passordet ble ikke godtatt.",
+    "Searching for KNX IP interfaces …": "Søker etter KNX IP-grensesnitt …",
+    "Type the address of a KNX IP interface": "Skriv inn adressen til et KNX IP-grensesnitt",
+    "Routing (KNX IP router, multicast)": "Routing (KNX IP-ruter, multicast)",
+    "Automatic search at every start": "Automatisk søk ved hver oppstart",
+    "KNX connection": "KNX-tilkobling",
+    "Run the server as a systemd service?": "Kjøre serveren som systemd-tjeneste?",
+    "ETS project (.knxproj/.knxprojarchive): file, user@host:path or URL":
+        "ETS-prosjekt (.knxproj/.knxprojarchive): fil, bruker@maskin:sti eller URL",
+    "KNX Secure (keyring from ETS)?": "KNX Secure (keyring fra ETS)?",
+    "Search for BACnet devices (Who-Is)?": "Søke etter BACnet-enheter (Who-Is)?",
+    "Set up the connections in the TUI (F11) or in protocols.yaml – tags are read-only until writing has been agreed (writable: true).":
+        "Sett opp tilkoblingene i TUI-en (F11) eller i protocols.yaml – taggene kan bare leses til skriving er avtalt "
+        "(writable: true).",
+    "This sets up {path}. Enter takes the suggestion in brackets.":
+        "Dette setter opp {path}. Enter tar forslaget i hakeparentes.",
+    "Protocol modules: {names}": "Protokollmoduler: {names}",
+    "Objects of a device: ./scada bacnet-scan ADDRESS --yaml": "Objektene i en enhet: ./scada bacnet-scan ADRESSE --yaml",
+    "No BACnet device answered (Who-Is does not pass a VPN: use ./scada bacnet-scan ADDRESS).":
+        "Ingen BACnet-enhet svarte (Who-Is går ikke gjennom VPN: bruk ./scada bacnet-scan ADRESSE).",
+    "Done. Start the server with ./scada{config} server and the visualisation with ./scada{config}":
+        "Ferdig. Start serveren med ./scada{config} server og visualiseringen med ./scada{config}",
+    "scp could not copy {source}": "scp kunne ikke kopiere {source}",
+    "y": "j",
+    "n": "n",
+    "Answer with a number from 1 to {n}.": "Svar med et tall fra 1 til {n}.",
+    "Password of the project (wrong or missing)": "Passordet til prosjektet (feil eller mangler)",
+    "Project: {name}": "Prosjekt: {name}",
+    "Password of the keyring": "Passordet til keyring-fila",
+    "Installing: {names}": "Installerer: {names}",
+    "Imported: {n} group addresses, {rooms} rooms.": "Importert: {n} gruppeadresser, {rooms} rom.",
+    "{path} exists. Replace it (a .bak copy is kept)?": "{path} finnes. Erstatte den (en .bak-kopi beholdes)?",
+    "IP address of the KNX IP interface": "IP-adressen til KNX IP-grensesnittet",
+    "Modules to use (space between)": "Moduler som skal brukes (mellomrom mellom)",
+    "Installation failed – try again later with ./scada modules install {names}":
+        "Installasjonen feilet – prøv igjen senere med ./scada modules install {names}",
+    "device": "enhet",
+    "Nothing answered on port {port}.": "Ingenting svarte på port {port}.",
+    "{path} is not an ETS project: {error}": "{path} er ikke et ETS-prosjekt: {error}",
+    "Search {network} for {protocol} (port {port})?": "Søke i {network} etter {protocol} (port {port})?",
+    "Keyring file (.knxkeys)": "Keyring-fil (.knxkeys)",
+    # MQTT Sparkplug B (protocols/sparkplug.py)
+    "Sparkplug B over MQTT – our own edge node (server), or a host application of one (client)":
+        "Sparkplug B over MQTT – vår egen edge node (server), eller en host-applikasjon for en (klient)",
+    "Group id": "Gruppe-id",
+    "Edge node": "Edge node",
+    "Ask for a rebirth": "Be om ny fødsel (rebirth)",
+    "Metric": "Metrikk",
+    "Server: our edge node id (empty = knxscada) · client: the node to follow (empty or + = all)":
+        "Server: vår edge node-id (tom = knxscada) · klient: noden som følges (tom eller + = alle)",
+    "After connecting, ask the edge node to publish its birth (NCMD Node Control/Rebirth)":
+        "Etter tilkobling: be edge-noden publisere fødselen sin (NCMD Node Control/Rebirth)",
+    "Empty = the tag name": "Tom = taggnavnet",
+    "Empty = a metric of the edge node itself": "Tom = en metrikk i selve edge-noden",
+    "{tag}: no birth from its edge node yet": "{tag}: ingen fødsel fra edge-noden ennå",
 }

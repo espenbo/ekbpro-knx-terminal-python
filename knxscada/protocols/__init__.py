@@ -285,7 +285,34 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
             _WRITABLE, _DESCRIPTION, _LOG,
         ),
     ),
-    Protocol("sparkplug", "MQTT Sparkplug B", None, planned=True, description=N_("Planned")),
+    Protocol(
+        "sparkplug", "MQTT Sparkplug B", "knxscada.protocols.sparkplug",
+        # The same package as mqtt; the Sparkplug protobuf messages are encoded in the module itself.
+        packages=("aiomqtt>=2.0",), imports=("aiomqtt",),
+        roles=("client", "server"),
+        description=N_("Sparkplug B over MQTT – our own edge node (server), or a host application of one (client)"),
+        settings=(
+            _ROLE,
+            Field("host", N_("Broker"), "str", "127.0.0.1", required=True),
+            Field("port", N_("Port"), "int", 1883),
+            Field("username", N_("User name"), "str", ""),
+            Field("password", N_("Password"), "password", ""),
+            Field("tls", N_("TLS"), "bool", False, help=N_("Encrypted connection (port 8883)")),
+            Field("client_id", N_("Client id"), "str", "", help=N_("Empty = automatic")),
+            Field("group_id", N_("Group id"), "str", "knxscada", required=True),
+            Field("edge_node", N_("Edge node"), "str", "",
+                  help=N_("Server: our edge node id (empty = knxscada) · client: the node to follow (empty or + = all)")),
+            Field("rebirth_request", N_("Ask for a rebirth"), "bool", True, show={"role": ("client",)},
+                  help=N_("After connecting, ask the edge node to publish its birth (NCMD Node Control/Rebirth)")),
+            Field("qos", N_("QoS"), "choice", "0", ("0", "1")),
+            *_LOG_SETTINGS,
+        ),
+        tag_fields=(
+            Field("metric", N_("Metric"), "str", "", help=N_("Empty = the tag name")),
+            Field("device", N_("Device"), "str", "", help=N_("Empty = a metric of the edge node itself")),
+            _TYPE, _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION, _LOG,
+        ),
+    ),
     Protocol("matter", "Matter", None, planned=True, description=N_("Planned")),
 )}
 

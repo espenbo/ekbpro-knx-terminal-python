@@ -107,7 +107,7 @@ VIEW_HINTS = {
     "rooms": N_("Tab: next control  Space: operate"),
     "gas": N_("/: search  u: show unused  Enter: read/write/trend"),
     "monitor": N_("/: filter  p: pause  c: clear  Enter: open"),
-    "protomon": N_("/: filter  p: pause  c: clear  Enter/w: write"),
+    "protomon": N_("/: filter  p: pause  f: hide fast  c: clear  Enter/w: write"),
     "alarms": N_("k: acknowledge  K: acknowledge all"),
     "events": N_("/: filter"),
     "trends": N_("/: search  Enter: add/remove  Del: remove all"),
@@ -331,6 +331,8 @@ class ScadaApp(App):
                 rec = self.model["point_gas"].get(f"{POINT}{conn}/{p['name']}")
                 if rec is not None and not rec.get("unit") and p.get("unit"):
                     rec["unit"] = p["unit"]            # meters: kW or W, known only from the server
+                if rec is not None and p.get("priority") is not None:
+                    rec["priority"] = p["priority"]    # BACnet: the tag's default write priority (p on the card row)
                 self._set_point(f"{conn}/{p['name']}", p.get("value"), p.get("ts"), p.get("q") or "")
 
     def _build_menu(self) -> None:

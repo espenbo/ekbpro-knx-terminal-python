@@ -20,7 +20,19 @@ Debian/Ubuntu trenger pakken for virtuelle miljøer:
 sudo apt install python3 python3-venv git
 ```
 
-## Installer
+## Installer med én kommando
+
+På Debian, Ubuntu eller Raspberry Pi OS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/espenbo/ekbpro-knx-terminal-python/main/install.sh | bash
+```
+
+[`install.sh`](../../install.sh) installerer systempakkene som mangler (med `sudo`), henter programmet til
+`~/ekbpro-knx-terminal-python` (eller oppdaterer det der), kjører `./setup.sh knx` og deretter spørsmålene i
+`./scada setup` (se under). `bash install.sh /opt/knx` installerer i en annen mappe.
+
+## Installer steg for steg
 
 ```bash
 git clone https://github.com/espenbo/ekbpro-knx-terminal-python.git
@@ -33,7 +45,7 @@ protokollmodulene du velger (den spør; Enter eller ingen terminal = `knx`):
 
 - grunnpakker: `textual` og `textual-plotext` (brukergrensesnitt i terminalen og grafer), `PyYAML` (konfigurasjon)
 - modulen `knx`: `xknx` (KNX-kommunikasjon) og `xknxproject` (leser `.knxproj`-filer)
-- modulene `modbus`, `mqtt`, `opcua`, `bacnet`: se [Protokoller og gatewayer](11-protocols-gateways.md)
+- modulene `modbus`, `mqtt`, `sparkplug`, `opcua`, `bacnet`: se [Protokoller og gatewayer](11-protocols-gateways.md)
 
 ```bash
 ./setup.sh knx modbus     # KNX og Modbus
@@ -45,6 +57,23 @@ med KNX der modulen mangler, stopper med kommandoen som installerer den. Finnes 
 `setup.sh` også inn prosjektet på nytt (`./scada import`).
 
 ## Sett opp prosjektet ditt
+
+Enklest er spørsmålene i `./scada setup`:
+
+1. språk (`en` eller `nb`) og om KNX brukes;
+2. ETS-prosjektet: en fil, `bruker@maskin:sti` (hentes med `scp`) eller en `http(s)://`-URL. Det åpnes med en gang,
+   og passordet spørres om på nytt når det er feil;
+3. KNX-tilkoblingen: KNX IP-grensesnittene som svarer på et søk, KNX USB-grensesnitt, en adresse du skriver inn,
+   routing eller automatisk søk – og KNX Secure med keyring ved behov;
+4. protokollmodulene (installeres når de mangler), og søk etter BACnet-enheter (Who-Is) og etter Modbus TCP- og
+   OPC UA-servere på det lokale nettet (port 502/4840). Det som svarer, listes bare opp, med neste kommando:
+   tilkoblingene settes opp i F11 eller `protocols.yaml`, og de kan bare leses til skriving er avtalt;
+5. `config.yaml` skrives (en gammel beholdes som `.bak`), prosjektet importeres, og systemd-tjenesten tilbys
+   (`./scada service install`).
+
+Søkene sender ingenting på KNX-bussen. Med `-c sites/hus/config.yaml setup` setter veiviseren opp et anlegg.
+
+Eller på én linje, uten spørsmål:
 
 ```bash
 ./scada init /path/to/MyHouse.knxproj --gateway 192.168.1.50
