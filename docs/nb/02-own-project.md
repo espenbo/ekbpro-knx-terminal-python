@@ -23,8 +23,12 @@ Bruker anlegget **KNX Secure** (IP Secure eller Data Secure), trenger du også k
 | Valg | Betydning |
 |---|---|
 | `--gateway IP` | IP-adressen til KNX IP-grensesnittet. Utelatt betyr automatisk søk. |
-| `--connection TYPE` | `tunneling` (standard når gateway er oppgitt), `tunneling_tcp`, `routing`, `automatic` (standard uten gateway), `tunneling_secure`, `routing_secure` |
+| `--connection TYPE` | `tunneling` (standard når gateway er oppgitt), `tunneling_tcp`, `routing`, `automatic` (standard uten gateway), `tunneling_secure`, `routing_secure`, `usb` |
 | `--password PW` | Passordet til `.knxproj` |
+| `--keyring FIL` | KNX Secure-keyring (`.knxkeys`) eksportert fra ETS. Tilkoblingen blir `tunneling_secure` (med `--gateway`) eller `routing_secure`. |
+| `--keyring-password PW` | Passordet til keyring-fila |
+| `--user-id N` | Tunnelbruker for secure tunneling (valgfri) |
+| `--usb-device ENHET` | KNX USB-grensesnitt i stedet for IP: serienummer, `/dev/hidrawN` eller `vvvv:pppp` (`./scada knx-usb` viser dem). Tilkoblingen blir `usb`. |
 | `--language LANG` | Språk i brukergrensesnittet: `en` (engelsk, standard) eller `nb` (norsk bokmål). Skrives til `ui.language` i `config.yaml`. |
 | `--force` | Overskriv en eksisterende `config.yaml`. Den gamle beholdes som `config.yaml.bak`. |
 
@@ -47,7 +51,9 @@ Cards:           39  (built from ETS functions)
 Etasje- og romnavn kommer fra ETS og vises nøyaktig slik de står i prosjektet, uansett hvilket språk
 brukergrensesnittet har.
 
-For KNX Secure legger du dette inn i `config.yaml`:
+For KNX Secure gir du keyring-fila til `init`
+(`./scada init ~/MyHouse.knxproj --gateway 192.168.1.50 --keyring ~/MyHouse.knxkeys --keyring-password …`),
+eller legger dette inn i `config.yaml`:
 
 ```yaml
 knx:

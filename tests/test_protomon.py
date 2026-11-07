@@ -169,3 +169,135 @@ def test_tui_protocol_monitor(tmp_path, monkeypatch):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def test_room_card_row_priority_write():
+    """``p`` on a room card row of a BACnet tag (project.point_rooms) opens the write dialog with the tag's default
+    priority; Release at another priority is sent as point_write with priority and release after the confirmation.
+    A tag without a priority (not BACnet) only gets a note, and the switch itself still writes the plain way."""
+    from textual.app import App
+    from textual.widgets import Button, Select
+
+    from knxscada.tui.gateways import PointDialog
+    from knxscada.tui.widgets import SwitchRow
+
+    sent: list[tuple[str, dict]] = []
+
+    class Client:
+        """Records the requests the confirmation sends."""
+
+        async def request(self, cmd, **kw):
+            """Record the request instead of sending it to a server."""
+            sent.append((cmd, kw))
+
+    class Stub(App):
+        """Just enough of ScadaApp for one card row: state, records, watchers and the client."""
+
+        def __init__(self, records):
+            """*records*: the pt: records as the model has them (with the priority from the server's points)."""
+            super().__init__()
+            self.records, self.client, self.notes = records, Client(), []
+            self.state = {ga: {"value": False, "text": "Off", "ts": 0} for ga in records}
+
+        def ga(self, addr):
+            """The pt: record of *addr* (empty when unknown)."""
+            return self.records.get(addr or "", {})
+
+        def watch_ga(self, ga, widget):
+            """Card rows register here; nothing to do in the test."""
+
+        def unwatch_ga(self, ga, widget):
+            """See watch_ga."""
+
+        def notify(self, message, **kw):
+            """Keep notifications for the asserts."""
+            self.notes.append(message)
+
+        def compose(self):
+            """Two rows: a BACnet light and a tag without priority."""
+            yield SwitchRow({"label": "Light", "ga": "pt:bac/LT", "status": None, "dpt": "1.001", "kind": "switch"})
+            yield SwitchRow({"label": "Pump", "ga": "pt:plc/SW", "status": None, "dpt": "1.001", "kind": "switch"})
+
+    records = {"pt:bac/LT": {"name": "Light", "dpt": "1.001", "writable": True, "priority": 16, "point": "bac/LT"},
+               "pt:plc/SW": {"name": "Pump", "dpt": "1.001", "writable": True, "point": "plc/SW"}}
+
+    async def run():
+        """Press p on both rows; release priority 8 on the BACnet one."""
+        app = Stub(records)
+        async with app.run_test(size=(100, 30)) as pilot:
+            light, pump = app.query(SwitchRow)
+            pump.action_priority_write()
+            await pilot.pause(0.1)
+            assert not isinstance(app.screen, PointDialog) and "only for BACnet" in app.notes[-1]
+            light.query_one("Switch").focus()
+            await pilot.press("p")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, PointDialog)
+            select = app.screen.query_one("#p-priority", Select)
+            assert select.value == 16
+            select.value = 8
+            app.screen.query_one("#p-release", Button).press()
+            await pilot.pause(0.2)
+            app.screen.query_one("#yes", Button).press()                           # ConfirmDialog: Yes
+            await pilot.pause(0.3)
+        return sent
+
+    # The dialog first reads the priority array (a read), then the confirmed release is sent.
+    assert asyncio.run(run()) == [("point_priorities", {"conn": "bac", "tag": "LT"}),
+                                  ("point_write", {"conn": "bac", "tag": "LT", "value": None, "priority": 8,
+                                                   "release": True})]
+
+
+def test_hub_counts_reads_changes_errors_and_drops(tmp_path):
+    """Every value a driver reports is a read; only a different value is a change; bad quality is an error and a
+    lost connection a drop. The counters are in the connection status the Monitor shows."""
+    hub = Hub(FakeServer(tmp_path))
+    hub.data = {"connections": {"plc": {"protocol": "mem"}}, "gateways": []}
+    plc = Mem("plc", {"tags": {"T": {"type": "float"}}}, hub, server=False)
+    hub.drivers["plc"] = plc
+    for value in (20.0, 20.0, 21.0):
+        hub.update("plc", "T", value)
+    hub.update("plc", "T", 21.0, "bad")
+    hub.connection_state("plc", False)
+    st = next(s for s in hub.status() if s["name"] == "plc")
+    assert (st["reads"], st["changes"], st["errors"], st["drops"]) == (4, 3, 1, 1)
+
+
+def test_monitor_hides_fast_tags(tmp_path, monkeypatch):
+    """f hides the tags that changed more than FAST_PER_MIN times in the last minute (a PLC clock) and shows the rest;
+    writes are never hidden; f again shows everything."""
+    from knxscada.tui.app import ScadaApp
+    from knxscada.tui.protomon import ProtocolMonitorView
+    from knxscada.tui.widgets import LineLog
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    cfg = Config(path=tmp_path / "config.yaml", server={"socket": "s.sock"}, knx={"enabled": False},
+                 ui={"splash": False, "language": "en"})
+    app = ScadaApp(cfg)
+
+    async def run():
+        """Fill the app's buffer with a fast clock tag, a slow temperature and one write, then toggle the filter."""
+        async with app.run_test(size=(180, 50)) as pilot:
+            app.conn_protocol = {"plc": "mem"}
+            now = time.time()
+            app.point_log.extend({"ts": now - 50 + i, "conn": "plc", "tag": "Act_Time", "value": i, "q": "good",
+                                  "write": False} for i in range(40))
+            app.point_log.extend({"ts": now - 30 + i * 10, "conn": "plc", "tag": "Temp", "value": 20 + i, "q": "good",
+                                  "write": False} for i in range(3))
+            app.point_log.append({"ts": now, "conn": "plc", "tag": "Act_Time", "value": "0", "q": "", "write": True,
+                                  "user": "ola"})
+            view = app.query_one("#protomon", ProtocolMonitorView)
+            view.display = True
+            view.select("mem")
+            await pilot.pause(0.1)
+            log = view.query_one("#pm-log", LineLog)
+            assert log.line_count == 44
+            view.action_fast()
+            await pilot.pause(0.1)
+            assert view._fast == {"plc/Act_Time"} and log.line_count == 4     # 3 temperatures + the write
+            assert "1 fast tags hidden" in str(view.query_one("#pm-state").render())
+            view.action_fast()
+            await pilot.pause(0.1)
+            assert log.line_count == 44
+
+    asyncio.run(run())

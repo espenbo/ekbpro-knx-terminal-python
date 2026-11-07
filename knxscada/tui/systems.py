@@ -1006,7 +1006,7 @@ class SystemsView(View):
         title = f"{p.get('description') or name}  ({s.conn}/{name})"
         point = {**p, "value": (self.get(f"{s.conn}/{name}") or (None,))[0]}
         old = fmt(self.get(f"{s.conn}/{name}"), 2)
-        self.app.push_screen(PointDialog(title, point),
+        self.app.push_screen(PointDialog(title, point, (s.conn, name)),
                              lambda w: confirm_point_write(self.scada, s.conn, name, p, w, old))
 
     def action_mode(self) -> None:

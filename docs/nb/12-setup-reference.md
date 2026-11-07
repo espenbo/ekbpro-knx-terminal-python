@@ -57,7 +57,8 @@ programmappen. Uten kommando starter `tui`.
 |---|---|---|
 | `tui` | `--language en\|nb` | Terminalbrukergrensesnittet (krever en server som kjører) |
 | `server` | `--demo` (simulert buss, egen database), `-v` (debuglogg) | KNX, logging, alarmer, PLS-broen, protokoller, socket |
-| `init PROJECT` | `--gateway IP`, `--connection TYPE`, `--password PW`, `--language en\|nb`, `--force` | Skriver `config.yaml` fra malen og importerer prosjektet |
+| `setup` | – | Spørsmål i terminalen: ETS-prosjekt, KNX-tilkobling (søk, USB), moduler, utstyrssøk, config.yaml, tjeneste |
+| `init PROJECT` | `--gateway IP`, `--connection TYPE`, `--password PW`, `--keyring FIL`, `--keyring-password PW`, `--user-id N`, `--usb-device ENHET`, `--language en\|nb`, `--force` | Skriver `config.yaml` fra malen og importerer prosjektet |
 | `import` | | Leser ETS-prosjektet/-prosjektene på nytt og bygger cachen på nytt |
 | `info` | | Sammendrag av prosjektet: adresser, kort, etasjer og rom |
 | `plan-dxf [FILE]` | | Plantegningen til DXF (standard `plan.dxf` i gjeldende mappe) |
@@ -67,12 +68,14 @@ programmappen. Uten kommando starter `tui`.
 | `modules` | `install NAME …` | Lister protokollmodulene, eller installerer dem |
 | `gateway` | | Sjekker `protocols.yaml`, med direktestatus når serveren kjører |
 | `simulate [MODELL]` | `--host`, `--port` (5020), `--unit` (1), `--device` | Spiller en utstyrsmal som Modbus-slave, for test uten utstyr; uten modell lister den malene |
+| `service install\|remove\|status` | `--name NAVN` | Serveren som systemd-tjeneste fra `deploy/knxscada.service` for denne konfigurasjonen; uten root skrives `sudo`-kommandoene ut |
+| `knx-usb [ENHET]` | `--listen SEKUNDER` | KNX USB-grensesnittene (sti, USB-ID, serienummer, tilgang); med `--listen` telegrammene gjennom ett av dem, ingenting sendes |
 | `bacnet-scan [ADRESSE]` | `--device N`, `--local`, `--port`, `--bbmd`, `--timeout` (3), `--yaml` | Uten adresse: BACnet-enhetene på nettet (Who-Is); med adresse: objektene i enheten, `--yaml` som en tilkobling for `protocols.yaml` |
 
 `./setup.sh [knx modbus mqtt opcua bacnet]` lager `venv/`, installerer grunnpakkene og protokollmodulene du nevner
 (ingen nevnt: den spør, standard `knx`), og kjører `./scada import` når `config.yaml` finnes og KNX er installert.
 Grunnpakker: `textual`, `textual-plotext`, `PyYAML`. Moduler: `knx` (`xknx`, `xknxproject`), `modbus`, `mqtt`,
-`opcua` (`asyncua`, trengs også av PLS-broen `plc:`), `bacnet`.
+`sparkplug`, `opcua` (`asyncua`, trengs også av PLS-broen `plc:`), `bacnet`.
 
 ## Oppgaver
 
@@ -88,7 +91,7 @@ git clone <repository> ~/knx_scada && cd ~/knx_scada
 ```
 
 `--gateway` tom = automatisk søk. `--connection`: `tunneling` (standard med gateway), `tunneling_tcp`,
-`routing`, `automatic`, `tunneling_secure`, `routing_secure` – den sjekkes ikke av `init`, en skrivefeil viser seg først når
+`routing`, `automatic`, `tunneling_secure`, `routing_secure`, `usb` – den sjekkes ikke av `init`, en skrivefeil viser seg først når
 serveren starter. Installer så tjenesten: [Drift og SSH](05-operation-and-ssh.md).
 
 ### B. Et anlegg til på samme maskin
@@ -204,7 +207,7 @@ Alle nøkler, med standardverdi der den finnes. Nøkler merket *valgfri* kan ute
 ```yaml
 knx:
   enabled: true                       # valgfri; false = ingen KNX (bare protocols.yaml)
-  connection: automatic               # tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure
+  connection: automatic               # tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure | usb
   gateway_ip: 192.168.1.50            # trengs ikke for routing/automatic
   gateway_port: 3671
   local_ip: 192.168.1.10              # valgfri; maskiner med flere nett
@@ -322,12 +325,13 @@ plc:
 | Nøkkel | Type | Standard | Gyldige verdier |
 |---|---|---|---|
 | `enabled` | bool | på når `knx:` eller `project:` er fylt ut | bare `false` slår av KNX |
-| `connection` | tekst | `automatic` | `tunneling`, `tunneling_tcp`, `routing`, `automatic`, `tunneling_secure`, `routing_secure`. Alt annet stopper serveren. |
+| `connection` | tekst | `automatic` | `tunneling`, `tunneling_tcp`, `routing`, `automatic`, `tunneling_secure`, `routing_secure`, `usb`. Alt annet stopper serveren. |
 | `gateway_ip` | IP | – | |
 | `gateway_port` | int | `3671` | |
 | `local_ip` | IP | automatisk | |
 | `route_back` | bool | `false` | |
 | `individual_address` | tekst | – | `1.1.250` |
+| `usb_device` | tekst | det første som finnes | bare `usb`: serienummer, `/dev/hidrawN` eller `vvvv:pppp` |
 | `keyring_file` | sti | – | `.knxkeys`; slår på KNX Secure |
 | `keyring_password` | tekst | – | |
 | `user_id` | int | – | |
@@ -336,7 +340,7 @@ plc:
 | `interfaces` | liste | – | se under |
 
 `interfaces[]`: `name` (standard `gateway_ip`, ellers `knx1` …; unik), `gateway_ip`, `gateway_port`,
-`individual_address` (arves aldri), `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`,
+`individual_address`, `usb_device` (arves aldri), `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`,
 `user_id`, `dedup_ms` (arves fra `knx:`), `addresses` (glob eller liste med glob-er, standard ingen), `default` (bool,
 høyst én per prosjekt), `project` (et `project.files[].name`, standard det første prosjektet).
 
@@ -445,7 +449,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 ```yaml
 connections:
   meter1:                             # navn: ^[A-Za-z][A-Za-z0-9_-]{0,31}$; "knx" er reservert
-    protocol: modbus                  # modbus | mqtt | opcua | bacnet
+    protocol: modbus                  # modbus | mqtt | sparkplug | opcua | bacnet
     role: client                      # client (master) | server (slave)
     model: WAGO 879-3000              # valgfri utstyrsmal (liste: 11-protocols-gateways.md)
     transport: rtu                    # tcp | rtu | rtu_over_tcp
@@ -482,6 +486,18 @@ connections:
     retain: true
     tags:
       Outdoor: {topic: weather/temp, type: float, json_key: value, unit: °C}
+
+  sparkplug:
+    protocol: sparkplug
+    role: server                      # server = vår edge node | client = host-applikasjon for en
+    host: 127.0.0.1
+    port: 1883
+    group_id: knxscada
+    edge_node: knx                    # server: vår node-id · client: noden som følges (+ = alle)
+    rebirth_request: true             # client: be om fødselen etter tilkobling
+    qos: '0'                          # 0 | 1
+    tags:                             # client: navn, skala, enhet eller writable for valgte metrikker
+      Ute: {metric: Outdoor temp, device: "", type: float, unit: °C, writable: false}
 
   plc1:
     protocol: opcua

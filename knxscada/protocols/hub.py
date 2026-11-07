@@ -41,6 +41,8 @@ log = logging.getLogger("knxscada.protocols")
 
 #: Values are sent to the clients in batches, at most this often (seconds).
 FLUSH_S = 0.5
+#: Seconds between two connection status messages to the clients while values arrive (read/error counters).
+STATS_S = 10.0
 
 
 
@@ -82,6 +84,10 @@ class Hub:
         self._log_wait: dict[str, tuple[str, str, Any]] = {}   # changes held back by log_min_s: key → (conn, tag, value)
         self.engine = GatewayEngine(self, [])
         self.started = False
+        #: Counters per connection since the server started, for the Monitor: values read (every value a driver
+        #: reports, changed or not), changes, values with bad quality, and lost connections.
+        self.stats: dict[str, dict[str, int]] = {}
+        self._stats_at = 0.0                          # time.time() of the last status sent because of the counters
 
     @property
     def knx(self) -> bool:
@@ -205,6 +211,10 @@ class Hub:
     def update(self, conn: str, tag: str, value: Any, quality: str = "good") -> None:
         """A driver got a value for one of its tags."""
         key = f"{conn}/{tag}"
+        st = self._stats(conn)
+        st["reads"] += 1
+        if quality != "good":
+            st["errors"] += 1
         # Until its connection has read everything once, a value is a status, not a change.
         drv = self.drivers.get(conn)
         initial = drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
@@ -213,6 +223,7 @@ class Hub:
         # Tighter than the echo check: float32 rounds at ~6e-8, and energy counters must not move in 15 kWh steps.
         if old is not None and old["q"] == quality and same_value(old["v"], value, rel=1e-6):
             return
+        st["changes"] += 1
         rec = {"v": value, "ts": time.time(), "q": quality}
         self.values[key] = rec
         self._dirty[key] = rec
@@ -286,9 +297,17 @@ class Hub:
             elif now - self._logged.get(key, (0.0, None))[0] >= self._setting(drv, tag, "log_min_s", 10):
                 self._log(drv, tag, value, now)
 
+    def _stats(self, conn: str) -> dict[str, int]:
+        """The counters of *conn* (made on first use)."""
+        st = self.stats.get(conn)
+        if st is None:
+            st = self.stats[conn] = {"reads": 0, "changes": 0, "errors": 0, "drops": 0}
+        return st
+
     def connection_state(self, conn: str, connected: bool) -> None:
         """A driver connected or lost its connection."""
         if not connected:
+            self._stats(conn)["drops"] += 1
             self.engine.disconnected(conn)
             prefix = conn + "/"
             self._seen = {k for k in self._seen if not k.startswith(prefix)}
@@ -356,6 +375,11 @@ class Hub:
             await asyncio.sleep(FLUSH_S)
             if self._log_wait:
                 self.flush_log()
+            # The counters change with every read, also when no value changes; the clients get them with the status
+            # every STATS_S seconds (a status message is a few hundred bytes per connection).
+            if self.server.clients and time.time() - self._stats_at >= STATS_S:
+                self._stats_at = time.time()
+                self._broadcast_status()
             if not self._dirty:
                 continue
             dirty, self._dirty = self._dirty, {}
@@ -387,6 +411,7 @@ class Hub:
                 "where": drv.describe() if drv else "",
                 "tags": len(drv.tags) if drv else 0,
                 "running": drv is not None,
+                **self._stats(name),
             })
         return out
 
@@ -479,6 +504,13 @@ class Hub:
                         text += " " + _("(priority {priority})").format(priority=priority)
                 self.event("info", f"{conn}/{tag} ← {text}", user)
             return None
+        if cmd == "point_priorities":
+            # Read-only: the BACnet priority array of one tag, for the write dialog.
+            conn, tag = str(req["conn"]), str(req["tag"])
+            drv = self.drivers.get(conn)
+            if drv is None or tag not in drv.tags:
+                raise ValueError(_("Unknown tag {tag}").format(tag=f"{conn}/{tag}"))
+            return await drv.priority_array(drv.tags[tag])
         if cmd == "protocols_save":
             data = req.get("data") or {}
             await asyncio.to_thread(save, self.path, data, self.knx)

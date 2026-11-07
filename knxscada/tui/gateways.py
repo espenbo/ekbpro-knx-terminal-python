@@ -472,6 +472,28 @@ PRIORITY_NAMES = {3: N_("available"), 4: N_("available"), 6: N_("minimum on/off"
                   16: N_("available (automatic control)")}
 
 
+def priority_text(array: dict[str, Any] | None) -> Text:
+    """The device's priority array as one line for the write dialog: the slots in use, highest first, with the one
+    that decides the value marked, or that the relinquish default decides when no slot is in use.
+
+    *array* is the answer of ``point_priorities`` (``{"slots": [16 values], "default": value}``).
+    """
+    t = Text()
+    if not array:
+        return t
+    used = [(i, v) for i, v in enumerate(array.get("slots") or [], 1) if v is not None]
+    t.append(_("Priority array:") + " ", style="bold")
+    if not used:
+        t.append(_("empty – the relinquish default {value} decides").format(value=show_value(array.get("default"))))
+        return t
+    for n, (slot, value) in enumerate(used):
+        if n:
+            t.append("  ·  ")
+        t.append(f"{slot} = {show_value(value)}", style="bold" if n == 0 else "")
+    t.append("   " + _("({slot} decides)").format(slot=used[0][0]), style="dim")
+    return t
+
+
 class PointDialog(ModalScreen["PointWrite | None"]):
     """Write a value to a tag. Returns a :class:`PointWrite`, or None when cancelled.
 
@@ -483,9 +505,14 @@ class PointDialog(ModalScreen["PointWrite | None"]):
 
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss(None)", _("Cancel"))]
 
-    def __init__(self, title: str, tag: dict[str, Any]) -> None:
-        """*title* is shown on top (description and ``conn/tag``); *tag* gives value, unit, type and priority."""
+    def __init__(self, title: str, tag: dict[str, Any], address: tuple[str, str] | None = None) -> None:
+        """*title* is shown on top (description and ``conn/tag``); *tag* gives value, unit, type and priority.
+
+        *address* (connection, tag): with a priority, the device's priority array is read when the dialog opens and
+        shown under the priority choice – who commands the value now.
+        """
         super().__init__()
+        self.address = address
         self.title_ = title
         self.tag = tag
         self.default_priority: int | None = tag.get("priority")
@@ -504,6 +531,9 @@ class PointDialog(ModalScreen["PointWrite | None"]):
                     yield Label(_("Priority"), classes="dialog-label")
                     yield Select(options, value=self.default_priority, allow_blank=False, id="p-priority")
                 yield Static("", id="p-priority-note", classes="dialog-note")
+                if self.address is not None:
+                    yield Static(Text(_("Reading the priority array …"), style="dim"), id="p-array",
+                                 classes="dialog-note")
             if self.tag.get("type") == "bool":
                 with Horizontal(classes="dialog-buttons"):
                     if self.default_priority is not None:
@@ -520,12 +550,26 @@ class PointDialog(ModalScreen["PointWrite | None"]):
                     yield Button(_("Cancel"), id="p-cancel")
 
     def on_mount(self) -> None:
-        """Focus the input (or the On button), and explain the preset priority."""
+        """Focus the input (or the On button), explain the preset priority and start reading the priority array."""
         self._note()
+        if self.address is not None and self.default_priority is not None:
+            self.run_worker(self._load_array(), group="priority-array", exclusive=True)
         for w in self.query(Input):
             w.focus()
             return
         self.query_one("#p-true", Button).focus()
+
+    async def _load_array(self) -> None:
+        """Worker: ask the server for the tag's priority array (a read, nothing is written) and show it."""
+        conn, tag = self.address  # type: ignore[misc]
+        try:
+            array = await self.app.client.request("point_priorities", conn=conn, tag=tag)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 - not commandable, no answer …: say so, the dialog still works
+            text = Text(_("Priority array not available: {error}").format(error=exc), style="dim")
+        else:
+            text = priority_text(array)
+        for w in self.query("#p-array"):
+            w.update(text)
 
     def priority(self) -> int | None:
         """The chosen priority, or None when the tag has none (not BACnet)."""
@@ -958,7 +1002,7 @@ class GatewayView(View):
         conn = self.conn
         old = f"{show_value(point.get('value'))} {point.get('unit') or ''}".strip()
         # Confirmed like everywhere else: a value is never sent to a device by a single key press.
-        self.app.push_screen(PointDialog(f"{conn}/{name}", point),
+        self.app.push_screen(PointDialog(f"{conn}/{name}", point, (conn, name)),
                              lambda w: confirm_point_write(self.scada, conn, name, point, w, old))
 
     @on(DataTable.RowSelected, "#gw-conns")

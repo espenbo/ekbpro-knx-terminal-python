@@ -28,7 +28,9 @@ if [ -f config.yaml ] && ./scada modules | grep -q "knx.*installed\|knx.*install
     ./scada import
 else
     echo
-    echo "Installed. Set up your own project with:"
+    echo "Installed. Set up your own project with the questions of:"
+    echo "  ./scada setup"
+    echo "or in one line:"
     echo "  ./scada init /path/to/Project.knxproj --gateway <IP of the KNX IP interface> [--language nb]"
     echo "or try it without an installation:"
     echo "  ./scada init /path/to/Project.knxproj && ./scada server --demo"

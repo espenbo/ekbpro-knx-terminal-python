@@ -1,6 +1,6 @@
 [English](../en/11-protocols-gateways.md) · **Norsk**
 
-# Protokoller og gatewayer (Modbus, MQTT, OPC UA, BACnet)
+# Protokoller og gatewayer (Modbus, MQTT, Sparkplug B, OPC UA, BACnet)
 
 I tillegg til KNX kan serveren snakke Modbus, MQTT, OPC UA og BACnet/IP, og flytte verdier mellom dem. Alle protokollene er likestilte:
 KNX er én modul blant de andre, og serveren kjører også **uten KNX**, f.eks. som en ren Modbus → OPC UA-gateway
@@ -29,7 +29,8 @@ Hver protokoll er en modul med sine egne Python-pakker. De installeres bare når
 ```bash
 ./scada modules                       # hvilke moduler som finnes, er installert og er i bruk
 ./scada modules install modbus mqtt   # knx: xknx + xknxproject · modbus: pymodbus + pyserial · mqtt: aiomqtt
-                                      # opcua: asyncua (også for PLS-broen) · bacnet: bacpypes3
+                                      # sparkplug: aiomqtt · opcua: asyncua (også for PLS-broen)
+                                      # bacnet: bacpypes3
 ```
 
 Start serveren på nytt etterpå. En tilkobling der modulen mangler, vises i F11 og i `./scada gateway`
@@ -42,10 +43,11 @@ modulen mangler, stopper ved oppstart med `./scada modules install knx`.
 | `knx`    | KNX-bussen, når KNX er satt opp i `config.yaml` (`setup.sh` installerer den som standard) | – |
 | `modbus` | Modbus TCP / RTU (RS485) master        | Modbus TCP / RTU slave                      |
 | `mqtt`   | abonnere og publisere mot en broker    | –                                           |
+| `sparkplug` | host-applikasjon for en Sparkplug B edge node | vår egen Sparkplug B edge node        |
 | `opcua`  | klient mot en PLS eller en annen server | vår egen OPC UA-server for SCADA-systemer  |
 | `bacnet` | BACnet/IP-klient mot en enhet (lese, skrive, COV) | vår egen BACnet-enhet for SD-anlegg og SCADA |
 
-MQTT Sparkplug B og Matter er planlagt.
+Matter er planlagt.
 
 ## 2. Tilkoblinger
 
@@ -215,6 +217,42 @@ Tagger: `topic` (standard er prefiks + tagnavn), `json_key` (plukk verdien ut av
 (dit skrivinger går; tomt = taggens eget topic, og `<topic>/set` for tagger funnet via `subscribe`). Et gateway-mål publiseres til prefiks + navn; med `direction: both` lytter gatewayen også
 på `<topic>/set`.
 
+### MQTT Sparkplug B
+
+Sparkplug B (Eclipse Tahu, v3.0) sender verdier med type, fødsel og død over en MQTT-broker, på topicene
+`spBv1.0/<gruppe>/<type>/<edge node>[/<enhet>]`. Mange SCADA-systemer (Ignition med MQTT Engine, AVEVA, …) leser det
+direkte. Modulen trenger bare `aiomqtt`, som `mqtt`: protobuf-meldingene kodes i selve modulen.
+
+| Innstilling | Standard | |
+|---|---|---|
+| `role` | `client` | `server`: vi er en edge node · `client`: en host-applikasjon som følger en |
+| `host`, `port`, `username`, `password`, `tls`, `client_id` | `127.0.0.1`, `1883` | Brokeren, som for `mqtt` |
+| `group_id` | `knxscada` | Sparkplug-gruppen |
+| `edge_node` | server `knxscada`, klient `+` | Server: vår edge node-id · klient: noden som følges (`+` = alle noder) |
+| `rebirth_request` | `true` | Klient: be noden om fødselen etter tilkobling (NCMD `Node Control/Rebirth`) |
+| `qos` | `0` | `0` eller `1` |
+
+- **Server (edge node):** hvert gateway-mål er en metrikk. Ved tilkobling publiseres NBIRTH med alle (type, alias,
+  nåverdi) pluss `bdSeq` og `Node Control/Rebirth`; hver endring er NDATA. Når serveren stopper eller forbindelsen
+  forsvinner, sier NDEATH fra til host-applikasjonene (også som MQTT-will). En NCMD for en metrikk på en linje med
+  `direction: both` sendes tilbake til kilden, som `<topic>/set` for MQTT; `Node Control/Rebirth` gir en ny NBIRTH.
+- **Klient (host-applikasjon):** hver metrikk i en fødsel blir en tagg av seg selv (`<enhet>/<metrikk>` for
+  enhetsmetrikker), bare for lesing. Tagger under `tags:` velger en metrikk (`metric`, `device`) for å gi den navn,
+  skala, enhet eller `writable: true`; skriving sender NCMD/DCMD med metrikkens type fra fødselen. En død merker
+  taggene «bad». Å be om rebirth er en vanlig kontrollkommando, ikke en prosessverdi.
+
+```yaml
+connections:
+  sparkplug:                       # knxscada som edge node: KNX-verdiene til et SCADA-system
+    protocol: sparkplug
+    role: server
+    host: 192.168.1.20
+    group_id: Bygg1
+    edge_node: knx
+gateways:
+  - {name: knx-sparkplug, from: knx, to: sparkplug, map: ["3/0/*"]}
+```
+
 ### OPC UA
 
 | Innstilling | Standard | |
@@ -264,7 +302,8 @@ formen `analog-value,3` virker også) og, når det ikke er nåverdien, en `prope
 skrive`priority`. Innganger (`ai`, `bi`, `msi`) er skrivebeskyttet hvis ikke taggen sier `writable: true`. En
 operatør kan velge en annen prioritet for én skriving, og slippe en prioritet igjen, i skrivedialogen i TUI-en
 (brukerveiledningen, «Skriving til BACnet»); `point_write` tar `priority` og `release: true` til dette.
-Prioritet 1, 2 og 5 avvises for operatører.
+Prioritet 1, 2 og 5 avvises for operatører. `point_priorities` (bare lesing) gir objektets `priority-array` og
+`relinquish-default`, som dialogen viser.
 
 `./scada bacnet-scan ADRESSE` finner enheten med en Who-Is sendt til adressen. Mange enheter (Siemens Climatix,
 Belimo) svarer med en kringkastet I-Am som aldri kommer gjennom en VPN; da leser skanningen jokerinstansen

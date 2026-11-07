@@ -2,8 +2,8 @@
 # Copyright (C) 2026 EKB PRO
 """The "Energy meters" view (Ctrl+G): the meters of ``ui.systems`` (``type: energy``).
 
-A table with one row per meter; the meter under the cursor gets a power curve and the
-consumption per hour or day, worked out from its energy counter. Both come from the log
+A table with one row per meter – with yesterday's and this month's consumption – and the meter under the cursor
+gets a power curve and the consumption per hour or day, worked out from its energy counter. Both come from the log
 (``log`` in protocols.yaml), so the power and energy tags of a meter should be logged.
 """
 
@@ -83,6 +83,40 @@ def consumption(points: Sequence[tuple[float, float]], start: float, end: float,
     return out
 
 
+def calendar_bounds(now: float) -> dict[str, float]:
+    """Local midnight today and yesterday, and the first of this and last month, as Unix times (DST-safe:
+    ``mktime`` with ``tm_isdst=-1`` normalises day 0 and month 0 to the end of the month or year before)."""
+    lt = time.localtime(now)
+
+    def at(year: int, month: int, day: int) -> float:
+        """Local midnight of a (possibly out-of-range) date."""
+        return time.mktime((year, month, day, 0, 0, 0, 0, 0, -1))
+
+    return {"today": at(lt.tm_year, lt.tm_mon, lt.tm_mday), "yesterday": at(lt.tm_year, lt.tm_mon, lt.tm_mday - 1),
+            "month": at(lt.tm_year, lt.tm_mon, 1), "last_month": at(lt.tm_year, lt.tm_mon - 1, 1)}
+
+
+def calendar_use(points: Sequence[tuple[float, float]], now: float | None = None) -> dict[str, float | None]:
+    """Consumption from a counter per calendar period: ``today``, ``yesterday``, ``month`` (this month until now) and
+    ``last_month``. None when the log does not reach back to the start of the period or the counter went backwards.
+
+    Pure function; *points* need to go back to the first of last month for ``last_month`` (one ``history`` request
+    per meter, see :meth:`EnergyView._load_sparks`).
+    """
+    now = time.time() if now is None else now
+    pts = sorted(points)
+    b = calendar_bounds(now)
+
+    def use(start: float, end: float | None) -> float | None:
+        """Reading at *end* (None = the last reading) minus the reading at *start*."""
+        a = value_at(pts, start)
+        z = (pts[-1][1] if pts else None) if end is None else value_at(pts, end)
+        return z - a if a is not None and z is not None and z >= a else None
+
+    return {"today": use(b["today"], None), "yesterday": use(b["yesterday"], b["today"]),
+            "month": use(b["month"], None), "last_month": use(b["last_month"], b["month"])}
+
+
 class EnergyView(View):
     """Ctrl+G: energy meters – table, power curve and consumption of the selected meter."""
 
@@ -98,6 +132,7 @@ class EnergyView(View):
         self.meters: list[Meter] = []
         self.values: dict[str, Value] = {}
         self.spark: dict[str, str] = {}               # row key → 24-hour power curve
+        self.calendar: dict[str, dict[str, float | None]] = {}   # row key → calendar_use() of its energy counter
         self.power: list[tuple[float, float]] = []    # history of the selected meter
         self.energy: list[tuple[float, float]] = []
         self.selected = 0
@@ -136,9 +171,11 @@ class EnergyView(View):
             t.add_column(_("Meter"), key="name", width=34)
             for role, heading, width in METER_COLUMNS:
                 t.add_column(_(heading), key=role, width=width)
+            t.add_column(_("Yesterday"), key="yesterday", width=10)
+            t.add_column(_("This month"), key="month", width=10)
             t.add_column(_("24 h"), key="spark", width=SPARK_W)
             for i, m in enumerate(self.meters):
-                t.add_row(m.name, *["–"] * len(METER_COLUMNS), "", key=str(i))
+                t.add_row(m.name, *["–"] * len(METER_COLUMNS), "–", "–", "", key=str(i))
             t.styles.height = len(self.meters) + 3
         self.set_interval(1, self._refresh_if_dirty)
 
@@ -171,18 +208,24 @@ class EnergyView(View):
         await self._load_history()
 
     async def _load_sparks(self) -> None:
-        """Fetch the 24 h power log of every meter and turn it into the sparkline of the table (``SPARK_W`` wide).
+        """Fetch the 24 h power log of every meter for the sparkline of the table (``SPARK_W`` wide), and its energy
+        counter back to the first of last month for the calendar consumption (yesterday, this month, last month).
 
-        Meters without a power tag, or without a log, get an empty cell.
+        Meters without a power tag, or without a log, get an empty cell. The counter request is thinned by the server
+        (``max_points``); the interpolation in :func:`value_at` makes the period edges exact enough for kWh.
         """
         now = time.time()
+        hours = int((now - calendar_bounds(now)["last_month"]) / 3600) + 2
         for i, m in enumerate(self.meters):
             key = m.key("power")
-            if not key:
-                continue
-            pts = await self.scada.request("history", point=key, hours=24, max_points=600) or []
-            values = resample([tuple(p) for p in pts], now - 86400, now, SPARK_W)
-            self.spark[str(i)] = sparkline(values, bool(self.scada.ui.get("ascii"))) if pts else ""
+            if key:
+                pts = await self.scada.request("history", point=key, hours=24, max_points=600) or []
+                values = resample([tuple(p) for p in pts], now - 86400, now, SPARK_W)
+                self.spark[str(i)] = sparkline(values, bool(self.scada.ui.get("ascii"))) if pts else ""
+            if key := m.key("energy"):
+                pts = await self.scada.request("history", point=key, hours=hours, max_points=1500) or []
+                self.calendar[str(i)] = calendar_use([(float(p[0]), float(p[1])) for p in pts if p[1] is not None],
+                                                     now)
         self._dirty = True
 
     async def _load_history(self) -> None:
@@ -293,6 +336,11 @@ class EnergyView(View):
         unit = (self.get(m.key("energy")) or (None, "kWh", ""))[1] or "kWh"
         if (today := self.today()) is not None:
             t.append(f"   {_('Today')} {today:.1f} {unit}")
+        cal = self.calendar.get(str(self.selected), {})
+        for period, label in (("yesterday", N_("Yesterday")), ("month", N_("This month")),
+                              ("last_month", N_("Last month"))):
+            if cal.get(period) is not None:
+                t.append(f"   {_(label)} {cal[period]:.1f} {unit}")
         use = [x for x in consumption(self.energy, *self._span(), PERIODS[self.period][1]) if x is not None]
         if use:
             t.append(f"   {_('Period')} {sum(use):.1f} {unit}")
@@ -320,6 +368,9 @@ class EnergyView(View):
             row = str(i)
             for (role, _h, _w), text in zip(METER_COLUMNS, meter_cells(m, self.get)):
                 t.update_cell(row, role, text)
+            cal = self.calendar.get(row, {})
+            for period in ("yesterday", "month"):
+                t.update_cell(row, period, "–" if cal.get(period) is None else f"{cal[period]:.1f}")
             t.update_cell(row, "spark", self.spark.get(row, ""))
         detail = self.query_one("#en-detail", LiveStatic)
         detail.border_title = _("Selected meter")

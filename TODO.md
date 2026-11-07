@@ -20,6 +20,8 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
+- 2026-11-07: 496 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Arbeidsplanen under er gjort
+  (punkt 1–9); ikke committet.
 - 2026-11-02: 445 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Runde 2 er slått inn i `main`;
   KNX valgfri og KNX → OPC UA via gatewayen er ikke committet ennå.
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
@@ -41,8 +43,7 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       (`tui/protomon.py`): tilkoblingene øverst, under hver verdiendring (←) og skriving (→ med bruker), filter,
       pause, Enter/`w` = skriv med bekreftelse (bare `writable`). Buffer `app.point_log` (10 000). Test
       `tests/test_protomon.py`, dok 03 og 08 (en+nb). Prøvd uten skjerm mot et anlegg: OPC UA, Modbus, BACnet.
-  - [ ] Mulig senere: vise lesinger/pollinger og feil per tilkobling (krever at huben sender mer enn endringer),
-        og skjule tagger som endrer seg hvert sekund (PLS-klokke `Act_Time`) med et eget filter.
+  - [x] Lesinger/feil per tilkobling og `f` = skjul raske tagger (2026-11-07, se arbeidsplanen).
 - [x] BACnet-skriving mot ekte utstyr (2026-11-01): brukeren slo av to lys via en KNX→BACnet-gateway med
       prioritet 16 – status bekreftet.
 - [x] BACnet-skriving med valgt prioritet og «Slipp» (2026-11-01): `Driver.priorities` (BACnet), `Hub.write(...,
@@ -51,11 +52,11 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       under standarden og har «Slipp» (Null i plassen). Felles bekreftelse `confirm_point_write` i F11, Anlegg og
       Monitor (F11 skrev før uten bekreftelse). Hendelsesloggen: «verdi (prioritet 8)» / «sluppet (prioritet 8)».
       Tester i test_protomon og test_bacnet, dok 03 og 11 (en+nb).
-  - [ ] Romkortene (`point_rooms`) skriver fortsatt med standardprioriteten, uten valg.
-  - [ ] Mulig senere: vise enhetens prioritetstabell (`priority-array`) i dialogen – hvem som styrer nå.
+  - [x] Romkortene (`point_rooms`): `p` på raden gir valg av prioritet og «Slipp» (2026-11-07).
+  - [x] Enhetens prioritetstabell (`priority-array`) vises i dialogen (2026-11-07); ikke prøvd mot ekte utstyr.
 - [x] Skrivbare punkter på romkort fra `point_rooms`: virket allerede (skrivbar bool → bryter); kortet må ha
       `usage: light` for å telle som lys og komme i «Lys på».
-- [ ] MQTT Sparkplug B (ny modul).
+- [x] MQTT Sparkplug B (ny modul, 2026-11-07) – se arbeidsplanen.
 - [ ] Matter (ny modul).
 - [x] KNX som valgfri modul (2026-11-02): `knx` er en modul (`xknx`, `xknxproject`); grunnpakken er textual,
       textual-plotext og PyYAML (asyncua flyttet til `opcua`). `dpt.py`/`server.py`/`project.py` tåler at KNX mangler;
@@ -70,7 +71,51 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
   - [x] Byttet over på anlegget som brukte broen (2026-11-02): gatewayen kjører; følges med noen dager.
   - [ ] Deretter: fase ut `opcua_bridge.py` når ingen anlegg bruker `plc:`.
 
+## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)
+
+Rekkefølge – kryss av underveis (økten kan bli brutt). Punkter som trenger utstyr, beslutninger fra brukeren eller
+skriving på et anlegg, tas ikke (se «Venter på brukeren» nederst).
+
+1. [x] `./scada init --keyring FIL --keyring-password … --user-id N --usb-device …` (`render_config`, `tests/test_init.py`,
+   dok 02/12 en+nb)
+2. [x] `./scada service install|remove|status` (`service.py`, `tests/test_service.py`, dok 05/12 en+nb). Uten root:
+   enheten i `var/systemd/` og sudo-kommandoene skrives ut. Gir samme enhet som den som er installert på anleggene.
+3. [x] Energimålere: kolonnene «I går» og «Denne måneden», og i går/denne/forrige måned i kortet (`calendar_use`,
+   lokal tid med sommertid, test i `test_systems.py`, dok 03 en+nb)
+4. [x] Romkort (`point_rooms`): `p` på raden til en BACnet-tagg gir skrivedialogen med prioritet og «Slipp»
+   (`DatapointRow.action_priority_write`, prioriteten fra `points` i `point_gas`); kontrollene skriver fortsatt med
+   standardprioriteten. Test i `test_protomon.py`, dok 03 en+nb.
+5. [x] BACnet: `priority-array` og `relinquish-default` i skrivedialogen (`Driver.priority_array`, hub-kommandoen
+   `point_priorities`, `priority_text`). Tester i `test_bacnet.py`, dok 03 en+nb. Ikke prøvd mot ekte utstyr.
+6. [x] Monitor: tellere per tilkobling (Lest, /min, Endret, Feil, Brudd – `Hub.stats`, status hvert 10. s) og `f`
+   skjuler tagger som endrer seg > 20 ganger/min. Tester i `test_protomon.py`, dok 03 en+nb.
+7. [x] Modbus-identifisering: «?» kom av enkeltforespørsler uten svar gjennom RS485-gatewayen (baud, paritet eller
+   adresse vekslet mellom oppstarter). Hvert identify-register prøves nå 3 ganger (`IDENTIFY_TRIES`). Test i
+   `test_devices.py`.
+8. [x] `./scada setup` (`setup_wizard.py`: språk, ETS-prosjekt fra fil/scp/URL med passord på nytt, KNX IP-søk/USB/
+   adresse/routing, keyring, moduler, søk etter BACnet/Modbus/OPC UA, config.yaml, tjeneste) og `install.sh` (apt,
+   git clone/pull, setup.sh, setup). Tester `test_setup_wizard.py`, dok 01/12 en+nb. `install.sh` ikke prøvd på en
+   ny maskin.
+9. [x] MQTT Sparkplug B (`protocols/sparkplug.py`): server = vår edge node (NBIRTH/NDATA/NDEATH, NCMD tilbake til
+   kilden, rebirth), klient = host-applikasjon (metrikker fra fødsel blir tagger, NCMD/DCMD ved skriving, død =
+   «bad»). Egen protobuf-koder (ingen ny pakke). Tester `test_sparkplug.py` (amqtt-broker lokalt), dok 11/12 en+nb,
+   README. Ikke prøvd mot Ignition MQTT Engine eller annen ekte host.
+
+Venter på brukeren / utstyr: Matter (krever Matter-SDK, sertifisering og utstyr – ikke realistisk nå), BACnet mot et
+ekte SD-anlegg, skriving av tabeller mot en ekte PLS, utfasing av `opcua_bridge.py` (ett anlegg bruker fortsatt
+`plc:`), skrivetest gjennom KNX-USB, og alle anleggspunktene i `sites/*/TODO.md` (beslutninger, fysisk tilgang
+eller skriving til utstyr). `plan-wizard` og `install_knx_terminal.sh` finnes ikke i dette repoet – punktet
+om plantegningsveiviseren venter til brukeren sier hvor den ligger.
+
 ## Runde 2 – åpent
+
+- [x] KNX USB (2026-11-07): `connection: usb` (`knx_usb.py`, `UsbInterface` erstatter `xknx.knxip_interface`, cEMI over
+      `/dev/hidraw`), `./scada knx-usb [--listen S]`, `deploy/99-knx-usb.rules`, tester `test_knx_usb.py` (falsk enhet),
+      dok 04/09/12 (en+nb). Ved oppstart: cEMI, så `PID_COMM_MODE` = data link layer (M_PropWrite, lokalt) – en
+      Weinzierl 312 starter i «no layer» (0xFF) og sender ingenting opp før det. Lyttetest mot en ekte Weinzierl 312
+      på et anlegg: samme 53 av 53 telegrammer som IP-grensesnittet på 40 s.
+  - [ ] Skrivetest gjennom pinnen (etter avtale med brukeren).
+  - Ikke støttet: EMI1/EMI2-grensesnitt og Powerline (PL110) – bruk knxd som KNXnet/IP-server der.
 
 - [x] Effektstyring i Anlegg (2026-11-02): `type: power` (`tui/power.py`, `render_power`) – forbruk som stolpe mot
       grensen (gul fra 80 %, rød over), ledig/over, laster koblet ut, månedens høyeste, én linje per last (koblet
@@ -100,19 +145,17 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 - [ ] BACnet mot ekte utstyr: at et ekte SD-anlegg leser vår BACnet-enhet
       (Who-Is, objektliste, COV, skriving tilbake). Lesing, COV og `bacnet-scan` er prøvd.
 - [ ] Skriving av tabeller (ukeprogram fra CODESYS-kalendere) er ikke prøvd.
-- [ ] Anlegg › Innstillinger: forbruk «i går» / per måned i Energimålere.
-- [ ] Modbus-identifisering: baud vises «?» for noen WAGO-målere (kosmetisk).
+- [x] Anlegg › Innstillinger: forbruk «i går» / per måned i Energimålere (2026-11-07, se arbeidsplanen).
+- [x] Modbus-identifisering: baud «?» – ny prøving av registre uten svar (2026-11-07).
 
 ## Enklere installasjon
 
-- [ ] `./scada setup`: en veiviser i Python som erstatter `install_knx_terminal.sh`. Spør etter ETS-prosjektet
-      (fil, scp/SFTP eller URL), tilkoblingstype og IP-grensesnitt, prøver passordet på nytt ved feil og spør hvilke
-      protokollmoduler som skal installeres. Skal også fungere uten KNX.
-- [ ] Veiviseren spør om Modbus-, BACnet- og OPC UA-utstyr og kan søke etter det.
-- [ ] `./scada init --keyring FIL --keyring-password …` i stedet for at skriptet erstatter tekst i `config.yaml`.
-- [ ] `./scada service install|remove|status`: systemd-tjenesten fra `deploy/knxscada.service`.
+- [x] `./scada setup` (2026-11-07, se arbeidsplanen): veiviser med prosjekt, tilkobling, passord, moduler, uten KNX.
+- [x] Veiviseren søker etter BACnet (Who-Is), Modbus TCP (502) og OPC UA (4840) og lister det som svarer.
+- [x] `./scada init --keyring FIL --keyring-password …` (2026-11-07, se arbeidsplanen).
+- [x] `./scada service install|remove|status` (2026-11-07, se arbeidsplanen).
 - [ ] `./scada plan-wizard`: plantegningsveiviseren som egen kommando. Pillow blir en valgfri modul.
-- [ ] `install.sh` i repoet: én kommando på en ny maskin (apt-pakker, git clone, venv, `./scada setup`).
+- [x] `install.sh` i repoet (2026-11-07): apt-pakker, git clone/pull, `setup.sh`, `./scada setup`. Ikke prøvd på en ny maskin.
 
 ## Ferdig (kort – detaljer i git-loggen og i docs/)
 

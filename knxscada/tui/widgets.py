@@ -442,6 +442,10 @@ class DatapointRow(GAWatcher, Horizontal):
     #: CSS class of every datapoint row (``app.tcss``).
     DEFAULT_CLASSES = "dp-row"
 
+    #: ``p`` on a row of a BACnet tag (``project.point_rooms``): write with a chosen priority or release one.
+    #: The controls themselves always write with the tag's default priority – the usual operation stays one click.
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("p", "priority_write", _("Priority"), show=False)]
+
     def __init__(self, dp: dict[str, Any]) -> None:
         """*dp* is a datapoint of a function card (``ga``, ``status``, ``dpt``, ``kind``, ``label``, ``role`` …).
 
@@ -475,6 +479,8 @@ class DatapointRow(GAWatcher, Horizontal):
         parts.append(f"DPT {self.dp['dpt'] or '?'}  •  {ago(st.get('ts'))}")
         if st.get("old"):
             parts.append(_("Old value (from before the start) – not read yet"))
+        if self.scada.ga(self.dp.get("ga") or "").get("priority") is not None:
+            parts.append(_("p: write with another priority, or release"))
         return "\n".join(parts)
 
     def label(self) -> Label:
@@ -487,6 +493,29 @@ class DatapointRow(GAWatcher, Horizontal):
         old = bool(self.scada.state.get(self.read_ga, {}).get("old"))
         for widget in self.query(".dp-value"):
             widget.set_class(old, "old")
+
+    def action_priority_write(self) -> None:
+        """``p``: the write dialog with BACnet priority and Release for this row's protocol tag, then the shared
+        confirmation (:func:`~knxscada.tui.gateways.confirm_point_write`) – as in F11, Systems and Monitor.
+
+        Only for a writable ``pt:`` tag whose server reports a default priority (BACnet); otherwise a short note.
+        """
+        from .gateways import (  # gateways imports this module
+            PointDialog,
+            confirm_point_write,
+        )
+
+        ga = self.dp.get("ga") or ""
+        rec = self.scada.ga(ga) if ga.startswith("pt:") else {}
+        if not rec.get("writable") or rec.get("priority") is None:
+            self.scada.notify(_("Priority and Release are only for BACnet tags that can be written."))
+            return
+        conn, tag = ga[3:].split("/", 1)
+        info = {"value": self.value, "unit": rec.get("unit") or "", "priority": rec["priority"],
+                "type": "bool" if rec.get("dpt") == "1.001" else "", "description": rec.get("name") or tag}
+        old = self.text
+        self.scada.push_screen(PointDialog(f"{info['description']}  ({conn}/{tag})", info, (conn, tag)),
+                               lambda w: confirm_point_write(self.scada, conn, tag, info, w, old))
 
     def write(self, value: Any) -> None:
         """Send *value* to the control address (via ``ScadaApp.write`` and the server, which logs the user).

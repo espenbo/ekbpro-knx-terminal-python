@@ -92,6 +92,7 @@ docker logs -f knx                          # Ctrl+C leaves the log, the server 
 | `--cpus 1 --memory 512m` | On a PLC the control program (e.g. CODESYS) must always get enough CPU. The server needs far less. |
 | `--log-opt …` | Limits the container log, which saves the flash memory. |
 | `-e TZ=…` | Local time in the event log and the charts. |
+| `--device /dev/hidrawN` | Only with a KNX USB interface (`connection: usb`): gives the container the stick. `./scada knx-usb` on the host shows which `hidrawN` it is; plug it into the same port, or the number can change. |
 
 ## 5. Open the visualisation
 

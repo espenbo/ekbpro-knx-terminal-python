@@ -67,9 +67,14 @@ class ProtocolMonitorView(View):
     #: (English column title, width).
     COLS = ((N_("Time"), 8), ("", 1), (N_("Connection"), 16), (N_("Tag"), 32), (N_("Description"), 36),
             (N_("Value"), 18), (N_("Quality"), 10))
+    #: A tag that changed more often than this in the last minute is "fast" (a PLC clock, a counter) and hidden by f.
+    FAST_PER_MIN = 20
+    #: Seconds between two recounts of the fast tags while entries arrive.
+    FAST_RECOUNT_S = 5.0
     #: Keys of the view (the same as the KNX bus monitor where they mean the same thing, plus w = write).
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("p", "pause", _("Pause/resume")),
+        Binding("f", "fast", _("Hide fast tags")),
         Binding("c", "clear", _("Clear")),
         Binding("w", "write", _("Write")),
         Binding("slash", "focus_filter", _("Filter")),
@@ -85,6 +90,12 @@ class ProtocolMonitorView(View):
         # connection by load(); kept across protocol switches so switching back is instant.
         self.tags: dict[str, dict[str, Any]] = {}
         self._tags_at: dict[str, float] = {}           # connection → time.time() of its last tag load
+        self.hide_fast = False                          # f: hide tags that change all the time
+        self._fast: set[str] = set()                    # "conn/tag" of the fast tags (counted by _recount_fast)
+        self._fast_at = 0.0                             # time.time() of the last recount
+        # connection → (time, reads) of the previous status, for the reads per minute
+        self._prev_reads: dict[str, tuple[float, int]] = {}
+        self._rate: dict[str, float] = {}               # connection → reads per minute
 
     def compose(self) -> ComposeResult:
         """Filter field and LIVE/PAUSED state, the table of connections, and the log with its column header."""
@@ -102,7 +113,9 @@ class ProtocolMonitorView(View):
         """Columns of the connection table and the log header (fixed widths: FastTable skips measuring cells)."""
         t = self.query_one("#pm-conns", FastTable)
         for key, label, width in (("name", N_("Connection"), 18), ("role", N_("Role"), 8),
-                                  ("where", N_("Address"), 34), ("tags", N_("Tags"), 6), ("state", N_("State"), 40)):
+                                  ("where", N_("Address"), 30), ("tags", N_("Tags"), 6), ("state", N_("State"), 26),
+                                  ("reads", N_("Reads"), 10), ("rate", N_("/min"), 7), ("changes", N_("Changes"), 9),
+                                  ("errors", N_("Errors"), 7), ("drops", N_("Lost"), 5)):
             t.add_column(_(label), key=key, width=width)
         self.query_one("#pm-head", LiveStatic).set(columns(*((_(t) if t else "", w, "bold") for t, w in self.COLS)))
         self._update_state()
@@ -166,9 +179,20 @@ class ProtocolMonitorView(View):
         t = self.query_one("#pm-conns", FastTable)
         row = t.cursor_row
         t.clear()
+        now = time.time()
         for s in self.connections():
+            reads = int(s.get("reads") or 0)
+            prev = self._prev_reads.get(s["name"])
+            if prev is not None and now - prev[0] >= 5 and reads >= prev[1]:
+                self._rate[s["name"]] = (reads - prev[1]) * 60 / (now - prev[0])
+            if prev is None or now - prev[0] >= 5:
+                self._prev_reads[s["name"]] = (now, reads)
+            rate = self._rate.get(s["name"])
+            errors = int(s.get("errors") or 0)
             t.add_row(s["name"], _(s.get("role") or ""), s.get("where") or "", str(s.get("tags", "")), conn_state(s),
-                      key=s["name"])
+                      str(reads), "–" if rate is None else f"{rate:.0f}", str(s.get("changes") or 0),
+                      Text(str(errors), style=self.scada.color("error") if errors else ""),
+                      str(s.get("drops") or 0), key=s["name"])
         t.styles.height = min(t.row_count, 8) + 3
         if t.row_count:
             t.move_cursor(row=min(max(row, 0), t.row_count - 1))
@@ -181,6 +205,8 @@ class ProtocolMonitorView(View):
         writes – so the filter "write" lists only what operators have written.
         """
         if self.scada.conn_protocol.get(e["conn"]) != self.protocol:
+            return False
+        if self.hide_fast and not e["write"] and f"{e['conn']}/{e['tag']}" in self._fast:
             return False
         if not self.words:
             return True
@@ -214,9 +240,24 @@ class ProtocolMonitorView(View):
                   f"bold {app.color('accent')}" if e["write"] else "bold", q_style)
         return columns(*((v, w, s) for v, (_title, w), s in zip(vals, self.COLS, styles)))
 
+    def _recount_fast(self) -> None:
+        """Find the tags that changed more than :attr:`FAST_PER_MIN` times in the last minute (app buffer)."""
+        since = time.time() - 60
+        counts: dict[str, int] = {}
+        for e in reversed(self.scada.point_log):
+            if e["ts"] < since:
+                break
+            if not e["write"]:
+                key = f"{e['conn']}/{e['tag']}"
+                counts[key] = counts.get(key, 0) + 1
+        self._fast = {k for k, n in counts.items() if n > self.FAST_PER_MIN}
+        self._fast_at = time.time()
+
     def rebuild(self) -> None:
         """Re-apply the protocol and the filter to the app's buffer (newest MAX_ROWS matches)."""
         self.words = self.query_one("#pm-filter", Input).value.lower().split()
+        if self.hide_fast:
+            self._recount_fast()
         items: list[dict[str, Any]] = []
         for e in reversed(self.scada.point_log):
             if self._match(e):
@@ -241,6 +282,10 @@ class ProtocolMonitorView(View):
         """
         if self.paused or not self.display or not self.protocol:
             return
+        if self.hide_fast and time.time() - self._fast_at > self.FAST_RECOUNT_S:
+            # A tag that just became fast is hidden from now on; lines already shown stay until the next rebuild.
+            self._recount_fast()
+            self._update_state()
         log = self.query_one("#pm-log", LineLog)
         for e in entries:
             if self._match(e):
@@ -249,8 +294,10 @@ class ProtocolMonitorView(View):
 
     def _update_state(self) -> None:
         """The LIVE / PAUSED badge next to the filter field."""
-        self.query_one("#pm-state", Static).update(
-            Text(" ⏸ " + _("PAUSED") + " " if self.paused else " ● " + _("LIVE") + " ", style="reverse bold"))
+        state = Text(" ⏸ " + _("PAUSED") + " " if self.paused else " ● " + _("LIVE") + " ", style="reverse bold")
+        if self.hide_fast:
+            state.append("  " + _("{n} fast tags hidden (f)").format(n=len(self._fast)), style="dim")
+        self.query_one("#pm-state", Static).update(state)
 
     @on(Input.Changed, "#pm-filter")
     def _filter(self) -> None:
@@ -272,6 +319,12 @@ class ProtocolMonitorView(View):
         self._update_state()
         if not self.paused:
             self.rebuild()
+
+    def action_fast(self) -> None:
+        """f: hide or show the tags that change all the time (more than FAST_PER_MIN per minute)."""
+        self.hide_fast = not self.hide_fast
+        self.rebuild()
+        self._update_state()
 
     def action_clear(self) -> None:
         """c: empty the log on screen. The app's buffer is kept, so the lines return when the view is rebuilt."""
@@ -305,5 +358,5 @@ class ProtocolMonitorView(View):
         current = next((x["value"] for x in reversed(self.scada.point_log)
                         if x["conn"] == conn and x["tag"] == name and not x["write"]), info.get("value"))
         old = f"{show_value(current)} {info.get('unit') or ''}".strip()
-        self.app.push_screen(PointDialog(title, {**info, "value": current}),
+        self.app.push_screen(PointDialog(title, {**info, "value": current}, (conn, name)),
                              lambda w: confirm_point_write(self.scada, conn, name, info, w, old))

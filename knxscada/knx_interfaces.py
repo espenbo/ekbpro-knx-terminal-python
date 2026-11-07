@@ -22,6 +22,9 @@ whose bus it is connected to (``project: annex``; default: the first project).
 Telegrams from that interface get the project's address prefix (``S:1/2/3``),
 and a telegram for ``S:1/2/3`` is only sent through an interface of that project.
 
+A KNX USB interface is one more interface: ``connection: usb`` with ``usb_device`` (empty = the only one found,
+``/dev/hidrawN``, its serial number or ``vvvv:pppp``) – see :mod:`knxscada.knx_usb`.
+
 The old single-interface form (``knx: {connection, gateway_ip, …}``) is still
 valid and gives one interface named ``knx``. Keys at the ``knx:`` level next to
 ``interfaces`` (e.g. ``keyring_file``) are defaults for every interface.
@@ -51,11 +54,11 @@ from .i18n import _
 from .project import split_key
 
 #: Names of ``connection`` in the configuration.
-CONNECTION_TYPES = ("tunneling", "tunneling_tcp", "tunneling_secure", "routing", "routing_secure", "automatic")
+CONNECTION_TYPES = ("tunneling", "tunneling_tcp", "tunneling_secure", "routing", "routing_secure", "automatic", "usb")
 
 #: Keys that only make sense per interface: not inherited from the ``knx:`` level.
 _OWN_KEYS = {"interfaces", "name", "addresses", "default", "gateway_ip", "gateway_port", "individual_address",
-             "project"}
+             "project", "usb_device"}
 
 #: Interface names are shown in the bus monitor and the event log: keep them short and plain.
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,16}$")
@@ -124,8 +127,15 @@ def interface_configs(knx: dict[str, Any], projects: dict[str, str] | None = Non
 
 
 def connection_type(name: str):
-    """The xknx ``ConnectionType`` for a ``connection`` name (validated by :func:`interface_configs`)."""
+    """The xknx ``ConnectionType`` for a ``connection`` name (validated by :func:`interface_configs`).
+
+    ``usb`` has no xknx type: the server replaces xknx's interface by :class:`knxscada.knx_usb.UsbInterface`, and
+    the (unused) IP config is the default one.
+    """
     from xknx.io import ConnectionType
+
+    if name == "usb":
+        return ConnectionType.AUTOMATIC
 
     return {
         "tunneling": ConnectionType.TUNNELING,
@@ -138,7 +148,9 @@ def connection_type(name: str):
 
 
 def describe(c: dict[str, Any]) -> str:
-    """Short text for the status: ``192.168.1.50`` or ``auto``."""
+    """Short text for the status: ``192.168.1.50``, ``auto``, or ``USB`` / ``USB /dev/hidraw2`` for a USB interface."""
+    if c.get("connection") == "usb":
+        return f"USB {c['usb_device']}" if c.get("usb_device") else "USB"
     return str(c.get("gateway_ip") or "auto")
 
 

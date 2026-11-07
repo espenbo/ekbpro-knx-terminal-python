@@ -89,7 +89,8 @@ MAX_HOURS = 24 * 400
 USER_RE = re.compile(r"[^\w@.:\-]+")
 
 #: Client commands handled by the protocol hub (connections and gateways, see knxscada/protocols/hub.py).
-HUB_COMMANDS = ("protocols", "points", "logged_points", "point_write", "protocols_save", "protocols_reload")
+HUB_COMMANDS = ("protocols", "points", "logged_points", "point_write", "point_priorities", "protocols_save",
+                "protocols_reload")
 
 #: Telegrams older than the retention time are deleted in batches of this size, with a
 #: pause for the event loop in between, so a large purge never blocks the server.
@@ -314,9 +315,9 @@ class ScadaServer:
 
     # -- KNX ------------------------------------------------------------------------------
     async def _knx_connect(self, c: dict[str, Any]) -> None:
-        """Connect to one KNX IP interface, retrying with back-off until it succeeds.
+        """Connect to one KNX interface (IP or USB), retrying with back-off until it succeeds.
 
-        After the first successful connect xknx reconnects by itself.
+        After the first successful connect xknx reconnects by itself (a USB interface looks for its device again).
         """
         from xknx import XKNX
         from xknx.io import ConnectionConfig
@@ -345,6 +346,12 @@ class ScadaServer:
         delay = 5
         while True:
             xknx = XKNX(connection_config=conn, connection_state_changed_cb=partial(self._on_conn_state, name))
+            if c["connection"] == "usb":
+                # xknx only speaks KNXnet/IP: the USB interface takes the place of its IP interface and passes
+                # cEMI frames both ways, so the telegram queue, L_Data.con and the state callback work as for IP.
+                from .knx_usb import UsbInterface
+
+                xknx.knxip_interface = UsbInterface(xknx, c)
             self.xknx[name] = xknx
             # match_for_outgoing: our own telegrams also pass through _on_telegram,
             # so they are logged and update the state exactly like incoming ones.

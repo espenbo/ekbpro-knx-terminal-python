@@ -6,7 +6,13 @@ import asyncio
 
 from knxscada.config import Config
 from knxscada.protocols.hub import Hub
-from knxscada.tui.energy import consumption, meter_cells, value_at
+from knxscada.tui.energy import (
+    calendar_bounds,
+    calendar_use,
+    consumption,
+    meter_cells,
+    value_at,
+)
 from knxscada.tui.systems import (
     Colors,
     Meter,
@@ -190,6 +196,28 @@ def test_consumption_from_counter():
     assert consumption(pts, -3600, 7200, 3) == [None, 2.0, 4.0]          # no reading before the first bucket
     assert consumption([(0, 10.0), (3600, 5.0)], 0, 3600, 1) == [None]   # counter replaced: no negative bar
     assert consumption([], 0, 3600, 2) == [None, None]
+
+
+def test_calendar_consumption():
+    """Yesterday, today, this month and last month from a counter that rises 1 kWh per hour, around local midnight
+    and the first of the month; a log that starts too late gives None for the periods it does not cover."""
+    import time
+
+    now = time.mktime((2026, 11, 7, 12, 0, 0, 0, 0, -1))
+    start = time.mktime((2026, 10, 1, 0, 0, 0, 0, 0, -1))
+    pts = [(start + h * 3600, float(h)) for h in range(int((now - start) / 3600) + 1)]
+    use = calendar_use(pts, now)
+    b = calendar_bounds(now)
+
+    def hours(a: float, z: float) -> int:
+        """Hours between two times – not always 24 per day: a change to winter time adds one (Norway: 25 Oct)."""
+        return round((z - a) / 3600)
+
+    assert use["today"] == hours(b["today"], now) == 12 and use["yesterday"] == hours(b["yesterday"], b["today"])
+    assert use["month"] == hours(b["month"], now) and use["last_month"] == hours(b["last_month"], b["month"])
+    assert calendar_use(pts[-30:], now)["yesterday"] is None and calendar_use([], now)["today"] is None
+    b = calendar_bounds(time.mktime((2026, 1, 1, 0, 30, 0, 0, 0, -1)))
+    assert time.localtime(b["yesterday"])[:3] == (2025, 12, 31) and time.localtime(b["last_month"])[:3] == (2025, 12, 1)
 
 
 def test_settings_sections():

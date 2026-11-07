@@ -19,6 +19,9 @@ knxscada/
   store.py        SQLite: telegrammer, hendelser, alarmer, loggede taggverdier
   server.py       ScadaServer (xknx per grensesnitt, logging, alarmer, socket-API) + Simulator (--demo)
   knx_interfaces.py  flere KNX IP-grensesnitt: konfigurasjon, Router (utgående), Deduplicator (innkommende)
+  knx_usb.py      KNX USB-grensesnitt: HID-rammer, cEMI, tar plassen til xknx sitt IP-grensesnitt (connection: usb)
+  setup_wizard.py ./scada setup: spørsmålene, søk etter KNX/BACnet/Modbus/OPC UA, config.yaml
+  service.py      ./scada service: systemd-enheten fra deploy/knxscada.service
   client.py       asynkron klient for socketen
   plan.py         plan.yaml og DXF-eksport
   export.py       eksport fra busmonitoren: ETS gruppemonitor-XML (cEMI-rammer), CSV, JSON-linjer
@@ -32,7 +35,8 @@ knxscada/
     config.py     protocols.yaml: lesing, kontroll (også utstyrsmaler), lagring
     gateway.py    gatewaymotoren: nytt navn, skalering, retning, ekkodemping, dødbånd, regler ved oppstart
     hub.py        kjører driverne i serveren, holder verdiene, snakker med TUI-en
-    knx.py, modbus.py, mqtt.py, opcua.py   driverne
+    knx.py, modbus.py, mqtt.py, opcua.py, bacnet.py   driverne
+    sparkplug.py  MQTT Sparkplug B: edge node / host-applikasjon, egen protobuf-koding
     devices/      utstyrsmaler (model: WAGO 879-3000 …): én YAML-fil per utstyrsfamilie
   tui/
     app.py        Textual-appen: meny, topplinje, tastelinje, navigering, meldingshåndtering

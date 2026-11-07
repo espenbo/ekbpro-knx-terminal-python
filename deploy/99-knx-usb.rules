@@ -1,0 +1,14 @@
+# KNX USB interfaces for EKBPRO KNX Terminal Python (knx: connection: usb).
+#
+# The server talks to the interface through /dev/hidrawN, which is root-only by default. These rules give the
+# group plugdev read/write access (put the service user in that group: sudo usermod -aG plugdev YOUR_USER).
+#
+# Install:  sudo install -m 644 deploy/99-knx-usb.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+#
+# Any USB device whose product name contains "KNX" (Weinzierl, MDT, Gira, Jung, ABB … name theirs that way):
+SUBSYSTEM=="hidraw", ATTRS{product}=="*KNX*", MODE="0660", GROUP="plugdev"
+# Weinzierl Engineering (also inside many OEM interfaces):
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0e77", MODE="0660", GROUP="plugdev"
+# Add a line with the idVendor/idProduct of another interface (lsusb shows them) if it is not matched above:
+# SUBSYSTEM=="hidraw", ATTRS{idVendor}=="xxxx", ATTRS{idProduct}=="yyyy", MODE="0660", GROUP="plugdev"

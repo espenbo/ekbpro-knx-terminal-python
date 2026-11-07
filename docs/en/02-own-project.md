@@ -21,8 +21,12 @@ If the installation uses **KNX Secure** (IP Secure or Data Secure), you also nee
 | Option | Meaning |
 |---|---|
 | `--gateway IP` | IP address of the KNX IP interface. Omitted means automatic discovery. |
-| `--connection TYPE` | `tunneling` (default when a gateway is given), `tunneling_tcp`, `routing`, `automatic` (default without a gateway), `tunneling_secure`, `routing_secure` |
+| `--connection TYPE` | `tunneling` (default when a gateway is given), `tunneling_tcp`, `routing`, `automatic` (default without a gateway), `tunneling_secure`, `routing_secure`, `usb` |
 | `--password PW` | Password of the `.knxproj` |
+| `--keyring FILE` | KNX Secure keyring (`.knxkeys`) exported from ETS. The connection becomes `tunneling_secure` (with `--gateway`) or `routing_secure`. |
+| `--keyring-password PW` | Password of the keyring file |
+| `--user-id N` | Tunnel user for secure tunneling (optional) |
+| `--usb-device DEV` | KNX USB interface instead of IP: serial number, `/dev/hidrawN` or `vvvv:pppp` (`./scada knx-usb` lists them). The connection becomes `usb`. |
 | `--language LANG` | User interface language: `en` (English, default) or `nb` (Norwegian bokmål). Written to `ui.language` in `config.yaml`. |
 | `--force` | Overwrite an existing `config.yaml`. The old one is kept as `config.yaml.bak`. |
 
@@ -45,7 +49,9 @@ Cards:           39  (built from ETS functions)
 Floor and room names come from ETS and are shown exactly as they are in the project, whatever the
 user interface language is.
 
-For KNX Secure, add this to `config.yaml`:
+For KNX Secure, give the keyring to `init`
+(`./scada init ~/MyHouse.knxproj --gateway 192.168.1.50 --keyring ~/MyHouse.knxkeys --keyring-password …`),
+or add this to `config.yaml`:
 
 ```yaml
 knx:

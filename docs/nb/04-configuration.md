@@ -14,11 +14,12 @@ start serveren på nytt også når du endrer den.
 | Nøkkel | Standard | Beskrivelse |
 |---|---|---|
 | `enabled` | på når `knx:` eller `project:` er fylt ut | `false` = kjør uten KNX (bare tilkoblingene og gatewayene i `protocols.yaml`; TUI-en starter på F11) |
-| `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (automatisk søk), `tunneling_secure`, `routing_secure` |
+| `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (automatisk søk), `tunneling_secure`, `routing_secure`, `usb` (KNX USB-grensesnitt, se under) |
 | `gateway_ip` | – | IP-adressen til IP-grensesnittet. Trengs ikke for `routing` og `automatic`. |
 | `gateway_port` | `3671` | |
 | `local_ip` | auto | Lokal IP det sendes fra. Sett den når maskinen har flere nettverkskort. |
-| `individual_address` | – | Fysisk adresse ved routing, for eksempel `1.1.250` |
+| `individual_address` | – | Fysisk adresse ved routing, for eksempel `1.1.250` (USB: valgfri avsenderadresse) |
+| `usb_device` | det første som finnes | Bare `usb`: hvilket KNX USB-grensesnitt – serienummer, `/dev/hidrawN` eller `vvvv:pppp` |
 | `route_back` | `false` | `true` når IP-grensesnittet nås gjennom NAT eller VPN (Tailscale subnet router, WireGuard, en ruter med portvideresending): grensesnittet svarer til adressen forespørselen kom fra, i stedet for adressen i forespørselen. Bare `tunneling` (UDP). |
 | `keyring_file` | – | `.knxkeys` fra ETS. Trengs for KNX Secure. |
 | `keyring_password` | – | Passordet til keyring-fila |
@@ -30,6 +31,40 @@ start serveren på nytt også når du endrer den.
 slippe å bruke tunnel i det hele tatt.
 
 `tunneling_secure` bruker secure tunneling over TCP.
+
+### KNX USB-grensesnitt
+
+Et KNX USB-grensesnitt (Weinzierl, MDT, Gira, Jung, ABB …) virker som et IP-grensesnitt: `connection: usb`. Det kan
+være det eneste grensesnittet eller ett av flere i `interfaces` (for eksempel en USB-pinne på en linje uten
+IP-grensesnitt).
+
+```yaml
+knx:
+  connection: usb
+  usb_device: 00C512345678        # valgfri: serienummer, /dev/hidrawN eller vvvv:pppp – tom = det første som finnes
+```
+
+- Bare grensesnitt som støtter **cEMI**, kan brukes (praktisk talt alle nye, f.eks. Weinzierl KNX USB Interface 312).
+  Ved oppstart setter serveren grensesnittet i cEMI-modus og i data link layer (mange grensesnitt starter i
+  «no layer» og sender ingenting videre før det) og spør om TP-linjen har spenning. Dette er innstillinger i selve
+  grensesnittet – **ingenting sendes på bussen**. Et grensesnitt som bare har EMI1/EMI2, avvises med en melding
+  i hendelsesloggen.
+- Topplinjen viser grensesnittet som tilkoblet så lenge TP-linjen har spenning. Trekkes pinnen ut, blir det rødt, og
+  serveren finner den igjen når den er tilbake – med serienummer også når Linux gir den en annen `/dev/hidrawN`.
+- Bare Linux (`/dev/hidraw`). Enheten er bare tilgjengelig for root som standard: installer udev-regelen og legg
+  tjenestebrukeren i gruppen `plugdev`, og sett pinnen inn på nytt:
+
+  ```bash
+  sudo install -m 644 deploy/99-knx-usb.rules /etc/udev/rules.d/
+  sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+  sudo usermod -aG plugdev DIN_BRUKER      # start deretter tjenesten på nytt
+  ```
+
+- `./scada knx-usb` viser KNX USB-grensesnittene med serienummer og om du har tilgang.
+  `./scada knx-usb --listen 30` åpner det første (eller det du navngir) og skriver ut telegrammene i 30 sekunder
+  uten å sende noe – bruk det til å kontrollere pinnen før serveren tar den i bruk.
+- `individual_address` (valgfri) er avsenderadressen for telegrammene våre. Uten den bruker grensesnittet sin egen.
+- I Docker må enheten sendes inn med `--device /dev/hidraw2` (se [Docker](09-docker.md)).
 
 ### Flere KNX IP-grensesnitt
 
@@ -56,7 +91,7 @@ knx:
 |---|---|---|
 | `name` | `gateway_ip`, ellers `knx1`, `knx2` … | Bokstaver, sifre, `-`, `_`, `.`; høyst 16 tegn; unikt. |
 | `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`, `user_id`, `dedup_ms` | fra `knx:`-nivået | Som over, for dette grensesnittet. Dette er de eneste nøklene som hentes fra `knx:`-nivået. |
-| `gateway_ip`, `gateway_port`, `individual_address` | som i tabellen over | Bare per grensesnitt – hentes aldri fra `knx:`-nivået. |
+| `gateway_ip`, `gateway_port`, `individual_address`, `usb_device` | som i tabellen over | Bare per grensesnitt – hentes aldri fra `knx:`-nivået. |
 | `addresses` | – | Gruppeadresser der telegrammene **sendes** gjennom dette grensesnittet: en liste med mønstre, `*` passer med hva som helst (`"4/*"`, `"1/2/1?"`, `"3/1/0"`). |
 | `project` | første prosjekt | Med flere ETS-prosjekter (`project.files`): prosjektet som har bussen grensesnittet er koblet til. |
 | `default` | første grensesnitt i prosjektet | Grensesnittet for adresser som ingen `addresses`-mønstre passer med, og som ikke er sett ennå. |

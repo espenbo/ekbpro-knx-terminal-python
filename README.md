@@ -4,7 +4,8 @@
 
 A SCADA and visualisation system that runs in the terminal and is used over SSH or a VPN. It started with KNX –
 everything is built automatically from the ETS project file (`.knxproj`), so **anyone can use it with their own
-installation** – and now also speaks **BACnet/IP, Modbus TCP/RTU, OPC UA and MQTT**, with gateways between them.
+installation** – and now also speaks **BACnet/IP, Modbus TCP/RTU, OPC UA, MQTT and MQTT Sparkplug B**, with gateways
+between them.
 KNX is one module among the others: an installation can run with only BACnet, only Modbus, or any mix.
 You need no web browser, no per-view licence and no special hardware.
 
@@ -24,17 +25,19 @@ You need no web browser, no per-view licence and no special hardware.
   pressures, operating mode and alarm class); water-borne plants – boiler rooms, floor heating, tap water, energy
   valves – are drawn as **piping diagrams written as text in the configuration**, with supply pipes in red,
   return pipes in blue and pumps coloured by running/alarm/safety switch.
-- **Energy meters (Ctrl+G):** power, energy, currents and voltages per meter, and consumption per hour or day
-  worked out from the counter.
+- **Energy meters (Ctrl+G):** power, energy, currents and voltages per meter, consumption yesterday and this month,
+  and consumption per hour or day worked out from the counter.
 - **Monitor per protocol (F4):** the KNX bus monitor, and for Modbus, OPC UA, BACnet and MQTT every value change and
-  every write live – with the user who wrote it.
+  every write live – with the user who wrote it, reads and errors per connection, and a filter for tags that change
+  all the time.
 - **Screensaver** with many pages – clock, sky with sun, moon and lit windows, heat map, ventilation with moving
   air, energy meters, today's records, telegram rain. Unacknowledged alarms take over the screen.
 - **Six colour themes:** muted green, green phosphor, amber, modern dark, solarized and Storm Automasjon –
   chosen per installation, so several sites can be told apart. The Storm Automasjon theme comes with its logo; a logo of your own is possible too.
 - **Two languages:** English (default) and Norwegian bokmål – per installation, per user or per session.
 - **One server, many clients:** one KNX tunnel per IP interface regardless of the number of SSH sessions, and logging around the clock.
-- **Connectivity:** KNX IP tunneling (UDP and TCP), routing and KNX IP Secure with a keyring from ETS.
+- **Connectivity:** KNX IP tunneling (UDP and TCP), routing, KNX IP Secure with a keyring from ETS, and KNX USB
+  interfaces (cEMI, e.g. Weinzierl KNX USB Interface 312) directly through `/dev/hidraw`.
 - **Several KNX IP interfaces** treated as one bus (one per line or building part), with routing of outgoing
   telegrams and de-duplication; reachable through NAT/VPN.
 - **Several ETS projects in one site** (e.g. a main building and an annex), `.knxproj` and `.knxprojarchive`.
@@ -43,8 +46,9 @@ You need no web browser, no per-view licence and no special hardware.
   generated from the ETS project, optionally with names from system tags. Several PLCs per site. A PLC download or
   reset never reaches the bus.
 - **Protocol modules:** KNX, Modbus TCP and RTU (master and slave, device templates for WAGO 879-30xx energy
-  meters, Carlo Gavazzi and Solar-Log), OPC UA (client and server, block-wise reads for WAGO PFC), MQTT, and
-  BACnet/IP (client with ReadPropertyMultiple and COV, and a BACnet device of our own). Each module's packages are
+  meters, Carlo Gavazzi and Solar-Log), OPC UA (client and server, block-wise reads for WAGO PFC), MQTT, MQTT
+  Sparkplug B (our own edge node, or a host application of one), and BACnet/IP (client with
+  ReadPropertyMultiple and COV, and a BACnet device of our own). Each module's packages are
   installed only when it is used: `./scada modules install bacnet modbus`. KNX is a module too (installed by
   default by `setup.sh` and Docker), so a Modbus- or BACnet-only site needs no KNX packages: `./setup.sh modbus opcua`.
 - **Gateways** between any two connections: renaming, scaling, direction, echo suppression, deadband and rate
@@ -54,11 +58,20 @@ You need no web browser, no per-view licence and no special hardware.
 - **Logging, trends and alarms for protocol tags** as for group addresses (`log`, `match_point`, `delay_s`).
 - **Safe by design:** nothing is sent to equipment at start-up or reconnect (statuses are read first, old values
   are only shown); every tag towards equipment is read-only until writing is enabled; every write is confirmed and
-  logged with the user; BACnet writes use a chosen priority and can be released again, and the life-safety
-  priorities are refused.
+  logged with the user; BACnet writes use a chosen priority and can be released again (the device's priority array
+  is shown), and the life-safety priorities are refused.
 - **Docker:** runs in a container, also on a WAGO PFC200/PFC300.
 
 ## Getting started
+
+On Debian, Ubuntu or Raspberry Pi OS, one command installs everything and asks the set-up questions
+(`./scada setup`: ETS project, KNX connection – it searches for IP and USB interfaces –, modules, service):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/espenbo/ekbpro-knx-terminal-python/main/install.sh | bash
+```
+
+Or step by step:
 
 ```bash
 git clone https://github.com/espenbo/ekbpro-knx-terminal-python.git
@@ -116,7 +129,7 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | [Troubleshooting](docs/en/07-troubleshooting.md) | [Feilsøking](docs/nb/07-troubleshooting.md) | Common problems and solutions |
 | [Docker](docs/en/09-docker.md) | [Docker](docs/nb/09-docker.md) | Running in a container, e.g. on a WAGO PFC200/PFC300 |
 | [PLC bridge (OPC UA)](docs/en/10-plc-opcua.md) | [PLS-bro (OPC UA)](docs/nb/10-plc-opcua.md) | Let a PLC read and write KNX: mapping, CODESYS GVL, security |
-| [Protocols and gateways](docs/en/11-protocols-gateways.md) | [Protokoller og gatewayer](docs/nb/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT, OPC UA and BACnet/IP as modules, gateways between them and KNX, running without KNX |
+| [Protocols and gateways](docs/en/11-protocols-gateways.md) | [Protokoller og gatewayer](docs/nb/11-protocols-gateways.md) | Modbus TCP/RTU, MQTT, Sparkplug B, OPC UA and BACnet/IP as modules, gateways between them and KNX, running without KNX |
 | [Setup reference](docs/en/12-setup-reference.md) | [Oppsettsreferanse](docs/nb/12-setup-reference.md) | Everything to set the program up – also for AI assistants: complete examples, every key with type, default and valid values, tasks step by step, checks |
 | [Architecture](docs/en/08-architecture.md) | [Arkitektur](docs/nb/08-architecture.md) | For developers: components, protocol, database, translations, tests, extensions |
 
@@ -127,14 +140,17 @@ Every document is in English (`docs/en/`) and Norwegian bokmål (`docs/nb/`).
 | `./scada` | Starts the visualisation |
 | `./scada tui [--language en\|nb]` | Starts the visualisation, optionally in another language for this session |
 | `./scada server [--demo] [-v]` | Starts the server (KNX, logging, alarms) |
-| `./scada init PROJECT.knxproj [--gateway IP] [--connection TYPE] [--password PW] [--language en\|nb] [--force]` | Creates `config.yaml` for a project |
+| `./scada setup` | Sets up an installation step by step: ETS project, KNX connection (search for IP and USB interfaces), modules, equipment search, service |
+| `./scada init PROJECT.knxproj [--gateway IP] [--connection TYPE] [--password PW] [--keyring FILE] [--usb-device DEV] [--language en\|nb] [--force]` | Creates `config.yaml` for a project |
+| `./scada service install\|remove\|status` | The server as a systemd service (the unit is made for this config; without root the `sudo` commands are printed) |
+| `./scada knx-usb [DEVICE] [--listen S]` | Lists the KNX USB interfaces, or prints the telegrams seen through one (sends nothing) |
 | `./scada import` | Re-reads the `.knxproj` |
 | `./scada info` | Shows a summary of the project |
 | `./scada plan-dxf [file.dxf]` | Exports the floor plan to DXF |
 | `./scada plc-map [--all\|--marked] [--rename] [--plc NAME]` | Creates/updates the PLC mapping (`plc_map.yaml`) and the CODESYS GVL, for every PLC or one |
 | `./scada plc-browse [FILTER] [--endpoints] [--plc NAME]` | Lists the variables (or the security modes) of the PLC's OPC UA server |
 | `./scada plc-gateway [--plc NAME] [--write]` | Moves the PLC bridge to the gateways: an OPC UA connection and gateways in `protocols.yaml`, with the same variables, directions and guards |
-| `./scada modules [install NAME …]` | Lists the protocol modules (KNX, Modbus, MQTT, OPC UA, BACnet), or installs their packages |
+| `./scada modules [install NAME …]` | Lists the protocol modules (KNX, Modbus, MQTT, Sparkplug B, OPC UA, BACnet), or installs their packages |
 | `./scada gateway` | Checks `protocols.yaml` and shows connections and gateways (live when the server runs) |
 | `./scada simulate [MODEL] [--port 5020] [--device TTY]` | Plays a device template (WAGO, Carlo Gavazzi …) as a Modbus slave, for tests without equipment |
 | `./scada bacnet-scan [ADDRESS] [--device N] [--yaml]` | Finds BACnet devices (Who-Is), or lists the objects of one device – as tags for `protocols.yaml` with `--yaml`. Works across a VPN too (devices whose I-Am is a broadcast are read directly) |

@@ -12,11 +12,12 @@ restart the server as well when you change it.
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | on when `knx:` or `project:` is filled in | `false` = run without KNX (only the connections and gateways of `protocols.yaml`; the TUI starts on F11) |
-| `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (discovery), `tunneling_secure`, `routing_secure` |
+| `connection` | `automatic` | `tunneling` (UDP), `tunneling_tcp`, `routing` (multicast), `automatic` (discovery), `tunneling_secure`, `routing_secure`, `usb` (KNX USB interface, see below) |
 | `gateway_ip` | – | IP address of the IP interface. Not needed for `routing` and `automatic`. |
 | `gateway_port` | `3671` | |
 | `local_ip` | auto | Local IP to send from. Set it when the machine has several network interfaces. |
-| `individual_address` | – | Individual address for routing, for example `1.1.250` |
+| `individual_address` | – | Individual address for routing, for example `1.1.250` (USB: optional source address) |
+| `usb_device` | first found | `usb` only: which KNX USB interface – serial number, `/dev/hidrawN` or `vvvv:pppp` |
 | `route_back` | `false` | `true` when the IP interface is reached through NAT or a VPN (Tailscale subnet router, WireGuard, a router with port forwarding): the interface answers to the address the request came from instead of the address in the request. `tunneling` (UDP) only. |
 | `keyring_file` | – | `.knxkeys` from ETS. Needed for KNX Secure. |
 | `keyring_password` | – | Password of the keyring file |
@@ -28,6 +29,39 @@ one tunnel per interface regardless of how many users are logged in. With an IP 
 no tunnel at all.
 
 `tunneling_secure` uses secure tunneling over TCP.
+
+### KNX USB interface
+
+A KNX USB interface (Weinzierl, MDT, Gira, Jung, ABB …) works like an IP interface: `connection: usb`. It can be
+the only interface or one of several in `interfaces` (for example a USB stick on a line without an IP interface).
+
+```yaml
+knx:
+  connection: usb
+  usb_device: 00C512345678        # optional: serial number, /dev/hidrawN or vvvv:pppp – empty = the first one found
+```
+
+- Only interfaces that support **cEMI** can be used (practically all current ones, e.g. Weinzierl KNX USB Interface
+  312). At start the server switches the interface to cEMI and to the data link layer (many interfaces start in
+  "no layer" and pass nothing on until then) and asks whether the TP line has power. These are settings in the
+  interface itself – **nothing is sent on the bus**. An interface that only has EMI1/EMI2 is refused with a
+  message in the event log.
+- The top bar shows the interface as connected while the TP line has power. If the stick is unplugged it turns red,
+  and the server finds it again when it is back – by serial number also when Linux gives it another `/dev/hidrawN`.
+- Linux only (`/dev/hidraw`). The device is root-only by default: install the udev rule and put the service user in
+  the `plugdev` group, then plug the stick in again:
+
+  ```bash
+  sudo install -m 644 deploy/99-knx-usb.rules /etc/udev/rules.d/
+  sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+  sudo usermod -aG plugdev YOUR_USER       # then restart the service
+  ```
+
+- `./scada knx-usb` lists the KNX USB interfaces with serial number and whether you have access.
+  `./scada knx-usb --listen 30` opens the first one (or the one named) and prints the telegrams for 30 seconds
+  without sending anything – use it to check the stick before the server uses it.
+- `individual_address` (optional) is the source address of our telegrams. Without it the interface uses its own.
+- In Docker the device must be passed in with `--device /dev/hidraw2` (see [Docker](09-docker.md)).
 
 ### Several KNX IP interfaces
 
@@ -54,7 +88,7 @@ knx:
 |---|---|---|
 | `name` | `gateway_ip`, else `knx1`, `knx2` … | Letters, digits, `-`, `_`, `.`; at most 16 characters; unique. |
 | `connection`, `local_ip`, `route_back`, `keyring_file`, `keyring_password`, `user_id`, `dedup_ms` | from the `knx:` level | As above, for this interface. These are the only keys taken from the `knx:` level. |
-| `gateway_ip`, `gateway_port`, `individual_address` | as in the table above | Per interface only – never taken from the `knx:` level. |
+| `gateway_ip`, `gateway_port`, `individual_address`, `usb_device` | as in the table above | Per interface only – never taken from the `knx:` level. |
 | `addresses` | – | Group addresses whose telegrams are **sent** through this interface: a list of patterns, `*` matches anything (`"4/*"`, `"1/2/1?"`, `"3/1/0"`). |
 | `project` | first project | With several ETS projects (`project.files`): the project whose bus this interface is connected to. |
 | `default` | first interface of the project | The interface for addresses that no `addresses` pattern matches and that have not been seen yet. |

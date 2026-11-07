@@ -17,6 +17,22 @@
 
 ## Serveren som systemd-tjeneste
 
+Enklest er `./scada service`, kjørt som brukeren som eier programmappa:
+
+```bash
+./scada service install                                   # standard config.yaml → knxscada
+./scada -c sites/hus/config.yaml service install          # et anlegg → knxscada-hus
+./scada service status                                    # installert, aktivert, kjører, siden når
+./scada service remove
+```
+
+`install` lager enheten fra [`deploy/knxscada.service`](../../deploy/knxscada.service) for konfigurasjonen som er i
+bruk: brukeren din, gruppen til anleggsmappa, `-c <config.yaml>` for et anlegg og `ReadWritePaths` = mappa til
+databasen. Uten root skrives enheten til `var/systemd/<navn>.service`, og `sudo`-kommandoene skrives ut (install,
+`daemon-reload`, `enable`, `restart`), så ingenting endres før du kjører dem. `--name` gir et annet tjenestenavn.
+
+For hånd:
+
 [`deploy/knxscada.service`](../../deploy/knxscada.service) inneholder plassholderne `YOUR_USER` og `INSTALL_DIR`.
 Kjør dette fra programmappa som brukeren som eier den – det fyller dem inn og installerer tjenesten:
 

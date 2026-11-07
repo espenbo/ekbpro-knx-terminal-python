@@ -135,7 +135,7 @@ def test_validate_finds_problems():
             "1bad": {"protocol": "modbus"},
             "plc": {"protocol": "modbus", "role": "master", "port": "x", "tags": {"t": {"address": "zz:1"}}},
             "mq": {"protocol": "mqtt", "host": ""},
-            "b": {"protocol": "sparkplug"},
+            "b": {"protocol": "matter"},
             "knx2": {"protocol": "knx"},
         },
         "gateways": [
@@ -205,7 +205,7 @@ def test_registry_is_consistent():
         assert len(keys) == len(set(keys)), p.name
         for f in (*p.settings, *p.tag_fields):
             assert not f.choices or f.default in f.choices or f.default in (None, ""), (p.name, f.key)
-    assert installed("knx") and not installed("sparkplug")
+    assert installed("knx") and not installed("matter")
 
 
 # -- values ------------------------------------------------------------------------------------------
@@ -536,13 +536,13 @@ def test_problems_are_reported(tmp_path):
         """Start with a bad connection and a gateway with unknown tags."""
         src = Mem("src", {"tags": {"x": {}}}, None, server=False)
         cli = Mem("cli", {}, None, server=False)
-        hub = await make_hub(tmp_path, {"connections": {"bad": {"protocol": "sparkplug"}},
+        hub = await make_hub(tmp_path, {"connections": {"bad": {"protocol": "matter"}},
                                         "gateways": [{"name": "g", "from": "src", "to": "cli", "map": ["nope", "x"]}]},
                              {"src": src, "cli": cli})
         try:
             text = "\n".join(t for _l, t in hub.server.events)
-            assert "src has no tag 'nope'" in text and "cli has no tag 'x'" in text and "bad: The MQTT Sparkplug B module is not available yet" in text
-            assert hub.failed == {"bad": "The MQTT Sparkplug B module is not available yet"}
+            assert "src has no tag 'nope'" in text and "cli has no tag 'x'" in text and "bad: The Matter module is not available yet" in text
+            assert hub.failed == {"bad": "The Matter module is not available yet"}
             row = next(s for s in hub.status() if s["name"] == "bad")
             assert not row["running"] and row["error"]
             with pytest.raises(RuntimeError):
@@ -883,7 +883,7 @@ def test_cli_modules_and_gateway(tmp_path, capsys):
     assert main(["-c", cfg, "gateway"]) == 1
     assert "unknown protocol" in capsys.readouterr().out
     assert main(["-c", cfg, "modules", "install"]) == 1
-    assert main(["-c", cfg, "modules", "install", "sparkplug"]) == 1
+    assert main(["-c", cfg, "modules", "install", "matter"]) == 1
 
 
 # -- the TUI (F11) against a real hub ----------------------------------------------------------------------

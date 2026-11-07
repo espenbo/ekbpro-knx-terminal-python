@@ -77,6 +77,11 @@ TABLES = {"co": "co", "coil": "co", "coils": "co", "di": "di", "discrete": "di",
 #: Classic numbering: first digit → table.
 CLASSIC = {"0": "co", "1": "di", "3": "ir", "4": "hr"}
 
+#: Tries per identification register (``identify`` in a device template) before it is reported as unknown.
+IDENTIFY_TRIES = 3
+#: Seconds between two tries of an unanswered identification register.
+IDENTIFY_RETRY_S = 0.3
+
 #: ``table:number[.bit]`` – the number decimal or ``0x`` hex; the separator may also be a space or nothing (``hr100``).
 ADDRESS_RE = re.compile(r"^\s*([a-z]+)\s*[:\s]?\s*(0x[0-9a-f]+|\d+)(?:\.(\d{1,2}))?\s*$", re.IGNORECASE)
 
@@ -438,9 +443,18 @@ class Driver(BaseDriver):
             try:
                 table, index, _bit = parse_address(str(spec["address"]))
                 dtype = str(spec.get("type") or "uint16")
-                data = await self._read(table, self.unit, index, FORMATS[dtype][1])
             except (KeyError, ValueError):
                 continue
+            data = None
+            # Behind an RS485 gateway single requests go unanswered now and then (WAGO 879-30xx: the baud rate or the
+            # parity showed "?" on one start and was fine on the next). Two more tries make the report reliable;
+            # it runs once per connection, so the extra time does not matter.
+            for attempt in range(IDENTIFY_TRIES):
+                if attempt:
+                    await asyncio.sleep(IDENTIFY_RETRY_S)
+                data = await self._read(table, self.unit, index, FORMATS[dtype][1])
+                if data is not None:
+                    break
             if data is None:
                 continue
             raw = from_registers(data, dtype, "big")

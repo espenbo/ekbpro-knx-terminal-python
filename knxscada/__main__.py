@@ -26,9 +26,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import sys
+from datetime import datetime
 
 from . import PRODUCT
 from .config import Config, load_config
@@ -74,9 +77,16 @@ def _run(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--connection",
         default=None,
-        help="tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure",
+        help="tunneling | tunneling_tcp | routing | automatic | tunneling_secure | routing_secure | usb",
     )
     p.add_argument("--password", default=None, help="password of the .knxproj (if protected)")
+    p.add_argument("--keyring", default=None, metavar="FILE",
+                   help="KNX Secure keyring (.knxkeys) exported from ETS; the connection becomes tunneling_secure "
+                        "(with --gateway) or routing_secure")
+    p.add_argument("--keyring-password", default=None, help="password of the keyring file")
+    p.add_argument("--user-id", type=int, default=None, help="tunnel user for secure tunneling (optional)")
+    p.add_argument("--usb-device", default=None,
+                   help="KNX USB interface (serial number, /dev/hidrawN or vvvv:pppp); the connection becomes usb")
     p.add_argument("--language", default="en", choices=sorted(LANGUAGES), help="user interface language")
     p.add_argument("--force", action="store_true", help="overwrite an existing config.yaml (a .bak copy is kept)")
     p = sub.add_parser("plan-dxf", help="export the floor plan (plan.yaml) to DXF for CAD programs")
@@ -110,6 +120,15 @@ def _run(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=5020, help="Modbus TCP port")
     p.add_argument("--unit", type=int, default=1, help="unit id (slave address)")
     p.add_argument("--device", help="serial port (RS485) instead of TCP, with the template's serial settings")
+    sub.add_parser("setup", help="set up a new installation step by step (questions in the terminal)")
+    p = sub.add_parser("service", help="install, remove or show the server as a systemd service")
+    p.add_argument("action", choices=("install", "remove", "status"))
+    p.add_argument("--name", default=None,
+                   help="service name (default knxscada, or knxscada-<site> for sites/<site>/config.yaml)")
+    p = sub.add_parser("knx-usb", help="list KNX USB interfaces, or listen to the bus through one (sends nothing)")
+    p.add_argument("device", nargs="?", default="", help="/dev/hidrawN, serial number or vvvv:pppp; empty = the first")
+    p.add_argument("--listen", type=float, default=0, metavar="SECONDS",
+                   help="open the interface and print the telegrams for this many seconds")
     p = sub.add_parser("bacnet-scan", help="find BACnet devices (Who-Is), or list the objects of one device")
     p.add_argument("address", nargs="?", default="", help="device address, e.g. 192.168.1.40 or 2:5; empty = Who-Is")
     p.add_argument("--device", type=int, help="device instance (found with Who-Is when there is no address)")
@@ -125,10 +144,23 @@ def _run(argv: list[str] | None = None) -> int:
     cmd = args.cmd or "tui"
     if cmd == "init":
         return init_config(args)
+    if cmd == "setup":
+        import os
+        from pathlib import Path
+
+        from .config import DEFAULT_CONFIG
+        from .setup_wizard import Wizard
+
+        target = Path(args.config or os.environ.get("KNXSCADA_CONFIG") or DEFAULT_CONFIG).resolve()
+        try:
+            return Wizard(target).run()
+        except KeyboardInterrupt:
+            print()
+            return 1
     try:
         cfg = load_config(args.config)
     except FileNotFoundError:
-        if cmd not in ("modules", "simulate", "bacnet-scan"):
+        if cmd not in ("modules", "simulate", "bacnet-scan", "knx-usb"):
             raise
         # A fresh installation (setup.sh, Dockerfile) installs modules before there is a config.yaml.
         import os
@@ -184,6 +216,9 @@ def _run(argv: list[str] | None = None) -> int:
     if cmd == "bacnet-scan":
         return bacnet_scan(args)
 
+    if cmd == "knx-usb":
+        return knx_usb(args)
+
     if cmd == "plc-gateway":
         return plc_gateway(cfg, args)
     if cmd == "plc-browse":
@@ -214,6 +249,11 @@ def _run(argv: list[str] | None = None) -> int:
 
     if cmd == "gateway":
         return gateway(cfg)
+
+    if cmd == "service":
+        from .service import run as service_run
+
+        return service_run(cfg, args.action, args.name)
 
     # Default: the terminal user interface (imported lazily – Textual is heavy).
     # The language must be chosen before the import: some texts (key binding
@@ -367,6 +407,62 @@ async def _gvl_prefix(cfg, plc: dict) -> tuple[int, str] | None:
         return await find_gvl(client, str(plc["gvl"]))
     finally:
         await client.disconnect()
+
+
+def knx_usb(args) -> int:
+    """``knx-usb``: the KNX USB interfaces Linux knows, or (``--listen``) the telegrams seen through one.
+
+    Listening opens the interface exactly as the server does (switches it to cEMI – local to the interface) and only
+    reads: no telegram is sent to the bus. Stop the server's use of the same interface first; a hidraw device can
+    be read by two programs, but each would only get some of the reports.
+    """
+    from .knx_usb import UsbError, find_devices, select_device
+
+    devices = find_devices()
+    if not args.listen:
+        if not devices:
+            print(_("No KNX USB interface found."))
+            return 1
+        for d in devices:
+            access = _("ok") if os.access(d.path, os.R_OK | os.W_OK) else _("no access – see deploy/99-knx-usb.rules")
+            print(f"{d.path:14} {d.usb_id}  {d.serial or '–':14} {d.name}  [{access}]")
+        return 0
+    try:
+        dev = select_device(args.device, devices)
+    except UsbError as exc:
+        print(exc)
+        return 1
+    return asyncio.run(_knx_usb_listen(dev, args.listen))
+
+
+async def _knx_usb_listen(dev, seconds: float) -> int:
+    """Open *dev* through xknx with :class:`~knxscada.knx_usb.UsbInterface` and print every telegram for *seconds*."""
+    from xknx import XKNX
+    from xknx.exceptions import CommunicationError
+
+    from .knx_usb import UsbInterface
+
+    xknx = XKNX()
+    xknx.knxip_interface = UsbInterface(xknx, {"usb_device": dev.path})
+
+    def show(telegram) -> None:
+        """Print one telegram: time, source → destination, service and data."""
+        print(f"{datetime.now():%H:%M:%S.%f}"[:-3], telegram.source_address, "→", telegram.destination_address,
+              type(telegram.payload).__name__, getattr(telegram.payload, "value", ""))
+
+    xknx.telegram_queue.register_telegram_received_cb(show)
+    try:
+        await xknx.start()
+    except CommunicationError as exc:
+        print(exc)
+        return 1
+    print(_("{path} {name}: listening for {seconds} s (nothing is sent) …").format(
+        path=dev.path, name=dev.name, seconds=seconds))
+    try:
+        await asyncio.sleep(seconds)
+    finally:
+        await xknx.stop()
+    return 0
 
 
 def simulate(args) -> int:
@@ -582,6 +678,52 @@ def _yaml_str(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def render_config(template: str, *, project: str, title: str, language: str, connection: str | None = None,
+                  gateway: str | None = None, password: str | None = None, keyring: str | None = None,
+                  keyring_password: str | None = None, user_id: int | None = None,
+                  usb_device: str | None = None) -> str:
+    """``config.yaml`` text from ``config.example.yaml``: the ``__PLACEHOLDERS__`` filled in, and the commented
+    example lines for the project password, the KNX Secure keyring and the tunnel user switched on when given.
+
+    Called by ``init``. The connection type, when not given, follows from the other options: ``usb`` with a USB
+    device, ``tunneling_secure``/``routing_secure`` with a keyring (with/without gateway), else ``tunneling`` with a
+    gateway and ``automatic`` without. Values are written as quoted YAML strings, so passwords with ``#`` or ``:``
+    survive.
+    """
+    if not connection:
+        if usb_device:
+            connection = "usb"
+        elif keyring:
+            connection = "tunneling_secure" if gateway else "routing_secure"
+        else:
+            connection = "tunneling" if gateway else "automatic"
+    text = (
+        template
+        .replace("__CONNECTION__", connection)
+        .replace("__GATEWAY__", gateway or "null")
+        .replace("__PROJECT__", project)
+        .replace("__TITLE__", _yaml_str(title))
+        .replace("__LANGUAGE__", language)
+    )
+    switch = {'  # password: ""': password}
+    if keyring:
+        switch["  # keyring_file: MyProject.knxkeys"] = keyring
+        switch['  # keyring_password: "secret"'] = keyring_password
+    if user_id is not None:
+        switch["  # user_id: 2"] = str(user_id)
+    for commented, value in switch.items():
+        if value:
+            key = commented.split("#", 1)[1].split(":", 1)[0].strip()
+            # Only the first occurrence: the template has the same example line in other sections (plc: password).
+            line_end = text.index("\n", text.index(commented))
+            text = text[:text.index(commented)] + f"  {key}: {_yaml_str(value) if key != 'user_id' else value}" \
+                + text[line_end:]
+    if usb_device:
+        text = text.replace(f"  connection: {connection}\n", f"  connection: {connection}\n  usb_device: "
+                            f"{_yaml_str(usb_device)}\n", 1)
+    return text
+
+
 def init_config(args) -> int:
     """Write ``config.yaml`` from ``config.example.yaml`` and import the project.
 
@@ -612,17 +754,19 @@ def init_config(args) -> int:
         rel = project.relative_to(target.parent)
     except ValueError:
         rel = project
-    connection = args.connection or ("tunneling" if args.gateway else "automatic")
-    text = (
-        template.read_text(encoding="utf-8")
-        .replace("__CONNECTION__", connection)
-        .replace("__GATEWAY__", args.gateway or "null")
-        .replace("__PROJECT__", str(rel))
-        .replace("__TITLE__", _yaml_str(f"{PRODUCT} – {project.stem}"))
-        .replace("__LANGUAGE__", args.language)
-    )
-    if args.password:
-        text = text.replace('  # password: ""', f"  password: {_yaml_str(args.password)}")
+    keyring = None
+    if args.keyring:
+        keyring = Path(os.path.abspath(Path(args.keyring).expanduser()))
+        if not keyring.exists():
+            print(_("Cannot find {path}").format(path=keyring))
+            return 1
+        with contextlib.suppress(ValueError):
+            keyring = keyring.relative_to(target.parent)
+    text = render_config(
+        template.read_text(encoding="utf-8"), project=str(rel), title=f"{PRODUCT} – {project.stem}",
+        language=args.language, connection=args.connection, gateway=args.gateway, password=args.password,
+        keyring=str(keyring) if keyring else None, keyring_password=args.keyring_password, user_id=args.user_id,
+        usb_device=args.usb_device)
     target.write_text(text, encoding="utf-8")
     target.chmod(0o600)  # may contain the KNX Secure keyring password and the PLC password
     print(_("Wrote {path}").format(path=target))

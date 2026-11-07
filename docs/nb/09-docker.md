@@ -94,6 +94,7 @@ docker logs -f knx                          # Ctrl+C går ut av loggen, serveren
 | `--cpus 1 --memory 512m` | På en PLS må styreprogrammet (f.eks. CODESYS) alltid få nok CPU. Serveren trenger langt mindre. |
 | `--log-opt …` | Begrenser containerloggen, det sparer flashminnet. |
 | `-e TZ=…` | Lokal tid i hendelsesloggen og diagrammene. |
+| `--device /dev/hidrawN` | Bare med KNX USB-grensesnitt (`connection: usb`): gir containeren tilgang til pinnen. `./scada knx-usb` på verten viser hvilken `hidrawN` det er; bruk samme USB-port, ellers kan nummeret endre seg. |
 
 ## 5. Åpne visualiseringen
 

@@ -17,6 +17,9 @@ knxscada/
   store.py        SQLite: telegrams, events, alarms, logged tag values
   server.py       ScadaServer (xknx per interface, logging, alarms, socket API) + Simulator (--demo)
   knx_interfaces.py  several KNX IP interfaces: configuration, Router (outgoing), Deduplicator (incoming)
+  knx_usb.py      KNX USB interfaces: HID framing, cEMI, stands in for xknx's IP interface (connection: usb)
+  setup_wizard.py ./scada setup: the questions, KNX/BACnet/Modbus/OPC UA searches, config.yaml
+  service.py      ./scada service: the systemd unit from deploy/knxscada.service
   client.py       asynchronous client for the socket
   plan.py         plan.yaml and DXF export
   export.py       bus monitor export: ETS group monitor XML (cEMI frames), CSV, JSON lines
@@ -30,7 +33,8 @@ knxscada/
     config.py     protocols.yaml: load, validate (also device templates), save
     gateway.py    gateway engine: renaming, scaling, direction, echo suppression, deadband, start-up rules
     hub.py        runs the drivers in the server, keeps the values, talks to the TUI
-    knx.py, modbus.py, mqtt.py, opcua.py   the drivers
+    knx.py, modbus.py, mqtt.py, opcua.py, bacnet.py   the drivers
+    sparkplug.py  MQTT Sparkplug B: edge node / host application, its own protobuf encoding
     devices/      device templates (model: WAGO 879-3000 …): one YAML file per device family
   tui/
     app.py        the Textual app: menu, top bar, key bar, navigation, message handling

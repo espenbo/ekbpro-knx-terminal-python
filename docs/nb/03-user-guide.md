@@ -120,7 +120,10 @@ protokollen i en installasjon uten KNX); trykket igjen går den videre til neste
 
 ### Monitor › Modbus, OPC UA, BACnet, MQTT
 
-Øverst tilkoblingene for protokollen med rolle, adresse, antall tagger og tilstand (som i F11). Under vises hver
+Øverst tilkoblingene for protokollen med rolle, adresse, antall tagger og tilstand (som i F11), og tellere siden
+serveren startet: **Lest** (hver verdi som er lest, endret eller ikke), **/min** (lesinger per minutt), **Endret**,
+**Feil** (verdier med dårlig kvalitet, røde når det finnes noen) og **Brudd** (tapte forbindelser). Tellerne
+oppdateres hvert 10. sekund. Under vises hver
 **verdiendring** i taggene deres (← tid, tilkobling, tagg, beskrivelse, verdi med enhet, kvalitet når den ikke er
 god) og hver **skriving** (→ verdi og brukeren som skrev), live. Verdier som ikke endrer seg, vises ikke: huben
 sender bare endringer videre.
@@ -128,6 +131,9 @@ sender bare endringer videre.
 - **`/`** filtrerer på tilkobling, tagg, beskrivelse, verdi eller bruker; `skriv` viser bare skrivinger,
   `sluppet` slippene.
 - **`p`** setter på pause og fortsetter, **`c`** tømmer visningen.
+- **`f`** skjuler taggene som endrer seg hele tiden – mer enn 20 ganger det siste minuttet, for eksempel en
+  PLS-klokke (`Act_Time`) – så de andre endringene blir lettere å se. Merket ved filteret sier hvor mange som er
+  skjult; `f` igjen viser dem. Skrivinger skjules aldri.
 - **Enter, klikk eller `w`** på en linje skriver en ny verdi til taggen, med bekreftelse – bare for tagger med
   `writable: true`. For BACnet viser dialogen også skriveprioriteten (se «Skriving til BACnet» under).
 
@@ -143,6 +149,14 @@ forhåndsvalgt med taggens eller tilkoblingens `priority` (16 når ingen er satt
 - **Slipp** skriver «ingenting» inn i den valgte plassen, slik at verdien med nest lavere prioritet tar over igjen.
   Slipp den samme prioriteten som du skrev med.
 - 1, 2 og 5 (livssikkerhet og kritisk utstyr) tilbys aldri, og serveren avviser dem.
+- Under prioriteten viser dialogen enhetens **prioritetstabell**: plassene som er i bruk, høyeste først, og hvilken
+  som bestemmer verdien nå (eller at standardverdien – relinquish default – bestemmer når alle er tomme). Er en
+  høyere prioritet enn din i bruk, synes ikke skrivingen din før den er sluppet. Objekter som ikke er kommanderbare,
+  sier fra om det.
+
+På et **romkort** (rom fra `project.point_rooms`) skriver bryteren, `−` / `+` og de andre kontrollene med taggens
+standardprioritet, så vanlig betjening fortsatt er ett klikk. Trykk **`p`** på raden til en BACnet-tagg for å få
+skrivedialogen med valg av prioritet og **Slipp**; verktøytipset på en slik rad sier det.
 
 Hendelsesloggen viser hver skriving med prioriteten når den ikke var standard, og slipp som
 «sluppet (prioritet 8)».
@@ -241,9 +255,11 @@ Hva som vises, settes opp i [`ui.systems`](04-configuration.md#anleggsvisning-ct
 
 ## Energimålere (Ctrl+G)
 
-En tabell over målerne: effekt, energi, strøm og spenning per fase, cos φ, frekvens og effekten siste døgn.
-Måleren under markøren (`↑` / `↓`) får en effektkurve og forbruket per time eller døgn, regnet ut fra
-energitelleren, og forbruket i dag og i perioden. `d` / `w` / `m` velger 24 timer, 7 dager eller 30 dager.
+En tabell over målerne: effekt, energi, strøm og spenning per fase, cos φ, frekvens, forbruket **i går** og
+**denne måneden** (kWh) og effekten siste døgn. Måleren under markøren (`↑` / `↓`) får en effektkurve og forbruket
+per time eller døgn, regnet ut fra energitelleren, og forbruket i dag, i går, denne måneden, forrige måned og i
+perioden. Døgn og måneder følger lokal tid (midnatt, den første i måneden), også når sommertiden begynner eller
+slutter. En periode loggen ikke rekker tilbake til, vises som «–». `d` / `w` / `m` velger 24 timer, 7 dager eller 30 dager.
 Kurvene krever at effekt- og energitaggene logges (`log` i `protocols.yaml`).
 
 ## F8 Plantegning
