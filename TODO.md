@@ -15,15 +15,16 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 - **Oppstart:** ingen protokoll sender endringer ved oppstart eller gjenoppkobling. Statusene leses først.
   Gamle verdier fra databasen vises bare (dempet/kursiv) og sendes aldri videre. Startverdier går bare til egne
   servere, aldri til KNX. `read_on_start: status` er standard. Se docstringen i `knxscada/protocols/gateway.py`.
-- Den gamle PLS-broen (`plc:` / `opcua_bridge.py`) erstattes av gatewayen (`./scada plc-gateway`, 2026-11-02).
-  Broen blir værende til anlegget som bruker den, er flyttet over og har gått en stund uten feil.
+- Den gamle PLS-broen (`plc:` / `PlcBridge` i `opcua_bridge.py`) er erstattet av gatewayen (`./scada plc-gateway`).
+  Begge anleggene som brukte den, er flyttet over (2026-11-02 og 2026-11-07). Broen blir værende som reserve til
+  begge har gått noen dager uten feil, og fases så ut (se «KNX → OPC UA via gatewayen» under).
 
 ## Status
 
-- 2026-11-07: 496 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Arbeidsplanen under er gjort
-  (punkt 1–9); ikke committet.
-- 2026-11-02: 445 tester grønne (1 hoppet over), ruff 0, oversettelser 0 mangler. Runde 2 er slått inn i `main`;
-  KNX valgfri og KNX → OPC UA via gatewayen er ikke committet ennå.
+- 2026-11-07 (kveld): stabiliseringen under (punkt 1–8) er gjort: 506 tester grønne (1 hoppet over) med xknx 3.10.0,
+  også med `NO_COLOR` og med xknx 4.1.1; ruff 0, oversettelser 0 mangler. Ikke committet ennå. CI
+  (`.github/workflows/tests.yml`) kjører først når den er pushet.
+- 2026-11-07: arbeidsplanen (punkt 1–9) er gjort og pushet (8b0bd89).
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
       `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
       utstyrssærheter og ytelse. Kontrollert: AST uten docstrings lik før og etter (ingen kodeendring), ruff 0,
@@ -69,7 +70,37 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
       PLS-en KNX-verdiene igjen; dårlig status gjør taggen ukjent. Tester `test_gateway_guard.py`, `test_plc.py`,
       dok 10/11/12 (en+nb), README. Prøvd lesende mot et anlegg: samme 435 variabler som broen.
   - [x] Byttet over på anlegget som brukte broen (2026-11-02): gatewayen kjører; følges med noen dager.
-  - [ ] Deretter: fase ut `opcua_bridge.py` når ingen anlegg bruker `plc:`.
+  - [x] Det andre anlegget byttet over 2026-11-07 (346 variabler). Ingen anlegg bruker `plc:` lenger.
+  - [ ] Deretter: fase ut `PlcBridge`/`plc:` i `opcua_bridge.py` når begge har gått noen dager uten feil (broen er
+        reserven til da). `make_client`, `operation_limits` m.fl. brukes av OPC UA-driveren og blir værende.
+
+## Stabilisering 2026-11-07 (ekstern gjennomgang av 8b0bd89)
+
+Rekkefølge etter gjennomgangen – kryss av underveis. Hver feil får en regresjonstest.
+
+1. [x] Ventende sending til KNX etter at kilden mistet forbindelsen: `disconnected` fjerner nå også vaktens `_batch`
+       og `pending`, og `_write` sjekker kildens forbindelse og kvalitet rett før skrivingen (`_source_ok`). Tester i
+       `test_gateway_guard.py` (feiler med den gamle koden).
+2. [x] Kvalitet gjennom gatewayen: `Driver.set_quality`, kalt av motoren ved dårlig kilde («bad») og tapt kilde
+       («old»); OPC UA-serveren gir BadNoCommunication / UncertainLastUsableValue, og BadWaitingForInitialData før
+       første verdi. Neste gode verdi (også lik) gir Good. Test i `test_protocols.py`, dok 11 en+nb. Modbus-, BACnet-,
+       MQTT- og Sparkplug-server viser ikke kvalitet ennå (BACnet: statusFlags/reliability er en mulig neste).
+3. [x] Avhengigheter: `UsbInterface.stop_reconnect()` (xknx 4); hele pakken grønn med xknx 3.10.0 og 4.1.1.
+       Øvre grenser i `requirements*.txt` og modulregisteret, og `constraints.txt` med de testede versjonene (brukes av
+       `setup.sh`, `modules install` og Docker). Dok 01 en+nb.
+4. [x] Sparkplug: identitet `(node, device, metric)` gjennom hele klienten (automatiske tagger `<node>/…` ved `+`,
+       taggfeltet `node`), død bare for riktig node/enhet, skriving til riktig node. Test med to noder, dok 11/12.
+5. [x] Tellere: gatewayen sammenligner nå normaliserte verdier (`Driver.normalise`; KNX koder/dekoder med DPT) med
+       rel 1e-6 (`SAME_REL`). 147912 → 147913 går gjennom; et grovt DPT 9-ekko gjenkjennes fortsatt. Test i
+       `test_gateway_guard.py`. Den gamle broen (`opcua_bridge.py`) bruker fortsatt 1e-4 – fases ut.
+6. [x] Store 64-bits heltall: `base.as_int` (heltall forblir heltall) i Modbus `to_registers` og OPC UA-skriving.
+       Test i `test_protocols.py`.
+7. [x] `NO_COLOR`: plantegningens «ingen plantegning»-linje hadde tekstbiter uten stil, som Textuals
+       monokromfilter ikke tåler – `apply_style(base)` som i LineLog. Hele pakken grønn med `NO_COLOR=1`.
+8. [x] CI: `.github/workflows/tests.yml` – ruff og tester (oversettelser inkludert) på Python 3.12/3.13 med
+       `constraints.txt`, en jobb med `NO_COLOR` og en med xknx 4. Ikke kjørt på GitHub ennå (krever push).
+9. [ ] Senere (beslutninger): tilgangsstyring (lese/operatør/konfigurasjon på socketen), OPC UA-server-standard
+       (binding, anonym, kryptering), versjonerte releaser, Sparkplug mot Ignition MQTT Engine.
 
 ## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)
 
@@ -102,8 +133,8 @@ skriving på et anlegg, tas ikke (se «Venter på brukeren» nederst).
    README. Ikke prøvd mot Ignition MQTT Engine eller annen ekte host.
 
 Venter på brukeren / utstyr: Matter (krever Matter-SDK, sertifisering og utstyr – ikke realistisk nå), BACnet mot et
-ekte SD-anlegg, skriving av tabeller mot en ekte PLS, utfasing av `opcua_bridge.py` (ett anlegg bruker fortsatt
-`plc:`), skrivetest gjennom KNX-USB, og alle anleggspunktene i `sites/*/TODO.md` (beslutninger, fysisk tilgang
+ekte SD-anlegg, skriving av tabeller mot en ekte PLS, utfasing av `opcua_bridge.py` (venter noen dager etter
+overgangen 2026-11-07), skrivetest gjennom KNX-USB, og alle anleggspunktene i `sites/*/TODO.md` (beslutninger, fysisk tilgang
 eller skriving til utstyr). `plan-wizard` og `install_knx_terminal.sh` finnes ikke i dette repoet – punktet
 om plantegningsveiviseren venter til brukeren sier hvor den ligger.
 

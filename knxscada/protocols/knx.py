@@ -81,6 +81,17 @@ class Driver(BaseDriver):
             tag = self.tags.get(addr) if addr else None
         return tag
 
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """*value* after a round trip through the tag's DPT – what the bus carries and echoes back (a 2-byte float
+        DPT 9 has 11 bits of mantissa: 21.37 comes back as 21.36, 147 912 in steps of ~82)."""
+        dpt = tag.extra.get("dpt")
+        if not dpt or value is None or isinstance(value, (str, list, tuple, dict)):
+            return value
+        try:
+            return dptlib.decode(dpt, dptlib.encode(dpt, value))
+        except Exception:  # noqa: BLE001 - not encodable for this DPT: compare as it is
+            return value
+
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """Refused: only group addresses from the ETS project exist on the bus (the DPT is needed to encode)."""
         raise ValueError(_("{address} is not in the ETS project").format(address=name))

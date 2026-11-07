@@ -236,8 +236,10 @@ directly. The module needs only `aiomqtt`, like `mqtt`: the protobuf messages ar
   `direction: both` line is passed back to the source, like `<topic>/set` for MQTT; `Node Control/Rebirth` gives a
   new NBIRTH.
 - **Client (host application):** every metric in a birth becomes a tag by itself (`<device>/<metric>` for device
-  metrics), read-only. Tags under `tags:` pick a metric (`metric`, `device`) to give it a name, scale, unit or
-  `writable: true`; writing sends NCMD/DCMD with the metric's type from the birth. A death marks the tags "bad".
+  metrics; with `edge_node: "+"` the node comes first, `<node>/<device>/<metric>`, so equal metric names of two nodes
+  stay apart), read-only. Tags under `tags:` pick a metric (`metric`, `device`, and `node` when following every node)
+  to give it a name, scale, unit or `writable: true`; writing sends NCMD/DCMD to that node with the metric's type from
+  the birth. A death marks only that node's (or device's) tags "bad".
   Asking for a rebirth is a standard control command, not a process value.
 
 ```yaml
@@ -270,6 +272,11 @@ Client tags name a node id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`); `.
 As a server, every gateway target becomes a variable, and dots or slashes in the name make folders:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. The node id is the name, so it stays
 the same when the server restarts. Targets with `direction: both` are writable.
+
+The variables carry the **quality** of their source, so a SCADA (Ignition …) never takes an old value for a current
+one: a variable without a value yet is `BadWaitingForInitialData` (not 0 as Good); when the source reports a bad
+status it becomes `BadNoCommunication`; when the source connection is lost, `UncertainLastUsableValue` with the
+last value. The next good value from the source – also when it is the same – makes it `Good` again.
 
 The client reads at most as many nodes per request as the server allows (`OperationLimits`; WAGO PFC: 100), so
 long tag lists work. A REAL (float32) is rounded to 7 digits (16.6, not 16.600000381469727). An array (e.g. a

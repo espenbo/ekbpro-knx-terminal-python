@@ -497,7 +497,7 @@ connections:
     rebirth_request: true             # client: be om fødselen etter tilkobling
     qos: '0'                          # 0 | 1
     tags:                             # client: navn, skala, enhet eller writable for valgte metrikker
-      Ute: {metric: Outdoor temp, device: "", type: float, unit: °C, writable: false}
+      Ute: {metric: Outdoor temp, device: "", node: "", type: float, unit: °C, writable: false}
 
   plc1:
     protocol: opcua

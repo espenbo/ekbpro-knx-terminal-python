@@ -1112,5 +1112,6 @@ CATALOGUE: dict[str, str] = {
         "Etter tilkobling: be edge-noden publisere fødselen sin (NCMD Node Control/Rebirth)",
     "Empty = the tag name": "Tom = taggnavnet",
     "Empty = a metric of the edge node itself": "Tom = en metrikk i selve edge-noden",
+    "Empty = the followed edge node (needed when it is +)": "Tom = edge-noden som følges (må fylles ut når den er +)",
     "{tag}: no birth from its edge node yet": "{tag}: ingen fødsel fra edge-noden ennå",
 }

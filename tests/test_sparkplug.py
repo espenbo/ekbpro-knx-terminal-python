@@ -115,3 +115,38 @@ def test_edge_node_and_host_application(tmp_path):
             await broker.shutdown()
 
     asyncio.run(run())
+
+
+def test_two_edge_nodes_with_the_same_metric_names(tmp_path):
+    """Following every node (edge_node "+"): node A and node B both have "Temp". They become two tags, a write goes
+    to the right node, and A's death marks only A's tag bad (the review's reproduction)."""
+    from knxscada.protocols.hub import Hub
+    from knxscada.protocols.sparkplug import DOUBLE, Driver
+
+    from .test_protocols import FakeServer
+
+    hub = Hub(FakeServer(tmp_path))
+    host = Driver("host", {"protocol": "sparkplug", "role": "client", "group_id": "Hus", "edge_node": "+",
+                           "tags": {"B temp": {"metric": "Temp", "node": "B", "writable": True}}}, hub)
+    hub.drivers["host"] = host
+    sent = []
+
+    async def command(node, device, metric, value, datatype):
+        """Record the NCMD/DCMD instead of publishing it."""
+        sent.append((node, device, metric, value))
+
+    host._command = command
+
+    def message(kind, node, metrics, device=""):
+        """Deliver one Sparkplug message as the broker would."""
+        body = encode_payload([encode_metric(name, value, DOUBLE, alias=alias) for name, value, alias in metrics], 0)
+        host._message("/".join(p for p in ("spBv1.0", "Hus", kind, node, device) if p), body)
+
+    message("NBIRTH", "A", [("Temp", 20.0, 1)])
+    message("NBIRTH", "B", [("Temp", 30.0, 1)])
+    message("NDATA", "A", [(None, 21.0, 1)])                       # by alias – the same alias on both nodes
+    assert hub.values["host/A/Temp"]["v"] == 21.0 and hub.values["host/B temp"]["v"] == 30.0
+    asyncio.run(host.write(host.tags["B temp"], 31.0))
+    assert sent == [("B", "", "Temp", 31.0)]
+    message("NDEATH", "A", [])
+    assert hub.values["host/A/Temp"]["q"] == "bad" and hub.values["host/B temp"]["q"] == "good"

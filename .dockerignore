@@ -1,6 +1,7 @@
 # Only the program goes into the image – never your installation or tooling.
 *
 !requirements.txt
+!constraints.txt
 !knxscada/
 !config.example.yaml
 !plan.example.yaml

@@ -16,8 +16,10 @@ Roles
   ``/set``. Initial values (gateway ``initial: true``) are allowed: the metrics are ours.
 * ``client`` – a host application that follows the edge node ``edge_node`` (``+`` = every node) in ``group_id``.
   Every metric of a birth becomes a tag by itself (``<device>/<metric>`` for device metrics), and the tags under
-  ``tags:`` pick metrics by ``metric``/``device`` to give them a name, scale, unit or ``writable``. A death marks the
-  node's (or device's) tags "bad", so gateways forget their values. After connecting it asks the node for a rebirth
+  ``tags:`` pick metrics by ``metric``/``device`` (and ``node`` when following every node) to give them a name, scale,
+  unit or ``writable``. A metric is identified by (node, device, metric) throughout: with ``edge_node: "+"`` the
+  automatic tags are named ``<node>/<device>/<metric>``, so two nodes with the same metric names never share a tag,
+  and a death marks only that node's (or device's) tags "bad", so gateways forget their values. After connecting it asks the node for a rebirth
   (an NCMD ``Node Control/Rebirth`` – a standard control command, not a process value; ``rebirth_request: false``
   turns it off). Writing a tag sends NCMD/DCMD with the metric's type from the birth.
 
@@ -231,21 +233,24 @@ class Driver(BaseDriver):
         # client: (node, device, alias) → metric name and (node, device, name) → datatype, from the births
         self.alias_names: dict[tuple[str, str, int], str] = {}
         self.types: dict[tuple[str, str, str], int] = {}
-        self.by_metric: dict[tuple[str, str], Tag] = {}   # client: (device, metric) → tag
+        self.by_metric: dict[tuple[str, str, str], Tag] = {}   # client: (node, device, metric) → tag
         self._birth_pending = False
         super().__init__(name, settings, hub)
 
     # tags --------------------------------------------------------------------------------------------------------
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
-        """A configured tag (client): ``metric`` (default the name) of ``device`` (empty = a node metric)."""
+        """A configured tag (client): ``metric`` (default the name) of ``device`` (empty = a node metric) of ``node``
+        (default the followed ``edge_node``; required when it is ``+``, else the tag would match no node)."""
         typ = str(spec.get("type") or "")
         metric = str(spec.get("metric") or name)
         device = str(spec.get("device") or "")
+        follow = str(self.settings.get("edge_node") or "+")
+        node = str(spec.get("node") or (follow if follow != "+" else ""))
         tag = Tag(name=name, address=f"{device}/{metric}" if device else metric, type=typ if typ in TYPES else "",
                   writable=bool(spec.get("writable", False)), unit=str(spec.get("unit") or ""),
                   description=str(spec.get("description") or ""), scale=as_float(spec.get("scale")),
-                  offset=as_float(spec.get("offset")), extra={**spec, "metric": metric, "device": device})
-        self.by_metric[(device, metric)] = tag
+                  offset=as_float(spec.get("offset")), extra={**spec, "metric": metric, "device": device, "node": node})
+        self.by_metric[(node, device, metric)] = tag
         return tag
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
@@ -370,8 +375,9 @@ class Driver(BaseDriver):
         elif kind in ("NDATA", "DDATA"):
             self._values(node, device, data["metrics"])
         elif kind in ("NDEATH", "DDEATH"):
-            for (dev, _metric), tag in list(self.by_metric.items()):
-                if kind == "NDEATH" or dev == device:
+            for (tnode, dev, _metric), tag in list(self.by_metric.items()):
+                # Only the node (NDEATH: all its devices) or the one device that died.
+                if tnode == node and (kind == "NDEATH" or dev == device):
                     rec = self.hub.values.get(f"{self.name}/{tag.name}")
                     self.hub.update(self.name, tag.name, rec["v"] if rec else None, "bad")
 
@@ -396,21 +402,22 @@ class Driver(BaseDriver):
             if m["alias"] is not None:
                 self.alias_names[(node, device, m["alias"])] = m["name"]
             self.types[(node, device, m["name"])] = m["datatype"]
-            tag = self.by_metric.get((device, m["name"]))
+            tag = self.by_metric.get((node, device, m["name"]))
             if tag is None:
-                tname = f"{device}/{m['name']}" if device else m["name"]
+                # Following every node: the node is part of the name, so equal metric names of two nodes stay apart.
+                parts = ([node] if self.node == "+" else []) + ([device] if device else []) + [m["name"]]
+                tname = "/".join(parts)
                 tag = Tag(name=tname, address=tname, writable=False,
                           extra={"auto": True, "metric": m["name"], "device": device, "node": node})
                 self.tags[tname] = tag
-                self.by_metric[(device, m["name"])] = tag
-            tag.extra.setdefault("node", node)
+                self.by_metric[(node, device, m["name"])] = tag
             self.publish(tag, m["value"])
 
     def _values(self, node: str, device: str, metrics: list[dict[str, Any]]) -> None:
         """A DATA message: metrics by name or by the alias from the birth."""
         for m in metrics:
             name = m["name"] or self.alias_names.get((node, device, m["alias"]))
-            tag = self.by_metric.get((device, name or ""))
+            tag = self.by_metric.get((node, device, name or ""))
             if tag is not None:
                 self.publish(tag, m["value"])
 

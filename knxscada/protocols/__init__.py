@@ -36,6 +36,7 @@ import importlib.util
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..i18n import N_
@@ -119,7 +120,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     Protocol(
         "knx", "KNX", "knxscada.protocols.knx",
         # xknx talks to the bus, xknxproject reads the ETS project. Installed by default by setup.sh and Docker.
-        packages=("xknx>=3.10", "xknxproject>=3.10"), imports=("xknx", "xknxproject"),
+        packages=("xknx>=3.10,<5", "xknxproject>=3.10,<4"), imports=("xknx", "xknxproject"),
         description=N_("KNX IP tunneling/routing with the ETS project – set up in config.yaml (knx: and project:)"),
     ),
     Protocol(
@@ -175,7 +176,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     ),
     Protocol(
         "mqtt", "MQTT", "knxscada.protocols.mqtt",
-        packages=("aiomqtt>=2.0",), imports=("aiomqtt",),
+        packages=("aiomqtt>=2.0,<3",), imports=("aiomqtt",),
         description=N_("MQTT – subscribe to topics and publish values to a broker"),
         settings=(
             Field("host", N_("Broker"), "str", "127.0.0.1", required=True),
@@ -205,7 +206,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     Protocol(
         "opcua", "OPC UA", "knxscada.protocols.opcua",
         # Also needed by the PLC bridge (plc: in config.yaml, knxscada/opcua_bridge.py).
-        packages=("asyncua>=1.1",), imports=("asyncua",),
+        packages=("asyncua>=1.1,<3",), imports=("asyncua",),
         roles=("client", "server"),
         description=N_("OPC UA – client of a PLC/server, or our own OPC UA server for SCADA systems"),
         settings=(
@@ -239,7 +240,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     ),
     Protocol(
         "bacnet", "BACnet/IP", "knxscada.protocols.bacnet",
-        packages=("bacpypes3>=0.0.100",), imports=("bacpypes3",),
+        packages=("bacpypes3>=0.0.100,<0.1",), imports=("bacpypes3",),
         roles=("client", "server"),
         description=N_("BACnet/IP – client of a BACnet device, or our own BACnet device for BMS/SCADA systems"),
         settings=(
@@ -288,7 +289,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
     Protocol(
         "sparkplug", "MQTT Sparkplug B", "knxscada.protocols.sparkplug",
         # The same package as mqtt; the Sparkplug protobuf messages are encoded in the module itself.
-        packages=("aiomqtt>=2.0",), imports=("aiomqtt",),
+        packages=("aiomqtt>=2.0,<3",), imports=("aiomqtt",),
         roles=("client", "server"),
         description=N_("Sparkplug B over MQTT – our own edge node (server), or a host application of one (client)"),
         settings=(
@@ -310,6 +311,7 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
         tag_fields=(
             Field("metric", N_("Metric"), "str", "", help=N_("Empty = the tag name")),
             Field("device", N_("Device"), "str", "", help=N_("Empty = a metric of the edge node itself")),
+            Field("node", N_("Edge node"), "str", "", help=N_("Empty = the followed edge node (needed when it is +)")),
             _TYPE, _SCALE, _OFFSET, _UNIT, _WRITABLE, _DESCRIPTION, _LOG,
         ),
     ),
@@ -376,4 +378,7 @@ def install(names: list[str]) -> int:
         packages += [pkg for pkg in p.packages if pkg not in packages]
     if not packages:
         return 0
-    return subprocess.call([sys.executable, "-m", "pip", "install", "--prefer-binary", *packages])
+    # The tested versions (constraints.txt next to the package) when the file is there – a git checkout or the image.
+    constraints = Path(__file__).resolve().parent.parent.parent / "constraints.txt"
+    extra = ["-c", str(constraints)] if constraints.exists() else []
+    return subprocess.call([sys.executable, "-m", "pip", "install", "--prefer-binary", *extra, *packages])

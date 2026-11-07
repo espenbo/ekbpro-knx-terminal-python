@@ -237,9 +237,10 @@ direkte. Modulen trenger bare `aiomqtt`, som `mqtt`: protobuf-meldingene kodes i
   forsvinner, sier NDEATH fra til host-applikasjonene (også som MQTT-will). En NCMD for en metrikk på en linje med
   `direction: both` sendes tilbake til kilden, som `<topic>/set` for MQTT; `Node Control/Rebirth` gir en ny NBIRTH.
 - **Klient (host-applikasjon):** hver metrikk i en fødsel blir en tagg av seg selv (`<enhet>/<metrikk>` for
-  enhetsmetrikker), bare for lesing. Tagger under `tags:` velger en metrikk (`metric`, `device`) for å gi den navn,
-  skala, enhet eller `writable: true`; skriving sender NCMD/DCMD med metrikkens type fra fødselen. En død merker
-  taggene «bad». Å be om rebirth er en vanlig kontrollkommando, ikke en prosessverdi.
+  enhetsmetrikker; med `edge_node: "+"` kommer noden først, `<node>/<enhet>/<metrikk>`, så like metrikknavn fra to
+  noder holdes fra hverandre), bare for lesing. Tagger under `tags:` velger en metrikk (`metric`, `device`, og `node`
+  når alle noder følges) for å gi den navn, skala, enhet eller `writable: true`; skriving sender NCMD/DCMD til den
+  noden med metrikkens type fra fødselen. En død merker bare den nodens (eller enhetens) tagger «bad». Å be om rebirth er en vanlig kontrollkommando, ikke en prosessverdi.
 
 ```yaml
 connections:
@@ -271,6 +272,11 @@ Klienttagger angir en node-id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`);
 Som server blir hvert gateway-mål en variabel, og punktum eller skråstrek i navnet lager mapper:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. Node-id-en er navnet, så den blir
 den samme når serveren starter på nytt. Mål med `direction: both` er skrivbare.
+
+Variablene har **kvaliteten** til kilden sin, så et SCADA-system (Ignition …) aldri tar en gammel verdi for en
+gjeldende: en variabel uten verdi ennå er `BadWaitingForInitialData` (ikke 0 som Good); når kilden melder dårlig
+status, blir den `BadNoCommunication`; når forbindelsen til kilden er borte, `UncertainLastUsableValue` med siste
+verdi. Neste gode verdi fra kilden – også når den er lik – gjør den `Good` igjen.
 
 Klienten leser høyst så mange noder per forespørsel som serveren tillater (`OperationLimits`; WAGO PFC: 100), så
 lange tagglister virker. En REAL (float32) rundes til 7 siffer (16.6, ikke 16.600000381469727). En tabell (f.eks.
