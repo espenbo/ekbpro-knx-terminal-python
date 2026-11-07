@@ -56,6 +56,11 @@ protokollmodulene du velger (den spør; Enter eller ingen terminal = `knx`):
 med KNX der modulen mangler, stopper med kommandoen som installerer den. Finnes det allerede en `config.yaml`, leser
 `setup.sh` også inn prosjektet på nytt (`./scada import`).
 
+**Testede versjoner.** `setup.sh`, `./scada modules install` og Docker-imaget installerer pakkeversjonene i
+[`constraints.txt`](../../constraints.txt) – kombinasjonen testene og anleggene bruker – så en ny installasjon ikke
+får en utestet versjon. `requirements.txt` og modulene tillater et område opp til neste hovedversjon som ikke er
+testet.
+
 ## Sett opp prosjektet ditt
 
 Enklest er spørsmålene i `./scada setup`:

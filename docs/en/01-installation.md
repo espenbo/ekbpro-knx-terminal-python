@@ -54,6 +54,11 @@ the protocol modules you choose (it asks; Enter or no terminal = `knx`):
 whose module is missing stops with the command that installs it. If a `config.yaml` already exists, `setup.sh`
 also re-reads the project (`./scada import`).
 
+**Tested versions.** `setup.sh`, `./scada modules install` and the Docker image install the package versions in
+[`constraints.txt`](../../constraints.txt) – the combination the tests and the running sites use – so a new
+installation does not pick up an untested release. `requirements.txt` and the modules allow a range up to the next
+major version that has not been tested.
+
 ## Set up your project
 
 The simplest way is the questions of `./scada setup`:

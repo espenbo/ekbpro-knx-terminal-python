@@ -1,0 +1,63 @@
+# Tests, lint and translations on every push and pull request.
+#
+#   tested    – the versions in constraints.txt (what setup.sh, ./scada modules install and Docker install),
+#               Python 3.12 and 3.13
+#   no-color  – the same with NO_COLOR set: terminals without colour must work too. Its own job, because Textual
+#               treats NO_COLOR as set even when it is empty
+#   xknx-4    – the tests with xknx 4.x, so a new major version is known to work before constraints.txt moves
+#
+# Nothing here talks to a real installation: the protocol tests use local servers on free ports.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tested:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install (tested versions)
+        run: python -m pip install -r requirements-dev.txt -c constraints.txt
+      - name: Ruff
+        run: ruff check knxscada/ tests/
+      - name: Tests (translations included, tests/test_i18n.py)
+        run: python -m pytest -q
+
+  no-color:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install (tested versions)
+        run: python -m pip install -r requirements-dev.txt -c constraints.txt
+      - name: Tests with NO_COLOR
+        run: NO_COLOR=1 python -m pytest -q
+
+  xknx-4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install with xknx 4
+        run: python -m pip install -r requirements-dev.txt "xknx>=4,<5"
+      - name: Tests
+        run: python -m pytest -q

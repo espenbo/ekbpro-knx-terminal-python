@@ -112,7 +112,10 @@ class FloorCanvas(Widget, can_focus=True):
         base = self.rich_style
         if floor is None or width < 20 or height < 6:
             msg = Text(" " + _("No floor plan. Edit plan.yaml."), style=base + Style(dim=True))
-            return [Strip(list(msg.render(self.app.console, end="")), msg.cell_len).extend_cell_length(width, base)]
+            # apply_style: with NO_COLOR, Rich renders segments without a style, which Textual's monochrome filter
+            # cannot handle (AttributeError) – the base style gives every segment one.
+            return [Strip(list(msg.render(self.app.console, end="")), msg.cell_len).apply_style(base)
+                    .extend_cell_length(width, base)]
         theme = self.scada.current_theme
         # Scale mm → cells. A character cell is about twice as high as wide,
         # so the vertical scale is half the horizontal one.

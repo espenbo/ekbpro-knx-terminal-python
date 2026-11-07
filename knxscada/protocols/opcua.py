@@ -37,7 +37,7 @@ from typing import Any
 
 from ..i18n import _
 from .base import Driver as BaseDriver
-from .base import Tag, tag_from_spec
+from .base import Tag, as_int, tag_from_spec
 
 #: OPC UA variant type name → tag type.
 VARIANT_TYPES = {"Boolean": "bool", "SByte": "int", "Byte": "int", "Int16": "int", "UInt16": "int", "Int32": "int",
@@ -49,6 +49,9 @@ SERVER_TYPES = {"bool": "Boolean", "int": "Int64", "float": "Double", "str": "St
 
 #: Default values of new server variables (until the first value arrives).
 DEFAULTS = {"Boolean": False, "Int64": 0, "Double": 0.0, "String": ""}
+#: OPC UA status of a server variable whose source is not trustworthy (``Driver.set_quality``), and of one that has
+#: no value yet: a SCADA must not take the default 0 or a value from before a failure as a valid measurement.
+QUALITY_STATUS = {"bad": "BadNoCommunication", "old": "UncertainLastUsableValue", "none": "BadWaitingForInitialData"}
 
 #: Application URI of our server; it must match the URI in the self-signed certificate (see :func:`server_certificate`).
 SERVER_APP_URI = "urn:ekbpro:knx-terminal-python:gateway"
@@ -310,10 +313,16 @@ class Driver(BaseDriver):
         self.vtypes[tag.name] = vt
         self.by_node[node.nodeid] = tag
         rec = self.hub.values.get(f"{self.name}/{tag.name}")
+        written = False
         if rec is not None and rec.get("v") is not None:
             # A value that does not fit the variable must not stop the server: it keeps its default.
             with contextlib.suppress(TypeError, ValueError):
                 await self.write(tag, rec["v"])
+                written = True
+        if not written:
+            await self.set_quality(tag, "none")    # the default 0 is not a measurement: Bad until a value comes
+        elif rec.get("q") not in ("good", None):
+            await self.set_quality(tag, "old")
 
     async def _on_client_write(self, event, _dispatcher) -> None:
         """A client wrote variables: pass the values on (only good writes of the Value attribute)."""
@@ -351,7 +360,7 @@ class Driver(BaseDriver):
             elif vt.name in ("Float", "Double"):
                 raw = float(raw)
             elif vt.name in VARIANT_TYPES:
-                raw = round(float(raw))
+                raw = as_int(raw)   # not via float: 64-bit integers keep every digit
         except (TypeError, ValueError):
             raise ValueError(_("{value} does not fit the {type} variable {node}").format(
                 value=repr(raw), type=vt.name, node=tag.address)) from None
@@ -361,6 +370,24 @@ class Driver(BaseDriver):
             await self.server.write_attribute_value(node.nodeid, dv)
             return
         await node.write_value(ua.DataValue(ua.Variant(raw, vt)))   # no timestamps: CODESYS rejects them
+
+    async def set_quality(self, tag: Tag, quality: str) -> None:
+        """Server: keep the variable's value but give it a Bad or Uncertain status (:data:`QUALITY_STATUS`), so a
+        SCADA that reads us sees that it is not a current measurement. The next :meth:`write` makes it Good again.
+        Called by the gateway engine when the source of the variable turns bad or is lost."""
+        from asyncua import ua
+
+        node = self.nodes.get(tag.name)
+        if self.role != "server" or node is None or self.server is None:
+            return
+        try:
+            old = await node.read_data_value()
+        except Exception:  # noqa: BLE001 - the variable is being removed: nothing to mark
+            return
+        dv = ua.DataValue(old.Value, StatusCode=ua.StatusCode(getattr(ua.StatusCodes, QUALITY_STATUS[quality])))
+        dv.SourceTimestamp = old.SourceTimestamp      # when the value was last good
+        dv.ServerTimestamp = datetime.now(UTC)
+        await self.server.write_attribute_value(node.nodeid, dv)
 
     def describe(self) -> str:
         """The endpoint URL, for the TUI."""

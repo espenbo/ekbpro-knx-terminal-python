@@ -336,6 +336,15 @@ class UsbInterface:
         except UsbError as exc:
             raise CommunicationError(str(exc)) from exc
 
+    async def stop_reconnect(self) -> None:
+        """Stop looking for a lost device again (xknx 4 calls this in ``XKNX.stop`` before it empties the telegram
+        queue, so a telegram waiting for a reconnect fails at once instead of blocking the shutdown). The device stays
+        open until :meth:`stop`."""
+        self._stopped = True
+        if self._reopen_task is not None:
+            self._reopen_task.cancel()
+            self._reopen_task = None
+
     async def stop(self) -> None:
         """Close the device and stop looking for it."""
         self._stopped = True

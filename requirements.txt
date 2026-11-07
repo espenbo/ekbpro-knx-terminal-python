@@ -1,5 +1,6 @@
 # Base packages. The protocol modules – KNX, Modbus, MQTT, OPC UA, BACnet – are installed separately and only when
 # a site uses them: ./scada modules install knx modbus … (setup.sh and the Docker image install KNX by default).
-textual>=8.0
-textual-plotext>=1.0
-PyYAML>=6.0
+textual>=8.0,<9
+textual-plotext>=1.0,<2
+PyYAML>=6.0,<7
+# Exact tested versions: constraints.txt

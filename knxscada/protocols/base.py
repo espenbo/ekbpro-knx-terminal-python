@@ -112,6 +112,23 @@ def same_value(a: Any, b: Any, rel: float = 1e-4) -> bool:
     return a == b
 
 
+def as_int(value: Any) -> int:
+    """*value* as an integer without going through float when it already is one: ``round(float(v))`` loses the last
+    digits of 64-bit values above 2**53 (9007199254740993 → …992). Floats (a scaled value like 215.00000000000003) and
+    numeric text are rounded. Raises ValueError/TypeError for anything else."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            return round(float(text.replace(",", ".")))
+    return round(float(value))
+
+
 def scale_value(value: Any, scale: float | None, offset: float | None) -> Any:
     """``value × scale + offset`` for numbers; other values unchanged."""
     if (scale is None and offset is None) or isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -317,6 +334,23 @@ class Driver:
         *user* is who asked for it (``gw:<gateway>`` or the operator), for drivers that log writes.
         """
         raise NotImplementedError
+
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """*value* as the device stores and reports it back, for change and echo detection in the gateways.
+
+        The default is the value itself. A driver whose values are coarser overrides it (KNX: encoded and decoded
+        with the tag's DPT), so the read-back of our own write is recognised as an echo without a loose tolerance.
+        Must not raise: a value that cannot be converted is returned unchanged.
+        """
+        return value
+
+    async def set_quality(self, tag: Tag, quality: str) -> None:
+        """Show that the value of *tag* (a gateway target of our own server) is not trustworthy now: *quality* is
+        ``"bad"`` (its source reports a bad status) or ``"old"`` (its source connection is lost).
+
+        Called by the gateway engine. The next value written (:meth:`write`) makes it good again. Only drivers that
+        can show a quality to their clients override this (OPC UA server); the others keep the last value.
+        """
 
     async def priority_array(self, tag: Tag) -> dict[str, Any]:
         """Who commands *tag* now: ``{"slots": [16 values, None = empty], "default": relinquish default}``.

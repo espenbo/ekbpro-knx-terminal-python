@@ -266,6 +266,16 @@ def test_registers_round_trip(value, dtype, order):
     assert from_registers(to_registers(value, dtype, order), dtype, order) == pytest.approx(value)
 
 
+@pytest.mark.parametrize(("value", "dtype"), [(9007199254740993, "int64"), (2**64 - 1, "uint64"), (-(2**63), "int64")])
+def test_large_integers_keep_every_digit(value, dtype):
+    """64-bit integers above 2**53 are written exactly (not via float: 9007199254740993 must not become …992), and a
+    scaled float or numeric text is still rounded to an integer."""
+    from knxscada.protocols.base import as_int
+
+    assert from_registers(to_registers(value, dtype), dtype) == value
+    assert as_int(215.00000000000003) == 215 and as_int("42") == 42 and as_int("21,6") == 22 and as_int(True) == 1
+
+
 def test_registers_word_order():
     """Word order 'little' puts the low word first; a value too large for the type is refused."""
     assert to_registers(0x00010002, "uint32", "big") == [1, 2]
@@ -351,6 +361,42 @@ def test_initial_values_never_reach_a_quiet_target(tmp_path):
             hub.update("src", "a", 3)
             await asyncio.sleep(0.1)
             assert quiet.writes == [("x", 2)]
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_initial_values_wait_for_a_target_that_is_not_connected(tmp_path):
+    """Start-up order: KNX statuses arrive before the PLC is connected. With initial: true they are not reported as
+    errors ("not connected") but delivered when the PLC is ready; a real change while it is down is still reported."""
+    async def run():
+        """A source with statuses, then the device connects; then a change while the device is down."""
+        src = Mem("src", {"tags": {"a": {}, "b": {}}}, None, server=False, reads_first=True)
+        dev = Mem("dev", {"tags": {"x": {}, "y": {}}}, None, server=False)
+        up = asyncio.Event()
+
+        async def later():
+            """Connect only when the test says so, and stay connected."""
+            await up.wait()
+            dev.set_state(True)
+            dev.set_ready()
+            await dev.wait_stopped(60)
+
+        dev.session = later
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "initial": True,
+                                                      "map": ["a -> x", "b -> y"]}]}, {"src": src, "dev": dev})
+        try:
+            hub.update("src", "a", 1)            # statuses while dev is not connected
+            hub.update("src", "b", 2)
+            await asyncio.sleep(0.1)
+            assert not [t for level, t in hub.server.events if "not connected" in t]
+            up.set()
+            await until(lambda: sorted(dev.writes) == [("x", 1), ("y", 2)])
+            src.set_ready()
+            dev.set_state(False)                 # the device drops out; a real change is reported
+            hub.update("src", "a", 3)
+            await until(lambda: any("not connected" in t for level, t in hub.server.events))
         finally:
             await hub.stop()
 
@@ -653,6 +699,60 @@ def test_opcua_server_and_client_through_gateways(tmp_path):
             assert hub.drivers["ua"].tags["Bygg.Rom1.On"].writable
             await hub.write("cli", "On", True)
             await until(lambda: ("on", True) in src.writes, 10)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_opcua_server_shows_the_source_quality(tmp_path):
+    """Our OPC UA server never shows a value as Good that is not: a variable without a value yet is
+    BadWaitingForInitialData; a bad source gives BadNoCommunication (a client gets no value with a Bad status), a
+    lost source connection UncertainLastUsableValue with the last value, and the next good value – even the same –
+    makes it Good again (the review's reproduction: 21.0, then bad, read 21.0 with Good)."""
+    pytest.importorskip("asyncua")
+    from asyncua import Client
+
+    port = free_port()
+
+    async def run():
+        """A source linked to our server; an independent asyncua client reads the status codes."""
+        src = Mem("src", {"tags": {"t": {"type": "float"}, "u": {"type": "float"}}}, None, server=False)
+
+        async def lasting():
+            """Stay connected until the test sets the connection down."""
+            src.set_state(True)
+            await src.wait_stopped(60)
+
+        src.session = lasting
+        data = {"connections": {"ua": {"protocol": "opcua", "role": "server",
+                                       "endpoint": f"opc.tcp://127.0.0.1:{port}"}},
+                "gateways": [{"name": "to-ua", "from": "src", "to": "ua", "map": ["t -> Rom.Temp", "u -> Rom.Fukt"]}]}
+        hub = await make_hub(tmp_path, data, {"src": src})
+        try:
+            await until(lambda: hub.drivers["ua"].connected and src.connected, 10)
+            src.set_ready()
+            hub.update("src", "t", 21.0)
+            await asyncio.sleep(0.3)
+            async with Client(f"opc.tcp://127.0.0.1:{port}") as client:
+                temp, fukt = client.get_node("ns=2;s=Rom.Temp"), client.get_node("ns=2;s=Rom.Fukt")
+
+                async def status(node):
+                    """(value, status code name) of *node*."""
+                    dv = await node.read_data_value(raise_on_bad_status=False)
+                    return dv.Value.Value if dv.Value else None, dv.StatusCode.name
+
+                assert await status(temp) == (21.0, "Good")
+                assert (await status(fukt))[1] == "BadWaitingForInitialData"       # no value yet: not 0.0 as Good
+                hub.update("src", "t", 21.0, "bad")
+                await asyncio.sleep(0.2)
+                assert (await status(temp))[1] == "BadNoCommunication"
+                hub.update("src", "t", 21.0)                                       # good again, same value
+                await asyncio.sleep(0.2)
+                assert await status(temp) == (21.0, "Good")
+                src.set_state(False)                                               # the source connection is lost
+                await asyncio.sleep(0.2)
+                assert await status(temp) == (21.0, "UncertainLastUsableValue")
         finally:
             await hub.stop()
 

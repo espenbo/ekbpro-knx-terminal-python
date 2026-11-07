@@ -29,9 +29,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONSAFEPATH=1
 
 WORKDIR /app
-COPY requirements.txt .
+COPY requirements.txt constraints.txt ./
 # Only prebuilt wheels: no compiler needed, also on ARM (aarch64, armv7).
-RUN pip install --no-cache-dir --root-user-action=ignore --prefer-binary -r requirements.txt
+RUN pip install --no-cache-dir --root-user-action=ignore --prefer-binary -r requirements.txt -c constraints.txt
 
 COPY knxscada/ knxscada/
 # Protocol modules (docs/en/11-protocols-gateways.md): only their packages are installed, e.g. MODULES="modbus mqtt".

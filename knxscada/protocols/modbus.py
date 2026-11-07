@@ -68,7 +68,7 @@ from typing import Any, ClassVar
 from ..i18n import _
 from . import MODBUS_TYPES, devices
 from .base import Driver as BaseDriver
-from .base import Tag, as_float
+from .base import Tag, as_float, as_int
 
 #: Table aliases → short name.
 TABLES = {"co": "co", "coil": "co", "coils": "co", "di": "di", "discrete": "di", "hr": "hr", "holding": "hr",
@@ -131,8 +131,9 @@ def to_registers(value: Any, dtype: str, word_order: str = "big") -> list[int]:
         return [1 if value else 0]
     fmt, _n = FORMATS[dtype]
     if fmt not in "fd":
-        # A scaled value (unscale gives 215.00000000000003) must not fail struct.pack for an integer type.
-        value = round(float(value))
+        # A scaled value (unscale gives 215.00000000000003) must not fail struct.pack for an integer type; an integer
+        # stays an integer (as_int), so 64-bit values keep every digit.
+        value = as_int(value)
     try:
         data = struct.pack(">" + fmt, value)
     except struct.error as exc:

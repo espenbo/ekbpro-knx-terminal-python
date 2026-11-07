@@ -113,3 +113,137 @@ def test_guard_off(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def _lasting(drv):
+    """Keep a memory connection up until stopped (the default Mem session ends at once and reconnects)."""
+    async def session():
+        """Connected until the test stops it or sets it down."""
+        drv.set_state(True)
+        await drv.wait_stopped(60)
+
+    drv.session = session
+
+
+def test_held_change_is_dropped_when_the_source_disconnects(tmp_path):
+    """A PLC change waiting in the restart guard (settle time) is not written to KNX when the PLC connection is lost
+    meanwhile – the review's reproduction: False → True, held, PLC disconnected, True must not reach KNX."""
+    async def run():
+        """Statuses, one change, then the PLC drops out within the settle time."""
+        knx, plc, hub_coro = setup(tmp_path, settle_ms=200)
+        _lasting(knx)
+        _lasting(plc)
+        hub = await hub_coro
+        try:
+            await until(lambda: knx.connected and plc.connected, 2)
+            for i in range(N):
+                hub.update("knx", f"k{i}", False)
+                hub.update("plc", f"v{i}", False)
+            knx.set_ready()
+            plc.set_ready()
+            await asyncio.sleep(0.05)
+            hub.update("plc", "v1", True)
+            await asyncio.sleep(0.02)
+            plc.set_state(False)                            # lost within the settle time
+            await asyncio.sleep(0.4)
+            assert knx.writes == []
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_rate_limited_change_is_dropped_when_the_source_disconnects(tmp_path):
+    """A change delayed by min_interval_ms is dropped when its source is lost before it is due."""
+    async def run():
+        """Two quick changes (the second waits for the rate limit), then the source drops out."""
+        knx, plc, hub_coro = setup(tmp_path, settle_ms=0, min_interval_ms=300)
+        _lasting(knx)
+        _lasting(plc)
+        hub = await hub_coro
+        try:
+            await until(lambda: knx.connected and plc.connected, 2)
+            for i in range(N):
+                hub.update("knx", f"k{i}", 0)
+                hub.update("plc", f"v{i}", 0)
+            knx.set_ready()
+            plc.set_ready()
+            await asyncio.sleep(0.05)
+            hub.update("plc", "v1", 1)
+            await until(lambda: ("k1", 1) in knx.writes, 1)
+            hub.update("plc", "v1", 2)                      # within min_interval: waits
+            await asyncio.sleep(0.02)
+            plc.set_state(False)
+            await asyncio.sleep(0.5)
+            assert ("k1", 2) not in knx.writes
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_change_is_not_written_when_the_source_turned_bad(tmp_path):
+    """A held change is not written when the source's value has turned bad before the settle time is over."""
+    async def run():
+        """One change, then a bad status of the same tag within the settle time."""
+        knx, plc, hub_coro = setup(tmp_path, settle_ms=200)
+        _lasting(knx)
+        _lasting(plc)
+        hub = await hub_coro
+        try:
+            await until(lambda: knx.connected and plc.connected, 2)
+            for i in range(N):
+                hub.update("knx", f"k{i}", 0)
+                hub.update("plc", f"v{i}", 0)
+            knx.set_ready()
+            plc.set_ready()
+            await asyncio.sleep(0.05)
+            hub.update("plc", "v1", 1)
+            await asyncio.sleep(0.02)
+            hub.update("plc", "v1", 1, "bad")
+            await asyncio.sleep(0.4)
+            assert knx.writes == []
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_counter_step_passes_and_a_coarse_knx_echo_does_not(tmp_path):
+    """A large counter (147 912 → 147 913, float) is a change and reaches the target – the review's reproduction –
+    while the read-back of a value written to a coarse KNX DPT 9 (21.37 comes back as 21.36) is recognised as an echo
+    and not sent back to the source."""
+    from knxscada import dpt as dptlib
+
+    async def run():
+        """Meter → PLC (float), and PLC ↔ KNX with a DPT 9 tag."""
+        meter = Mem("meter", {"tags": {"kwh": {"type": "float"}}}, None, server=False)
+        plc = Mem("plc", {"tags": {"kwh": {"type": "float"}, "t": {"type": "float"}}}, None, server=False)
+        knx = Mem("knx", {"tags": {"3/0/0": {"type": "float", "dpt": "9.001"}}}, None, initial_allowed=False,
+                  server=False)
+        knx.normalise = lambda tag, v: dptlib.decode("9.001", dptlib.encode("9.001", v)) if v is not None else v
+        for drv in (meter, plc, knx):
+            _lasting(drv)
+        gws = [{"name": "m", "from": "meter", "to": "plc", "map": ["kwh"]},
+               {"name": "k", "from": "plc", "to": "knx", "direction": "both", "settle_ms": 0, "map": ["t -> 3/0/0"]}]
+        hub = await make_hub(tmp_path, {"gateways": gws}, {"meter": meter, "plc": plc, "knx": knx})
+        try:
+            await until(lambda: meter.connected and plc.connected and knx.connected, 2)
+            hub.update("meter", "kwh", 147912.0)
+            hub.update("plc", "kwh", 147912.0)
+            hub.update("plc", "t", 20.0)
+            hub.update("knx", "3/0/0", 20.0)
+            for drv in (meter, plc, knx):
+                drv.set_ready()
+            await asyncio.sleep(0.05)
+            hub.update("meter", "kwh", 147913.0)
+            await until(lambda: ("kwh", 147913.0) in plc.writes, 2)
+            hub.update("plc", "t", 21.37)
+            await until(lambda: ("3/0/0", 21.37) in knx.writes, 2)
+            hub.update("knx", "3/0/0", 21.36)                # the bus echo of our write
+            await asyncio.sleep(0.2)
+            assert ("t", 21.36) not in plc.writes
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

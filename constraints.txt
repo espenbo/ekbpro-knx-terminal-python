@@ -1,0 +1,16 @@
+# Tested versions: the combination the test suite and the running sites use. setup.sh, ./scada modules install and the
+# Docker image install with "-c constraints.txt", so a new installation gets exactly these. The ranges in
+# requirements.txt and in the module registry (knxscada/protocols/__init__.py) allow the next tested versions.
+#
+# To move to newer versions: install them in a test environment, run "venv/bin/python -m pytest" and ruff, try them
+# against a site (read-only first), then change the numbers here. xknx 4.1.1 has passed the test suite (2026-11-07).
+textual==8.2.8
+textual-plotext==1.0.1
+PyYAML==6.0.3
+xknx==3.10.0
+xknxproject==3.10.0
+pymodbus==3.16.1
+pyserial==3.5
+aiomqtt==2.5.1
+asyncua==2.1.0
+bacpypes3==0.0.110

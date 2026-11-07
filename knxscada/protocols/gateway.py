@@ -60,6 +60,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..i18n import _
 from .base import coerce, same_value, scale_value, unscale_value
+
+#: Relative tolerance of :meth:`GatewayEngine._same` after normalising: float32 rounds at ~6e-8, so 1e-6 hides only
+#: rounding noise (the hub uses the same for its change detection).
+SAME_REL = 1e-6
 from .config import parse_link
 
 if TYPE_CHECKING:
@@ -332,7 +336,8 @@ class GatewayEngine:
         reported on the link.
         """
         last_in = link.last_a if forward else link.last_b
-        if last_in is not MISSING and same_value(value, last_in):
+        src_conn, src_tag = (link.a_conn, link.a_tag) if forward else (link.b_conn, link.b_tag)
+        if last_in is not MISSING and self._same(src_conn, src_tag, value, last_in):
             return  # our own write coming back, or no change
         if forward:
             link.last_a = value
@@ -357,6 +362,11 @@ class GatewayEngine:
             # as a "change".
             if (link.last_b if forward else link.last_a) is MISSING:
                 self._set_last(link, not forward, out)
+            return
+        if initial and drv.role == "client" and not drv.connected:
+            # A status at start-up for a device that is not connected yet (e.g. the PLC's OPC UA session comes up a
+            # second after KNX): on_ready delivers the current source value once it is, so this is not a lost
+            # change – no error per line in the event log at every restart.
             return
         if drv.connected and not drv.ready:
             link.held[forward] = out   # the target is still reading its values: wait for them
@@ -412,6 +422,7 @@ class GatewayEngine:
         quiet = 0.0
         for link, forward in self.by_tag.get(key, ()):
             self._set_last(link, forward, MISSING)
+            self._mark_target(link, forward, "bad")
             dst = self.hub.drivers.get(link.b_conn if forward else link.a_conn)
             if dst is not None and not dst.initial_allowed and link.settle > 0:
                 quiet = max(quiet, link.quiet)
@@ -466,7 +477,7 @@ class GatewayEngine:
         our own write is recognised as an echo and not sent back to the source.
         """
         last_out = link.last_b if forward else link.last_a
-        if last_out is not MISSING and same_value(out, last_out):
+        if last_out is not MISSING and self._same(dst_conn, dst_tag, out, last_out):
             return  # the target has it already
         if (link.deadband and last_out is not MISSING and isinstance(out, (int, float))
                 and isinstance(last_out, (int, float)) and not isinstance(out, bool)
@@ -497,9 +508,19 @@ class GatewayEngine:
                     self._deliver(link, forward, src["v"], initial=True)
 
     def disconnected(self, conn: str) -> None:
-        """*conn* lost its connection: waiting changes for it are dropped (it is read again first),
-        and what it had is forgotten until it tells us again."""
+        """*conn* lost its connection: every change waiting to be written from it or to it is dropped – held for
+        a target that is still reading, in the restart guard's batch, or delayed by the rate limit – and what it had
+        is forgotten until it tells us again.
+
+        A change from a source that has gone away must never be written afterwards: the connection may have been
+        lost because the device restarted, and its last value before that is not trustworthy (towards KNX this is
+        the same protection as the restart guard).
+        """
         for link in self.links:
+            if link.a_conn == conn:
+                self._mark_target(link, True, "old")
+            if link.b_conn == conn and link.both:
+                self._mark_target(link, False, "old")
             if link.b_conn == conn:
                 link.last_b = MISSING
             if link.a_conn == conn:
@@ -507,6 +528,49 @@ class GatewayEngine:
             for forward in list(link.held):
                 if (link.b_conn if forward else link.a_conn) == conn:
                     del link.held[forward]
+            for forward in list(link.pending):
+                if conn in (link.a_conn, link.b_conn):
+                    link.pending.pop(forward).cancel()
+        for key in list(self._batch):
+            batch = self._batch[key]
+            for item_key, (link, forward, dst_conn, _dst_tag, _out) in list(batch.items()):
+                src_conn = link.a_conn if forward else link.b_conn
+                if conn in (src_conn, dst_conn):
+                    del batch[item_key]
+            if not batch:
+                del self._batch[key]
+                timer = self._batch_timer.pop(key, None)
+                if timer is not None:
+                    timer.cancel()
+
+    def _same(self, conn: str, tag: str, a: Any, b: Any) -> bool:
+        """Whether *a* and *b* are the same value **for** *conn/tag*: both as the device stores them
+        (``Driver.normalise`` – a KNX 2-byte float holds 147 912 only in steps of ~82), then compared tightly
+        (:data:`SAME_REL`).
+
+        Echo suppression thus follows the real resolution of each end instead of one loose tolerance for all: a
+        counter going 147 912 → 147 913 on a float32 or integer tag is a change, a KNX DPT 9 echo is not.
+        """
+        drv = self.hub.drivers.get(conn)
+        t = drv.tags.get(tag) if drv is not None else None
+        if t is not None:
+            a, b = drv.normalise(t, a), drv.normalise(t, b)
+        return same_value(a, b, rel=SAME_REL)
+
+    def _mark_target(self, link: Link, forward: bool, quality: str) -> None:
+        """The source end of *link* turned bad or was lost: tell a target that is our own server (it shows the
+        quality to its clients, e.g. OPC UA Bad/Uncertain instead of the old value as Good), and forget what the
+        target has, so the next good source value is written again even when it is the same."""
+        dst_conn, dst_tag = (link.b_conn, link.b_tag) if forward else (link.a_conn, link.a_tag)
+        drv = self.hub.drivers.get(dst_conn)
+        tag = drv.tags.get(dst_tag) if drv is not None and drv.role == "server" else None
+        if tag is None:
+            return
+        self._set_last(link, not forward, MISSING)
+        try:
+            asyncio.get_running_loop().create_task(drv.set_quality(tag, quality))
+        except RuntimeError:
+            pass   # no event loop (unit tests of the engine alone): nothing to tell
 
     @staticmethod
     def _set_last(link: Link, a_side: bool, value: Any) -> None:
@@ -529,9 +593,27 @@ class GatewayEngine:
             link.pending[forward] = loop.call_later(
                 wait, lambda: loop.create_task(self._write(link, forward, conn, tag, value)))
 
+    def _source_ok(self, link: Link, forward: bool) -> bool:
+        """The source of a write is still connected and its value good – checked just before the write, because a
+        change may have waited (restart guard, rate limit) while the source went away or turned bad."""
+        src_conn, src_tag = (link.a_conn, link.a_tag) if forward else (link.b_conn, link.b_tag)
+        drv = self.hub.drivers.get(src_conn)
+        if drv is None or (drv.role == "client" and not drv.connected):
+            return False
+        rec = self.hub.values.get(f"{src_conn}/{src_tag}")
+        return rec is None or rec.get("q") == "good"
+
     async def _write(self, link: Link, forward: bool, conn: str, tag: str, value: Any) -> None:
-        """Write through the hub as user ``gw:<gateway>`` (so the hub's checks – ``writable``, connected – apply)."""
+        """Write through the hub as user ``gw:<gateway>`` (so the hub's checks – ``writable``, connected – apply).
+
+        Nothing is written when the source is no longer connected or its value has turned bad meanwhile
+        (:meth:`_source_ok`); the target then keeps what it had, and its last value is forgotten so the next good
+        source value is passed on.
+        """
         link.pending.pop(forward, None)
+        if not self._source_ok(link, forward):
+            self._set_last(link, not forward, MISSING)
+            return
         link.sent_at[forward] = time.monotonic()
         try:
             await self.hub.write(conn, tag, value, user=f"gw:{link.gateway}")
