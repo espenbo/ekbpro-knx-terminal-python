@@ -107,7 +107,7 @@ VIEW_HINTS = {
     "rooms": N_("Tab: next control  Space: operate"),
     "gas": N_("/: search  u: show unused  Enter: read/write/trend"),
     "monitor": N_("/: filter  p: pause  c: clear  Enter: open"),
-    "protomon": N_("/: filter  p: pause  f: hide fast  c: clear  Enter/w: write"),
+    "protomon": N_("/: filter  p: pause  f: fast tags  e: bad tags  c: clear  Enter/w: write"),
     "alarms": N_("k: acknowledge  K: acknowledge all"),
     "events": N_("/: filter"),
     "trends": N_("/: search  Enter: add/remove  Del: remove all"),

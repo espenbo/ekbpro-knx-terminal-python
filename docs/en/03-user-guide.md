@@ -120,7 +120,7 @@ protocol in an installation without KNX); pressed again, it moves on to the next
 
 On top, the connections of the protocol with role, address, number of tags and state (as in F11), and counters since
 the server started: **Reads** (every value read, changed or not), **/min** (reads per minute), **Changes**,
-**Errors** (values with bad quality, red when there are any) and **Lost** (connections lost). The counters are
+**Errors** (tags whose value is not good right now – red when there are any; `e` lists them) and **Lost** (connections lost). The counters are
 updated every 10 seconds. Below, every
 **value change** of their tags (← time, connection, tag, description, value with unit, quality when it is not
 good) and every **write** (→ value and the user who wrote it), live. Values that do not change are not shown:
@@ -129,9 +129,16 @@ the hub passes on changes only.
 - **`/`** filters on connection, tag, description, value or user; `write` lists only writes, `released`
   the releases.
 - **`p`** pauses and resumes, **`c`** clears the view.
-- **`f`** hides the tags that change all the time – more than 20 times in the last minute, for example a PLC clock
-  (`Act_Time`) – so the other changes are easier to see. The badge next to the filter says how many are hidden; `f`
-  again shows them. Writes are never hidden.
+- **`f`** shows or hides the tags that change all the time – more than 20 times in the last minute, for example a PLC
+  clock (`Act_Time`). They are hidden from the start, so the other changes are easy to see; the badge next to the
+  filter says how many are hidden. Writes are never hidden.
+- **`e`** (troubleshooting) lists instead every tag whose value is **not good now**, with its value and the reason in
+  the quality column: the device's error answer (`object: unknown-object`), BACnet `fault` or `out-of-service` from
+  the object's status flags, `old` when the connection is lost. The list follows the status every 10 seconds; `e`
+  again goes back to the live log. A bad value is shown but never passed on by the gateways. Often the cause is in the
+  device, not here: a sensor that is not connected (Belimo "Sensor 1" at −273.15 °C), a KNX value a BACnet gateway
+  has never received, a setting a regulator reports as out of service. Such a tag can be removed from
+  `protocols.yaml`, or given `status_flags: false` (BACnet) when its value is useful anyway.
 - **Enter, click or `w`** on a line writes a new value to its tag, with confirmation – only for tags with
   `writable: true`. For BACnet the dialog also offers the write priority (see "Writing to BACnet" below).
 

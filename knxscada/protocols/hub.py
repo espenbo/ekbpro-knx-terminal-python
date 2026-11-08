@@ -454,9 +454,24 @@ class Hub:
                 "where": drv.describe() if drv else "",
                 "tags": len(drv.tags) if drv else 0,
                 "running": drv is not None,
+                # Tags whose value is not good right now (bad status, an error answer, the connection lost) – the
+                # monitor shows this, not the ever-growing count of bad reads ("errors").
+                "bad": self._bad_count(name, drv),
                 **self._stats(name),
             })
         return out
+
+    def _bad_count(self, conn: str, drv: Driver | None) -> int:
+        """How many tags of *conn* have a value that is not good now. Called for the status (every few seconds):
+        one dict lookup per tag."""
+        if drv is None or conn == "knx":
+            return 0
+        n = 0
+        for name in list(drv.tags):
+            rec = self.values.get(f"{conn}/{name}")
+            if rec is not None and rec.get("q") not in ("good", "", None):
+                n += 1
+        return n
 
     def snapshot(self) -> dict[str, Any]:
         """Everything the TUI's gateway view needs."""
@@ -500,7 +515,8 @@ class Hub:
             if conn == "knx":
                 st = self.server.state.get(t.name) or {}
                 rec = {"v": st.get("value"), "ts": st.get("ts"), "q": ("old" if st.get("old") else "good") if st else ""}
-            info = {**t.info(), "value": rec.get("v"), "ts": rec.get("ts"), "q": rec.get("q", "")}
+            info = {**t.info(), "value": rec.get("v"), "ts": rec.get("ts"), "q": rec.get("q", ""),
+                    "why": getattr(drv, "why", {}).get(t.name, "") if rec.get("q") not in ("good", "", None) else ""}
             if drv.priorities:
                 info["priority"] = self._default_priority(conn, t.name)
             out.append(info)

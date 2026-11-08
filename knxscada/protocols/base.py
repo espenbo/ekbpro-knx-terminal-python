@@ -291,6 +291,9 @@ class Driver:
         self.error = ""
         #: Tag name → tag. Servers may get more at run time through :meth:`create_tag`.
         self.tags: dict[str, Tag] = {}
+        #: Tag name → why its value is not good (a device's error answer, "fault", "out-of-service", a value that
+        #: does not fit the tag's type), for troubleshooting in the TUI's monitor. Cleared by a good value.
+        self.why: dict[str, str] = {}
         #: Set by :meth:`stop`; sessions and loops check it to end without reconnecting.
         self._stop = False
         for tname, spec in (settings.get("tags") or {}).items():
@@ -428,17 +431,22 @@ class Driver:
         """
         raise ValueError(_("{connection} has no write priorities (only BACnet has)").format(connection=self.name))
 
-    def publish(self, tag: Tag, raw: Any, quality: str = "good", status: bool = False) -> None:
+    def publish(self, tag: Tag, raw: Any, quality: str = "good", status: bool = False, why: str = "") -> None:
         """Report a raw value read from or sent by the other side.
 
         *status* marks a value that by its kind is a status and never a change – e.g. a Sparkplug birth, whenever it
-        arrives – so the gateways only remember it (nothing goes to KNX or to devices), as at start-up.
+        arrives – so the gateways only remember it (nothing goes to KNX or to devices), as at start-up. *why* says
+        what makes a value that is not good bad (kept in :attr:`why` for the monitor; a good value clears it).
         """
         try:
             value = coerce(tag.from_raw(raw), tag.type)
         except (TypeError, ValueError) as exc:
             log.debug("%s/%s: %r: %s", self.name, tag.name, raw, exc)
-            value, quality = raw, "bad"
+            value, quality, why = raw, "bad", str(exc)
+        if quality == "good":
+            self.why.pop(tag.name, None)
+        elif why:
+            self.why[tag.name] = why
         if status:
             self.hub.update(self.name, tag.name, value, quality, status=True)
         else:   # the plain call, which hub stand-ins (tools, tests) without *status* also take

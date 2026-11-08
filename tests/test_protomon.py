@@ -165,6 +165,14 @@ def test_tui_protocol_monitor(tmp_path, monkeypatch):
                 # The default priority is not sent: the server uses its own (here the connection's 16).
                 await hub.command({"cmd": "point_write", "conn": "bac", "tag": "LT", "value": False}, "test")
                 assert bac.writes[-1] == ("LT", False, None, False)
+                # e: the tags that are bad now, with the driver's reason; e again: back to the live log.
+                view.query_one("#pm-filter").value = ""
+                plc.publish(plc.tags["T1"], 20.5, "bad", why="fault")
+                view.action_bad()
+                await until(lambda: log.line_count == 1 and "bad: fault" in view._line(log.items[0]).plain, 5)
+                assert "T1" in view._line(log.items[0]).plain
+                view.action_bad()
+                await until(lambda: log.line_count > 1, 5)
         finally:
             await hub.stop()
 
@@ -257,15 +265,20 @@ def test_hub_counts_reads_changes_errors_and_drops(tmp_path):
     hub.drivers["plc"] = plc
     for value in (20.0, 20.0, 21.0):
         hub.update("plc", "T", value)
-    hub.update("plc", "T", 21.0, "bad")
+    plc.publish(plc.tags["T"], 21.0, "bad", why="fault")
     hub.connection_state("plc", False)
     st = next(s for s in hub.status() if s["name"] == "plc")
     assert (st["reads"], st["changes"], st["errors"], st["drops"]) == (4, 3, 1, 1)
+    # "bad" counts the tags that are bad now (the monitor's Errors column), and the tag list says why.
+    assert st["bad"] == 1 and hub.points("plc")[0]["why"] == "fault"
+    plc.publish(plc.tags["T"], 21.0)
+    st = next(s for s in hub.status() if s["name"] == "plc")
+    assert st["bad"] == 0 and hub.points("plc")[0]["why"] == "" and "T" not in plc.why
 
 
 def test_monitor_hides_fast_tags(tmp_path, monkeypatch):
-    """f hides the tags that changed more than FAST_PER_MIN times in the last minute (a PLC clock) and shows the rest;
-    writes are never hidden; f again shows everything."""
+    """The tags that changed more than FAST_PER_MIN times in the last minute (a PLC clock) are hidden from the start
+    and the rest shown; writes are never hidden; f shows everything, f again hides them."""
     from knxscada.tui.app import ScadaApp
     from knxscada.tui.protomon import ProtocolMonitorView
     from knxscada.tui.widgets import LineLog
@@ -291,13 +304,13 @@ def test_monitor_hides_fast_tags(tmp_path, monkeypatch):
             view.select("mem")
             await pilot.pause(0.1)
             log = view.query_one("#pm-log", LineLog)
-            assert log.line_count == 44
-            view.action_fast()
-            await pilot.pause(0.1)
             assert view._fast == {"plc/Act_Time"} and log.line_count == 4     # 3 temperatures + the write
             assert "1 fast tags hidden" in str(view.query_one("#pm-state").render())
             view.action_fast()
             await pilot.pause(0.1)
             assert log.line_count == 44
+            view.action_fast()
+            await pilot.pause(0.1)
+            assert log.line_count == 4
 
     asyncio.run(run())

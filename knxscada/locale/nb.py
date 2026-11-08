@@ -1054,7 +1054,7 @@ CATALOGUE: dict[str, str] = {
     "Priority array not available: {error}": "Prioritetstabellen er ikke tilgjengelig: {error}",
     "Reading the priority array …": "Leser prioritetstabellen …",
     # Monitor: counters and fast tags (tui/protomon.py)
-    "/: filter  p: pause  f: hide fast  c: clear  Enter/w: write": "/: filter  p: pause  f: skjul raske  c: tøm  Enter/w: skriv",
+    "/: filter  p: pause  f: fast tags  e: bad tags  c: clear  Enter/w: write": "/: filter  p: pause  f: raske tagger  e: dårlige tagger  c: tøm  Enter/w: skriv",
     "Hide fast tags": "Skjul raske tagger",
     "{n} fast tags hidden (f)": "{n} raske tagger skjult (f)",
     "Reads": "Lest",
@@ -1126,4 +1126,8 @@ CATALOGUE: dict[str, str] = {
     "Read status flags": "Les statusflagg",
     "A value whose object reports fault or out-of-service is bad (not passed on by gateways)":
         "En verdi der objektet melder fault eller out-of-service, er dårlig (gatewayene sender den ikke videre)",
+    "not in the answer": "ikke med i svaret",
+    "Bad tags": "Dårlige tagger",
+    "{n} bad tags now (e: back to the log)": "{n} dårlige tagger nå (e: tilbake til loggen)",
+    "BAD TAGS": "DÅRLIGE TAGGER",
 }

@@ -140,6 +140,16 @@ BAD_STATUS_BITS = (1, 3)
 RELIABILITY = {"bad": "unreliable-other", "old": "communication-failure", "none": "unreliable-other"}
 
 
+def flags_text(flags: Any) -> str:
+    """The bits set in *flags* as text (``"fault, in-alarm"``), for the monitor's quality column; "" when none."""
+    try:
+        bits = [int(b) for b in flags]
+    except (TypeError, ValueError):
+        return ""
+    return ", ".join(name for i, name in sorted(enumerate(STATUS_BITS), key=lambda x: x[0] not in BAD_STATUS_BITS)
+                     if i < len(bits) and bits[i])
+
+
 def flags_quality(flags: Any) -> str:
     """The quality of a value whose object reports *flags* (a ``status-flags`` value or a list of 0/1): ``"bad"``
     for fault or out-of-service, else ``"good"``. Flags that cannot be read count as good: the device simply does
@@ -224,6 +234,15 @@ def _failures() -> tuple[type[BaseException], ...]:
     from bacpypes3.apdu import ErrorRejectAbortNack
 
     return Exception, ErrorRejectAbortNack
+
+
+def _error_text(value: Any) -> str:
+    """The error a device answered for one property of a ReadPropertyMultiple (``unknown-object``), else "no answer"
+    for a property missing from the answer."""
+    if value is None:
+        return _("not in the answer")
+    cls, code = getattr(value, "errorClass", None), getattr(value, "errorCode", None)
+    return f"{cls}: {code}" if cls is not None or code is not None else str(value)
 
 
 def _no_answer(exc: BaseException) -> bool:
@@ -505,11 +524,13 @@ class Driver(BaseDriver):
             otype, instance = self.objects[tag.name]
             value = by_key.get((otype, instance, self._prop(tag)))
             if value is None or isinstance(value, ErrorType):
-                self._bad(tag)
+                self._bad(tag, _error_text(value))
                 continue
             flags = by_key.get((otype, instance, "status-flags")) if self._flagged(tag) else None
-            quality = "good" if flags is None or isinstance(flags, ErrorType) else flags_quality(flags)
-            self.publish(tag, from_bacnet(value), quality)
+            if flags is None or isinstance(flags, ErrorType):
+                self.publish(tag, from_bacnet(value))
+            else:
+                self.publish(tag, from_bacnet(value), flags_quality(flags), why=flags_text(flags))
 
     async def _read_one(self, tag: Tag) -> None:
         """Read one tag with ReadProperty and publish it (an error answer marks it "bad", no answer reconnects).
@@ -524,20 +545,26 @@ class Driver(BaseDriver):
         except _failures() as exc:
             if _no_answer(exc):
                 raise ConnectionError(_("no answer from {where}").format(where=self.target)) from None
-            self._bad(tag)   # unknown object or property, …
+            self._bad(tag, str(exc))   # unknown object or property, …
             return
-        quality = "good"
+        flags = None
         if self._flagged(tag):
             try:
-                quality = flags_quality(await self.app.read_property(self.target, obj, "status-flags"))
+                flags = await self.app.read_property(self.target, obj, "status-flags")
             except _failures() as exc:
                 if _no_answer(exc):
                     raise ConnectionError(_("no answer from {where}").format(where=self.target)) from None
                 self._no_flags.add(tag.name)
-        self.publish(tag, from_bacnet(value), quality)
+        if flags is None:
+            self.publish(tag, from_bacnet(value))
+        else:
+            self.publish(tag, from_bacnet(value), flags_quality(flags), why=flags_text(flags))
 
-    def _bad(self, tag: Tag) -> None:
-        """Mark *tag* as "bad" but keep its last value for display (bad values are never passed to gateways)."""
+    def _bad(self, tag: Tag, why: str = "") -> None:
+        """Mark *tag* as "bad" but keep its last value for display (bad values are never passed to gateways);
+        *why* is the device's error answer, kept for the monitor."""
+        if why:
+            self.why[tag.name] = why
         rec = self.hub.values.get(f"{self.name}/{tag.name}")
         self.hub.update(self.name, tag.name, rec["v"] if rec else None, "bad")
 
@@ -555,7 +582,7 @@ class Driver(BaseDriver):
                     state = self._cov_state.setdefault(tag.name, [None, "good"])
                     if str(prop) == "present-value":
                         state[0] = from_bacnet(value)
-                        self.publish(tag, state[0], state[1])
+                        self.publish(tag, state[0], state[1], why=self.why.get(tag.name, ""))
                     elif str(prop) == "status-flags" and self._flagged(tag):
                         quality = flags_quality(value)
                         if quality != state[1]:
@@ -563,7 +590,7 @@ class Driver(BaseDriver):
                             # The flags changed after the value in this notification (or alone): show the value
                             # with its new quality now rather than at the next poll.
                             if state[0] is not None:
-                                self.publish(tag, state[0], quality)
+                                self.publish(tag, state[0], quality, why=flags_text(value))
         except asyncio.CancelledError:
             raise
         except _failures() as exc:   # the device does not do COV for it: polled instead

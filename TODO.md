@@ -157,6 +157,11 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           lesing): tomteveien30 2 fault + 14 out-of-service, lerkeveien2 12 fault i UBR1; ingen av dem går i en
           gateway, så endringen gjelder bare visningen. Tester i `test_bacnet.py`, `test_sparkplug.py`,
           `test_protocols.py`, dok 11/12 en+nb.
+   1b. [x] Monitor (brukeren 2026-11-08): «Feil» viste antall dårlige avlesninger siden start (vokser hele tiden).
+          Nå: antall tagger som er dårlige **nå** (`status` → `bad`). `e` lister dem med årsak (`Driver.why`:
+          feilsvar, BACnet `fault`/`out-of-service`, `points` → `why`). Raske tagger (PLS-klokker som `Act_Time`)
+          er skjult fra start (`f` viser dem). Markøren i tilkoblingstabellen vises bare med fokus, så det røde
+          tallet ikke skjules. Verdikolonnen 24 tegn (dato og tid). Dok 03 en+nb.
    2. [ ] Tilgangsstyring på socketen.
    3. [ ] OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet.
    4. [ ] Overvåking av interne oppgaver (watchdog).

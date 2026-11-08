@@ -122,7 +122,7 @@ protokollen i en installasjon uten KNX); trykket igjen går den videre til neste
 
 Øverst tilkoblingene for protokollen med rolle, adresse, antall tagger og tilstand (som i F11), og tellere siden
 serveren startet: **Lest** (hver verdi som er lest, endret eller ikke), **/min** (lesinger per minutt), **Endret**,
-**Feil** (verdier med dårlig kvalitet, røde når det finnes noen) og **Brudd** (tapte forbindelser). Tellerne
+**Feil** (tagger som ikke har god verdi akkurat nå – røde når det finnes noen; `e` lister dem) og **Brudd** (tapte forbindelser). Tellerne
 oppdateres hvert 10. sekund. Under vises hver
 **verdiendring** i taggene deres (← tid, tilkobling, tagg, beskrivelse, verdi med enhet, kvalitet når den ikke er
 god) og hver **skriving** (→ verdi og brukeren som skrev), live. Verdier som ikke endrer seg, vises ikke: huben
@@ -131,9 +131,16 @@ sender bare endringer videre.
 - **`/`** filtrerer på tilkobling, tagg, beskrivelse, verdi eller bruker; `skriv` viser bare skrivinger,
   `sluppet` slippene.
 - **`p`** setter på pause og fortsetter, **`c`** tømmer visningen.
-- **`f`** skjuler taggene som endrer seg hele tiden – mer enn 20 ganger det siste minuttet, for eksempel en
-  PLS-klokke (`Act_Time`) – så de andre endringene blir lettere å se. Merket ved filteret sier hvor mange som er
-  skjult; `f` igjen viser dem. Skrivinger skjules aldri.
+- **`f`** viser eller skjuler taggene som endrer seg hele tiden – mer enn 20 ganger det siste minuttet, for eksempel en
+  PLS-klokke (`Act_Time`). De er skjult fra start, så de andre endringene er lette å se; merket ved filteret sier hvor
+  mange som er skjult. Skrivinger skjules aldri.
+- **`e`** (feilsøking) lister i stedet alle tagger som **ikke har god verdi nå**, med verdien og årsaken i
+  kvalitetskolonnen: enhetens feilsvar (`object: unknown-object`), BACnet `fault` eller `out-of-service` fra objektets
+  statusflagg, `old` når forbindelsen er borte. Lista følger statusen hvert 10. sekund; `e` igjen går tilbake til den
+  levende loggen. En dårlig verdi vises, men sendes aldri videre av gatewayene. Ofte ligger årsaken i utstyret, ikke
+  her: en føler som ikke er koblet til (Belimo «Sensor 1» med −273,15 °C), en KNX-verdi en BACnet-gateway aldri har
+  fått, en innstilling en regulator melder som out of service. En slik tagg kan fjernes fra `protocols.yaml`, eller få
+  `status_flags: false` (BACnet) når verdien er nyttig likevel.
 - **Enter, klikk eller `w`** på en linje skriver en ny verdi til taggen, med bekreftelse – bare for tagger med
   `writable: true`. For BACnet viser dialogen også skriveprioriteten (se «Skriving til BACnet» under).
 

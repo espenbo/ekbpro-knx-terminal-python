@@ -6,6 +6,10 @@ The KNX bus monitor (F4) shows telegrams. The other protocols poll or subscribe,
 the hub passes on: every value change (``points`` from the server) and every write (``conn/tag ← value``
 in the event log, with the user). The app keeps one buffer for all protocols (``ScadaApp.point_log``);
 the view filters it by protocol and by the words in the filter field.
+
+For troubleshooting, ``e`` lists instead the tags whose value is not good *now* (from the server's tag list, with
+the reason the driver gave: a device's error answer, BACnet ``fault``/``out-of-service`` …); the column "Errors" of
+the connection table counts them.
 """
 
 from __future__ import annotations
@@ -65,8 +69,10 @@ class ProtocolMonitorView(View):
     #: Minimum seconds between two loads of the tag list of a connection (descriptions, units, writable).
     TAGS_MAX_AGE = 300
     #: (English column title, width).
+    #: Value is wide enough for a date and time (a PLC clock ``2026-11-08-16:27:31.250``); Quality holds the reason
+    #: of a bad value (``bad: fault, in-alarm``).
     COLS = ((N_("Time"), 8), ("", 1), (N_("Connection"), 16), (N_("Tag"), 32), (N_("Description"), 36),
-            (N_("Value"), 18), (N_("Quality"), 10))
+            (N_("Value"), 24), (N_("Quality"), 30))
     #: A tag that changed more often than this in the last minute is "fast" (a PLC clock, a counter) and hidden by f.
     FAST_PER_MIN = 20
     #: Seconds between two recounts of the fast tags while entries arrive.
@@ -75,6 +81,7 @@ class ProtocolMonitorView(View):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("p", "pause", _("Pause/resume")),
         Binding("f", "fast", _("Hide fast tags")),
+        Binding("e", "bad", _("Bad tags")),
         Binding("c", "clear", _("Clear")),
         Binding("w", "write", _("Write")),
         Binding("slash", "focus_filter", _("Filter")),
@@ -90,7 +97,10 @@ class ProtocolMonitorView(View):
         # connection by load(); kept across protocol switches so switching back is instant.
         self.tags: dict[str, dict[str, Any]] = {}
         self._tags_at: dict[str, float] = {}           # connection → time.time() of its last tag load
-        self.hide_fast = False                          # f: hide tags that change all the time
+        # f: hide tags that change all the time – on from the start: a PLC clock (Act_Time) changing every second
+        # would otherwise fill the log and push every other change out of sight.
+        self.hide_fast = True
+        self.show_bad = False                           # e: list the tags that are not good now, instead of the log
         self._fast: set[str] = set()                    # "conn/tag" of the fast tags (counted by _recount_fast)
         self._fast_at = 0.0                             # time.time() of the last recount
         # connection → (time, reads) of the previous status, for the reads per minute
@@ -103,6 +113,9 @@ class ProtocolMonitorView(View):
             yield Input(placeholder=_("Filter: connection, tag, description or value  (/)"), id="pm-filter")
             yield Static("", id="pm-state")
         conns = FastTable(id="pm-conns", cursor_type="row", zebra_stripes=True)
+        # The cursor row is only drawn while the table has the focus: its colours would otherwise hide the red error
+        # count of the first connection (with one connection, always).
+        conns.show_cursor = False
         conns.border_title = _("Connections")
         yield conns
         with Vertical(id="pm-box", classes="logbox"):
@@ -188,7 +201,8 @@ class ProtocolMonitorView(View):
             if prev is None or now - prev[0] >= 5:
                 self._prev_reads[s["name"]] = (now, reads)
             rate = self._rate.get(s["name"])
-            errors = int(s.get("errors") or 0)
+            # Tags that are bad now (not the count of bad reads since start, which only ever grows).
+            errors = int(s.get("bad") or 0)
             t.add_row(s["name"], _(s.get("role") or ""), s.get("where") or "", str(s.get("tags", "")), conn_state(s),
                       str(reads), "–" if rate is None else f"{rate:.0f}", str(s.get("changes") or 0),
                       Text(str(errors), style=self.scada.color("error") if errors else ""),
@@ -196,9 +210,21 @@ class ProtocolMonitorView(View):
         t.styles.height = min(t.row_count, 8) + 3
         if t.row_count:
             t.move_cursor(row=min(max(row, 0), t.row_count - 1))
+        if self.show_bad and self.display:
+            self.load_bad()          # the list of bad tags follows the status (every 10 s)
+
+    def on_descendant_focus(self, event) -> None:
+        """Show the cursor of the connection table while it has the focus (see :meth:`compose`)."""
+        if getattr(event.widget, "id", None) == "pm-conns":
+            event.widget.show_cursor = True
+
+    def on_descendant_blur(self, event) -> None:
+        """Hide the cursor of the connection table again when it loses the focus."""
+        if getattr(event.widget, "id", None) == "pm-conns":
+            event.widget.show_cursor = False
 
     # -- the log ----------------------------------------------------------------------------------
-    def _match(self, e: dict[str, Any]) -> bool:
+    def _match(self, e: dict[str, Any], fast: bool = True) -> bool:
         """True if entry *e* belongs to this protocol and contains every filter word.
 
         The words are searched in connection, tag, description, value and user, and in the word "write" for
@@ -206,7 +232,7 @@ class ProtocolMonitorView(View):
         """
         if self.scada.conn_protocol.get(e["conn"]) != self.protocol:
             return False
-        if self.hide_fast and not e["write"] and f"{e['conn']}/{e['tag']}" in self._fast:
+        if fast and self.hide_fast and not e["write"] and f"{e['conn']}/{e['tag']}" in self._fast:
             return False
         if not self.words:
             return True
@@ -233,6 +259,8 @@ class ProtocolMonitorView(View):
             quality, q_style = e.get("user") or _("write"), app.color("accent")
         else:
             quality = e["q"] if e["q"] != "good" else ""
+            if quality and e.get("why"):
+                quality = f"{quality}: {e['why']}"
             q_style = app.color("error") if e["q"] not in ("good", "") else muted
         vals = (hms(e["ts"]), "→" if e["write"] else "←", e["conn"], e["tag"], info.get("description") or "",
                 str(value), quality)
@@ -254,10 +282,15 @@ class ProtocolMonitorView(View):
         self._fast_at = time.time()
 
     def rebuild(self) -> None:
-        """Re-apply the protocol and the filter to the app's buffer (newest MAX_ROWS matches)."""
+        """Re-apply the protocol and the filter to the app's buffer (newest MAX_ROWS matches); with ``e`` on, load
+        the bad tags instead (:meth:`load_bad`)."""
         self.words = self.query_one("#pm-filter", Input).value.lower().split()
+        if self.show_bad:
+            self.load_bad()
+            return
         if self.hide_fast:
             self._recount_fast()
+            self._update_state()     # the badge says how many are hidden
         items: list[dict[str, Any]] = []
         for e in reversed(self.scada.point_log):
             if self._match(e):
@@ -268,6 +301,29 @@ class ProtocolMonitorView(View):
         log = self.query_one("#pm-log", LineLog)
         log.set_items(items)
         self._count()
+
+    @work(exclusive=True, group="protomon-bad")
+    async def load_bad(self) -> None:
+        """``e``: one line per tag of this protocol whose value is not good now, with its reason, from the server's
+        tag list (the log only shows changes, so a tag that has been bad since start-up appears there once at most).
+        The filter words apply as in the log."""
+        if not self.scada.client.connected:
+            return
+        items: list[dict[str, Any]] = []
+        for s in self.connections():
+            conn = s["name"]
+            for p in await self.scada.request("points", conn=conn, limit=5000) or []:
+                self.tags[f"{conn}/{p['name']}"] = p
+                if p.get("q") in ("good", "", None):
+                    continue
+                e = {"ts": p.get("ts") or time.time(), "conn": conn, "tag": p["name"], "value": p.get("value"),
+                     "q": p.get("q"), "why": p.get("why") or "", "write": False}
+                if self._match(e, fast=False):
+                    items.append(e)
+        if not self.show_bad:
+            return                                       # switched back while the list was loading
+        self.query_one("#pm-log", LineLog).set_items(items)
+        self.query_one("#pm-box").border_subtitle = _("{n} bad tags now (e: back to the log)").format(n=len(items))
 
     def _count(self) -> None:
         """The number of lines in the log, on the bottom border of the log box."""
@@ -280,7 +336,7 @@ class ProtocolMonitorView(View):
         Called also while the view is hidden, so it must stay cheap: hidden or paused, nothing is done (the view
         is rebuilt from the buffer when shown or resumed). LineLog batches the repaints itself.
         """
-        if self.paused or not self.display or not self.protocol:
+        if self.paused or self.show_bad or not self.display or not self.protocol:
             return
         if self.hide_fast and time.time() - self._fast_at > self.FAST_RECOUNT_S:
             # A tag that just became fast is hidden from now on; lines already shown stay until the next rebuild.
@@ -294,6 +350,10 @@ class ProtocolMonitorView(View):
 
     def _update_state(self) -> None:
         """The LIVE / PAUSED badge next to the filter field."""
+        if self.show_bad:
+            state = Text(" ⚠ " + _("BAD TAGS") + " ", style="reverse bold")
+            self.query_one("#pm-state", Static).update(state)
+            return
         state = Text(" ⏸ " + _("PAUSED") + " " if self.paused else " ● " + _("LIVE") + " ", style="reverse bold")
         if self.hide_fast:
             state.append("  " + _("{n} fast tags hidden (f)").format(n=len(self._fast)), style="dim")
@@ -325,6 +385,12 @@ class ProtocolMonitorView(View):
         self.hide_fast = not self.hide_fast
         self.rebuild()
         self._update_state()
+
+    def action_bad(self) -> None:
+        """e: list the tags that are not good now (troubleshooting), or go back to the live log."""
+        self.show_bad = not self.show_bad
+        self._update_state()
+        self.rebuild()
 
     def action_clear(self) -> None:
         """c: empty the log on screen. The app's buffer is kept, so the lines return when the view is rebuilt."""

@@ -232,6 +232,7 @@ def test_status_flags_carry_quality(tmp_path, cov):
             await until(lambda: list(bac.local["T"].statusFlags) == [0, 1, 0, 0], 5)
             await until(lambda: v["cli/T"]["q"] == "bad", 5)
             assert v["cli/T"]["v"] == 1.0
+            assert hub.drivers["cli"].why["T"] == "fault"           # the reason the monitor shows (e)
             await asyncio.sleep(0.5)
             assert v["raw/T"]["q"] == "good"                 # status_flags: false
             hub.update("src", "t", 2.0)
