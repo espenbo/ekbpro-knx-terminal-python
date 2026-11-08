@@ -296,6 +296,7 @@ Etasjene får navn som "<label>: <etasje>", og adressetreet (F3) har én toppnod
 | Nøkkel | Standard | Beskrivelse |
 |---|---|---|
 | `socket` | `var/knxscada.sock` | Unix-socket mellom server og visualisering |
+| `access` | – (alle med tilgang til socketen kan gjøre alt) | Hvem som kan lese, betjene og konfigurere – se [Drift og SSH](05-operation-and-ssh.md#tilgangsnivåer-serveraccess) |
 | `database` | `var/knxscada.db` | SQLite med telegrammer, hendelser og alarmer. Demomodus bruker `var/knxscada-demo.db`. |
 | `retention_days` | `90` | Hvor lenge telegrammer og hendelser tas vare på. Gamle data slettes hver time. Alarmer beholdes. |
 | `read_on_start` | `status` | Lese verdier fra bussen når serveren starter: `status` (bare tilbakemeldings-, føler- og alarmadresser), `false` (send ingen telegrammer; de siste verdiene fra databasen vises, merket som gamle) eller `all` (se advarselen under). `true` betyr `status`, og `off`, `no`, `0` betyr `false`. Alle andre verdier tolkes som `status`. Verdier fra databasen sendes aldri videre til gatewayer. |

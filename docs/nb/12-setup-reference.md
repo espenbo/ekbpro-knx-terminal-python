@@ -367,6 +367,7 @@ høyst én per prosjekt), `project` (et `project.files[].name`, standard det fø
 | `read_on_start` | tekst/bool | `status` | `status` (også `true`), `false` (også `off`, `no`, `0`), `all`. Alt annet = `status`. |
 | `read_interval_ms` | int | `80` | |
 | `protocols` | sti | `protocols.yaml` | bruk `var/protocols.yaml` – systemd-tjenesten får bare skrive i `var/` |
+| `access` | tabell | – (alle med tilgang til socketen: alt) | `read`, `operate`, `configure` → lister over kontoer, `@gruppe` eller `*`; høyeste nivå som passer vinner, en konto som ikke står noe sted, avvises |
 
 ### `alarms[]`
 

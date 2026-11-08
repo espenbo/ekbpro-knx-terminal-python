@@ -162,7 +162,12 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           feilsvar, BACnet `fault`/`out-of-service`, `points` → `why`). Raske tagger (PLS-klokker som `Act_Time`)
           er skjult fra start (`f` viser dem). Markøren i tilkoblingstabellen vises bare med fokus, så det røde
           tallet ikke skjules. Verdikolonnen 24 tegn (dato og tid). Dok 03 en+nb.
-   2. [ ] Tilgangsstyring på socketen.
+   2. [x] Tilgangsstyring på socketen: `knxscada/access.py`, `server.access` med nivåene read / operate / configure
+          (kontonavn, `@gruppe`, `*`; høyeste nivå vinner; ikke oppført = avvist og logget). Uten nøkkelen: alle
+          med socket-tilgang kan alt (som før). Serverens konto og root har alltid alt. Hver kommando sjekkes
+          (`COMMAND_LEVEL`); klienten får `PermissionError` ved avvisning, TUI viser nivået i toppfeltet. Ugyldig
+          `server.access` = bare serverkontoen og root. Tester `test_access.py`, dok 04/05/08/12 en+nb.
+          Anleggene har ikke `server.access` ennå (brukeren bestemmer nivåene).
    3. [ ] OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet.
    4. [ ] Overvåking av interne oppgaver (watchdog).
    5. [ ] Versjonerte releaser med tilbakeføring.

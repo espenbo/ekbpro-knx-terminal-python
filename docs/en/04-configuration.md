@@ -294,6 +294,7 @@ Floors are named "<label>: <floor>", and the address tree (F3) has one top node 
 | Key | Default | Description |
 |---|---|---|
 | `socket` | `var/knxscada.sock` | Unix socket between server and visualisation |
+| `access` | – (everyone with access to the socket may do everything) | Who may read, operate and configure – see [Operation and SSH](05-operation-and-ssh.md#access-levels-serveraccess) |
 | `database` | `var/knxscada.db` | SQLite with telegrams, events and alarms. Demo mode uses `var/knxscada-demo.db`. |
 | `retention_days` | `90` | How long telegrams and events are kept. Old data is deleted every hour. Alarms are kept. |
 | `read_on_start` | `status` | Read values from the bus when the server starts: `status` (feedback, sensor and alarm addresses only), `false` (send no telegrams; the last values from the database are shown, marked as old) or `all` (see the warning below). `true` means `status`, and `off`, `no`, `0` mean `false`. Any other value is taken as `status`. Values from the database are never passed on to gateways. |

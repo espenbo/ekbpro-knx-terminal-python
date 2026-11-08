@@ -365,6 +365,7 @@ at most one per project), `project` (a `project.files[].name`, default the first
 | `read_on_start` | text/bool | `status` | `status` (also `true`), `false` (also `off`, `no`, `0`), `all`. Anything else = `status`. |
 | `read_interval_ms` | int | `80` | |
 | `protocols` | path | `protocols.yaml` | use `var/protocols.yaml` – the systemd service may only write in `var/` |
+| `access` | mapping | – (everyone with socket access: everything) | `read`, `operate`, `configure` → lists of accounts, `@group` or `*`; the highest matching level wins, an account listed nowhere is refused |
 
 ### `alarms[]`
 

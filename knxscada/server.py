@@ -26,7 +26,8 @@ outgoing telegram and drops copies of a telegram seen through more than one.
 In ``--demo`` mode a :class:`Simulator` produces telegrams instead of xknx,
 so the whole system can be tried without a KNX installation.
 
-Protocol: newline-delimited JSON, documented in ``docs/en/08-architecture.md``.
+Protocol: newline-delimited JSON, documented in ``docs/en/08-architecture.md``. Who may send which command is
+decided per Linux account by :mod:`knxscada.access` (``server.access``: read, operate, configure).
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ except ImportError:          # the KNX module is not installed: only the protoco
     # ScadaServer refuses a configuration with KNX when the module is missing (see __init__).
     pass
 
+from . import access as accesslib
 from . import dpt as dptlib
 from .alarms import Rule, build_rules, normalize_severity, point_rule
 from .config import Config
@@ -178,6 +180,8 @@ class ScadaServer:
         self._alarm_delay: dict[str, asyncio.TimerHandle] = {}       # alarms waiting for their delay_s
         self.state: dict[str, dict] = {}  # GA → {"value", "text", "raw", "ts", "src"}
         self.clients: set[asyncio.StreamWriter] = set()
+        #: ``server.access`` (who may read, operate, configure – see knxscada/access.py); {} = everyone may do all.
+        self.access = accesslib.effective(cfg.server.get("access"))
         self.alarms: dict[int, dict] = {}  # open alarms (active or unacknowledged) by id
         for a in self.store.open_alarms():
             a["severity"] = normalize_severity(a["severity"])  # old databases used Norwegian names
@@ -239,6 +243,8 @@ class ScadaServer:
         os.chmod(sock, 0o660)
         log.info(_("Listening on %s"), sock)
         self.event("info", "system", _("Server started ({mode})").format(mode="demo" if self.demo else "KNX"))
+        for problem in accesslib.validate(self.cfg.server.get("access")):
+            self.event("error", "system", problem)
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -688,9 +694,22 @@ class ScadaServer:
             "knx": self.knx_enabled,
             "protocols": self.hub.status(),
         }
+        uid, peer = _peer(writer)
+        level = accesslib.level_of(self.access, uid, peer)
+        if level is None:
+            # Listed nowhere in server.access: the socket's group let the account connect, the site's list does not.
+            # Nothing is sent but the refusal, and it is logged, so an administrator sees who tried.
+            self.event("error", "user", _("Connection refused: {user} is not in server.access").format(
+                user=peer or "?"), peer or "?")
+            writer.write((json.dumps({"type": "refused", "error": _("{user} has no access to this server").format(
+                user=peer or "?")}) + "\n").encode())
+            with contextlib.suppress(Exception):
+                await writer.drain()
+                writer.close()
+            return
+        hello["access"] = level
         writer.write((json.dumps(hello, ensure_ascii=False, default=str) + "\n").encode())
         self.clients.add(writer)
-        peer = _peer_user(writer)
         user = peer or "?"
         try:
             while line := await reader.readline():
@@ -703,6 +722,7 @@ class ScadaServer:
                 user = _audit_user(peer, req.get("user"))
                 rid = req.get("id")
                 try:
+                    accesslib.check(level, req.get("cmd"), user)
                     data = await self._command(req, user)
                     reply = {"type": "reply", "id": rid, "ok": True, "data": data}
                 except Exception as exc:  # noqa: BLE001 - report every error to the client
@@ -788,20 +808,24 @@ def _bounded(value: Any, upper: int) -> int:
     return max(1, min(int(float(value)), upper))
 
 
-def _peer_user(writer: asyncio.StreamWriter) -> str | None:
-    """The account of the process at the other end of the Unix socket (from the kernel, not the client)."""
+def _peer(writer: asyncio.StreamWriter) -> tuple[int | None, str | None]:
+    """The uid and account name of the process at the other end of the Unix socket (from the kernel, not the client).
+
+    The uid is None when the kernel cannot tell (not Linux). The name is None for the server's own account (e.g.
+    inside Docker), where the client's own name is all the audit log has (:func:`_audit_user`).
+    """
     sock = writer.get_extra_info("socket")
     try:
         creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
         _pid, uid, _gid = struct.unpack("3i", creds)
     except (AttributeError, OSError):  # not Linux, or not a Unix socket
-        return None
+        return None, None
     if uid == os.getuid():
-        return None  # the server's own account (e.g. inside Docker): the client's name is all we have
+        return uid, None
     try:
-        return pwd.getpwuid(uid).pw_name
+        return uid, pwd.getpwuid(uid).pw_name
     except KeyError:
-        return f"uid{uid}"
+        return uid, f"uid{uid}"
 
 
 def _audit_user(peer: str | None, claimed: Any) -> str:

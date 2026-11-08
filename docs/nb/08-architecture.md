@@ -24,6 +24,7 @@ knxscada/
   setup_wizard.py ./scada setup: spørsmålene, søk etter KNX/BACnet/Modbus/OPC UA, config.yaml
   service.py      ./scada service: systemd-enheten fra deploy/knxscada.service
   client.py       asynkron klient for socketen
+  access.py       tilgangsnivåer per Linux-konto på socketen (server.access: read, operate, configure)
   plan.py         plan.yaml og DXF-eksport
   export.py       eksport fra busmonitoren: ETS gruppemonitor-XML (cEMI-rammer), CSV, JSON-linjer
   plc.py          PLS-kobling (plc_map.yaml), IEC-typer, verdikonvertering, CODESYS GVL, tagnavn,

@@ -45,6 +45,7 @@ from textual.widgets import ContentSwitcher, Tree
 
 from .. import PRODUCT
 from .. import dpt as dptlib
+from ..access import LEVEL_NAMES
 from ..client import ScadaClient
 from ..config import Config
 from ..i18n import N_, _, get_language
@@ -177,6 +178,8 @@ class ScadaApp(App):
         self.protocol_status: list[dict] = []             # one line per connection, from the hub
         self.conn_protocol: dict[str, str] = {}           # connection → protocol
         self.demo = False
+        #: Our access level on the server (server.access: read, operate, configure), from "hello".
+        self.access = "configure"
         self._watchers: dict[str, set] = {}  # GA → widgets that want on_state()
         self._known_alarms: set[int] = set()
         self.client = ScadaClient(cfg.socket_path, self._on_server_message)
@@ -383,6 +386,13 @@ class ScadaApp(App):
                 self.server_ok = True
                 self._load_history()
                 return
+            except PermissionError as exc:
+                # The server runs but refuses this account (server.access): say so, and try again now and then –
+                # an administrator may add the account meanwhile.
+                self.server_ok = False
+                self.status = {"connected": False, "connection": str(exc)}
+                self._update_topbar()
+                await asyncio.sleep(30)
             except (FileNotFoundError, ConnectionRefusedError, OSError):
                 self.server_ok = False
                 self.status = {"connected": False, "connection": N_("no server")}
@@ -477,6 +487,9 @@ class ScadaApp(App):
             self.status = msg["status"]
             self.stats = msg.get("stats", {})
             self.demo = msg.get("demo", False)
+            # Our access level (server.access): shown in the top bar when it is not "configure"; the server checks
+            # every command itself, this is only so the operator knows why a write is refused.
+            self.access = str(msg.get("access") or "configure")
             self._set_alarms(msg["alarms"], initial=True)
             for ga in list(self._watchers):
                 self._notify_watchers(ga)
@@ -988,6 +1001,9 @@ class ScadaApp(App):
             blink = int(time.time()) % 2 == 0
             t.append(f"   ⚠ {unacked} " + _("ALARM") + " ", style="bold white on red" if blink else "bold red")
         t.append(f"   {self.client.user}", style="dim")
+        level = self.access
+        if level != "configure":
+            t.append(" (" + _(LEVEL_NAMES.get(level, level)) + ")", style="bold")
         now = time.localtime()
         t.append(f"   {_(DAYS[now.tm_wday])[:3]} {time.strftime('%d.%m.%Y %H:%M:%S', now)} ", style="bold")
         bar.set(t)

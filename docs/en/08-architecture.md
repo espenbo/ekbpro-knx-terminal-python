@@ -22,6 +22,7 @@ knxscada/
   setup_wizard.py ./scada setup: the questions, KNX/BACnet/Modbus/OPC UA searches, config.yaml
   service.py      ./scada service: the systemd unit from deploy/knxscada.service
   client.py       asynchronous client for the socket
+  access.py       access levels per Linux account on the socket (server.access: read, operate, configure)
   plan.py         plan.yaml and DXF export
   export.py       bus monitor export: ETS group monitor XML (cEMI frames), CSV, JSON lines
   plc.py          PLC mapping (plc_map.yaml), IEC types, value conversion, CODESYS GVL, tag names,

@@ -127,7 +127,8 @@ hjemmemappa til eieren har `chmod o+x` eller gruppetilgang.
 
 ## Tilgang og sikkerhet
 
-- **Alle som kan koble seg til socketen, kan betjene anlegget.** Socketen har rettighetene `660` (eier
+- **Alle som kan koble seg til socketen, kan betjene anlegget** hvis ikke `server.access` sier noe annet (se
+  under). Socketen har rettighetene `660` (eier
   og gruppe). Gi bare brukere du stoler på medlemskap i gruppen. Bedre: installer programmet under en egen
   konto (f.eks. i `/opt`), så gruppen gir tilgang til socketen, men ikke skrivetilgang til programfilene.
 - All betjening logges i hendelsesloggen (F6) med Linux-kontoen – hentet fra kjernen, ikke fra
@@ -139,6 +140,31 @@ hjemmemappa til eieren har `chmod o+x` eller gruppetilgang.
 - Bruk SSH-nøkler, ikke passord, og vurder `AllowUsers` i `sshd_config`.
 - Serveren åpner ingen nettverksporter. Den lytter bare på den lokale Unix-socketen.
 - Hold KNX-nettet atskilt fra internett. Bruk KNX Secure der det går.
+
+## Tilgangsnivåer (`server.access`)
+
+Socketen slipper inn eieren og gruppen. Innenfor det gir `server.access` i `config.yaml` hver Linux-konto et nivå:
+
+| Nivå | Kan |
+|---|---|
+| `read` | se alt: verdier, telegrammer, trender, alarmer, hendelsesloggen, tagglistene |
+| `operate` | også skrive verdier (KNX og protokolltagger), sende KNX-leseforespørsler, kvittere alarmer |
+| `configure` | også endre `protocols.yaml` i F11 og laste den inn på nytt |
+
+```yaml
+server:
+  access:
+    configure: [caesar]          # kontonavn …
+    operate: ["@tomteveien30"]   # … @gruppe (primær eller ekstra Unix-gruppe) …
+    read: ["*"]                  # … eller * (alle kontoer som kan åpne socketen)
+```
+
+En konto får det høyeste nivået som nevner den. En konto som ikke står noe sted, avvises når den kobler til (TUI-en
+viser «har ikke tilgang», hendelsesloggen «Tilkobling avvist»). Serverens egen konto og root har alltid alle nivåer.
+Uten `server.access` kan alle som kan åpne socketen gjøre alt, som før – en oppdatering stenger ingen ute. Kontoen
+hentes fra kjernen, ikke fra klienten. Et nivå under `configure` vises i toppfeltet ved brukeren; en avvist kommando
+gir en melding som «kari har ikke lov til dette (tilgang: les, krever: operatør)». Endringer gjelder når serveren
+startes på nytt; en feil i `server.access` logges og slipper da ingen inn utenom serverens egen konto og root.
 
 ## Sikkerhetskopi
 

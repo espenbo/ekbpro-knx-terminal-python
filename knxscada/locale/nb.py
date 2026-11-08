@@ -1130,4 +1130,17 @@ CATALOGUE: dict[str, str] = {
     "Bad tags": "Dårlige tagger",
     "{n} bad tags now (e: back to the log)": "{n} dårlige tagger nå (e: tilbake til loggen)",
     "BAD TAGS": "DÅRLIGE TAGGER",
+    "operate": "operatør",
+    "configure": "konfigurasjon",
+    "server.access must be a mapping of levels (read, operate, configure) to lists of accounts":
+        "server.access må være nivåer (read, operate, configure) med lister over kontoer",
+    "{user} may not do this (access: {level}, needed: {need})":
+        "{user} har ikke lov til dette (tilgang: {level}, krever: {need})",
+    "server.access: unknown level {level} (read, operate, configure)":
+        "server.access: ukjent nivå {level} (read, operate, configure)",
+    "server.access.{level}: write a list of accounts, @groups or *":
+        "server.access.{level}: skriv en liste over kontoer, @grupper eller *",
+    "no access": "ingen tilgang",
+    "Connection refused: {user} is not in server.access": "Tilkobling avvist: {user} står ikke i server.access",
+    "{user} has no access to this server": "{user} har ikke tilgang til denne serveren",
 }

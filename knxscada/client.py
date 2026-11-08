@@ -94,6 +94,15 @@ class ScadaClient:
         try:
             while line := await self._reader.readline():
                 msg = json.loads(line)
+                if msg.get("type") == "refused":
+                    # server.access does not list our account: the server closes the socket after this line. The
+                    # waiting "hello" fails with PermissionError, so the TUI shows why instead of "no server".
+                    err = PermissionError(str(msg.get("error") or _("no access")))
+                    for fut in self._pending.values():
+                        if not fut.done():
+                            fut.set_exception(err)
+                    self._pending.clear()
+                    continue
                 if msg.get("type") == "reply":
                     fut = self._pending.pop(msg.get("id"), None)
                     if fut and not fut.done():

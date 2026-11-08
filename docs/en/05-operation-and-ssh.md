@@ -125,7 +125,8 @@ owner's home directory has `chmod o+x` or group access.
 
 ## Access and security
 
-- **Anyone who can connect to the socket can operate the installation.** The socket has permissions `660` (owner
+- **Anyone who can connect to the socket can operate the installation** unless `server.access` says otherwise (see
+  below). The socket has permissions `660` (owner
   and group). Only give trusted users membership of the group. Better: install the program under its own
   account (e.g. in `/opt`), so the group gives access to the socket but not write access to the program files.
 - Every operation is logged in the event log (F6) with the Linux account – taken from the kernel, not from
@@ -137,6 +138,33 @@ owner's home directory has `chmod o+x` or group access.
 - Use SSH keys, not passwords, and consider `AllowUsers` in `sshd_config`.
 - The server opens no network ports. It only listens on the local Unix socket.
 - Keep the KNX network separate from the internet. Use KNX Secure where possible.
+
+## Access levels (`server.access`)
+
+The socket lets the owner and the group in. Within that, `server.access` in `config.yaml` gives each Linux account
+a level:
+
+| Level | May |
+|---|---|
+| `read` | look at everything: values, telegrams, trends, alarms, the event log, the tag lists |
+| `operate` | also write values (KNX and protocol tags), send KNX read requests, acknowledge alarms |
+| `configure` | also change `protocols.yaml` in F11 and load it again |
+
+```yaml
+server:
+  access:
+    configure: [caesar]          # account names …
+    operate: ["@tomteveien30"]   # … @group (primary or supplementary Unix group) …
+    read: ["*"]                  # … or * (every account that can open the socket)
+```
+
+An account gets the highest level that lists it. An account listed nowhere is refused when it connects (the TUI
+shows "has no access", the event log "Connection refused"). The server's own account and root always have every
+level. Without `server.access` everyone who can open the socket may do everything, as before – an update locks no
+one out. The account is taken from the kernel, not from the client. A level below `configure` is shown in the top
+bar next to the user; a refused command gives a message such as "kari may not do this (access: read, needed:
+operate)". Changes take effect when the server is restarted; a mistake in `server.access` is logged and then lets
+no one in but the server's own account and root.
 
 ## Backup
 
