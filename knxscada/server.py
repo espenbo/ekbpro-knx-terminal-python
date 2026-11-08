@@ -72,6 +72,7 @@ from .knx_interfaces import (
 )
 from .project import SETPOINT_RE, ga_key, load_project, split_key
 from .store import Store
+from .watchdog import Watchdog, sd_notify, supervised
 
 log = logging.getLogger("knxscada.server")
 
@@ -182,6 +183,8 @@ class ScadaServer:
         self.clients: set[asyncio.StreamWriter] = set()
         #: ``server.access`` (who may read, operate, configure – see knxscada/access.py); {} = everyone may do all.
         self.access = accesslib.effective(cfg.server.get("access"))
+        #: Heartbeats of the loops that must always run, event-loop lag and the systemd ping (knxscada/watchdog.py).
+        self.watchdog = Watchdog(self._task_event)
         self.alarms: dict[int, dict] = {}  # open alarms (active or unacknowledged) by id
         for a in self.store.open_alarms():
             a["severity"] = normalize_severity(a["severity"])  # old databases used Norwegian names
@@ -251,18 +254,32 @@ class ScadaServer:
             with contextlib.suppress(NotImplementedError):  # not available on Windows
                 loop.add_signal_handler(sig, self._on_signal)
 
-        tasks = [asyncio.create_task(self._housekeeping())]
-        tasks += [asyncio.create_task(b.run()) for b in self.plcs]
+        # Every background task runs supervised (knxscada/watchdog.py): an unexpected error is reported and the task
+        # started again, instead of the task vanishing without a trace. The start-up read is only reported, never
+        # repeated – it sends read requests to the bus.
+        stopping = self._stop.is_set
+        report = self._task_event
+        self.watchdog.watch("housekeeping", 30)
+        tasks = [asyncio.create_task(supervised("housekeeping", self._housekeeping, report, forever=True,
+                                                stopping=stopping))]
+        tasks += [asyncio.create_task(supervised(f"PLC bridge {b.name}", b.run, report, forever=True,
+                                                 stopping=stopping)) for b in self.plcs]
         if self.demo and self.knx_enabled:
             self.sim = Simulator(self)
-            tasks.append(asyncio.create_task(self.sim.run()))
+            tasks.append(asyncio.create_task(supervised("simulator", self.sim.run, report, stopping=stopping)))
             self._set_status(True, N_("demo"))
         elif self.ifaces:
-            tasks += [asyncio.create_task(self._knx_connect(c)) for c in self.ifaces]
-            tasks.append(asyncio.create_task(self._read_on_start()))
+            tasks += [asyncio.create_task(supervised(f"KNX {c['name']}", partial(self._knx_connect, c), report,
+                                                     stopping=stopping)) for c in self.ifaces]
+            tasks.append(asyncio.create_task(supervised("KNX start-up read", self._read_on_start, report,
+                                                        retry=False)))
         await self.hub.start()
+        tasks.append(asyncio.create_task(self.watchdog.run()))
+        # systemd (Type=notify): the server is up – sockets, KNX, protocols started. Outside systemd: nothing.
+        sd_notify("READY=1")
 
         await self._stop.wait()
+        sd_notify("STOPPING=1")
         log.info(_("Stopping …"))
         server.close()
         # Since Python 3.12, Server.wait_closed() waits until every client has
@@ -300,6 +317,7 @@ class ScadaServer:
         last_purge = 0.0
         while True:
             await asyncio.sleep(1)
+            self.watchdog.beat("housekeeping")   # before the commit: a failing commit is reported by supervised()
             self.store.commit()
             self._broadcast({"type": "stats", "stats": self.stats()})
             if time.time() - last_purge > 3600:
@@ -311,6 +329,10 @@ class ScadaServer:
         cutoff = time.time() - float(self.cfg.server.get("retention_days", 90)) * 86400
         while self.store.purge_batch(cutoff, PURGE_BATCH) >= PURGE_BATCH:
             await asyncio.sleep(0.05)  # let telegrams and clients through between batches
+
+    def _task_event(self, level: str, text: str) -> None:
+        """Report of the watchdog and of supervised tasks: an event of kind "system" (F6)."""
+        self.event(level, "system", text)
 
     def stats(self) -> dict[str, Any]:
         """Telegram count, telegrams in the last minute and number of connected clients."""

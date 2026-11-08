@@ -173,7 +173,13 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           anonyme klienter bare lesing (`anonymous_write: true` for skriving), med `username` bare den brukeren,
           aldri administrator. Server på nettet med anonym tilgang eller uten `security` meldes i hendelsesloggen
           ved hver start (`exposure`). Ingen anlegg har OPC UA-server. Test `test_opcua_server_access`, dok 11/12.
-   4. [ ] Overvåking av interne oppgaver (watchdog).
+   4. [x] Overvåking av interne oppgaver: `knxscada/watchdog.py`. `supervised()` rundt husholdningen (commit),
+          hubens flush-løkke, hver tilkobling, PLS-broene og KNX: uventet feil → hendelseslogg + ny start med
+          back-off; oppstartslesingen av KNX gjentas aldri. `Driver.run` fanger nå også BaseException (bacpypes3).
+          `Watchdog`: hjerteslag (husholdning, flush-løkke), forsinkelse i hendelsesløkken, `sd_notify`
+          (READY/WATCHDOG/STOPPING). `deploy/*.service`: `Type=notify`, `WatchdogSec=60`, `TimeoutStartSec=300`.
+          Anleggenes enheter er fortsatt `Type=simple` (virker, men uten systemd-vakthund) til brukeren installerer
+          dem på nytt. Tester `test_watchdog.py`, dok 05/08 en+nb.
    5. [ ] Versjonerte releaser med tilbakeføring.
    6. [ ] Beskyttet `main` med krav om grønn CI (brukeren gjør det i GitHub).
 

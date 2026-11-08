@@ -1154,4 +1154,11 @@ CATALOGUE: dict[str, str] = {
     "the password goes in clear text": "passordet går i klartekst",
     "{connection}: OPC UA server on {endpoint} is open on the network: {what}":
         "{connection}: OPC UA-serveren på {endpoint} er åpen på nettet: {what}",
+    "{task} stopped without an error – started again": "{task} stoppet uten feil – startet igjen",
+    "The server was blocked for {s:.1f} s (nothing was handled meanwhile)":
+        "Serveren sto fast i {s:.1f} s (ingenting ble behandlet i mellomtiden)",
+    "{task} failed: {error} – started again in {delay} s": "{task} feilet: {error} – startes igjen om {delay} s",
+    "{task} failed: {error}": "{task} feilet: {error}",
+    "{task} has not run for {s} s": "{task} har ikke kjørt på {s} s",
+    "{task} runs again": "{task} kjører igjen",
 }

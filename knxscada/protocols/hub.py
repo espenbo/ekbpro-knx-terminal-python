@@ -29,6 +29,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..i18n import _
+from ..watchdog import supervised
 from . import PROTOCOLS, driver_class, installed
 from .base import Driver, coerce, same_value
 from .config import load_data, protocols_path, save, settings_of, validate
@@ -120,7 +121,11 @@ class Hub:
                 self._make(str(name), conn)
         self._build_engine()
         self.started = True
-        self._flusher = asyncio.create_task(self._flush_loop())
+        dog = getattr(self.server, "watchdog", None)
+        if dog is not None:
+            dog.watch("protocol flush loop", 30)
+        self._flusher = asyncio.create_task(supervised("protocol flush loop", self._flush_loop, self._task_event,
+                                                       forever=True))
         if self.drivers or self.failed:
             self.event("info", _("Protocols: {n} connections, {links} gateway links").format(
                 n=len(self.drivers), links=len(self.engine.links)))
@@ -141,7 +146,12 @@ class Hub:
     def _add(self, drv: Driver) -> None:
         """Register *drv* and run it (:meth:`Driver.run` reconnects on its own) as a named task."""
         self.drivers[drv.name] = drv
-        self.tasks[drv.name] = asyncio.create_task(drv.run(), name=f"protocol:{drv.name}")
+        # Supervised: Driver.run reconnects by itself; should it still end with an unexpected error, it is reported and
+        # started again – unless the connection is being stopped (removed, changed, server shutdown).
+        self.tasks[drv.name] = asyncio.create_task(
+            supervised(_("connection {name}").format(name=drv.name), drv.run, self._task_event, forever=True,
+                       stopping=lambda: drv._stop),
+            name=f"protocol:{drv.name}")
 
     def _build_engine(self) -> None:
         """Replace the gateway engine with one built from the current ``gateways:`` list.
@@ -416,6 +426,9 @@ class Hub:
         """
         while True:
             await asyncio.sleep(FLUSH_S)
+            dog = getattr(self.server, "watchdog", None)
+            if dog is not None:
+                dog.beat("protocol flush loop")
             if self._log_wait:
                 self.flush_log()
             # The counters change with every read, also when no value changes; the clients get them with the status
@@ -429,6 +442,10 @@ class Hub:
             if self.server.clients:
                 self.server._broadcast({"type": "points", "values": {
                     k: [r["v"], r["ts"], r["q"]] for k, r in dirty.items() if not k.startswith("knx/")}})
+
+    def _task_event(self, level: str, text: str) -> None:
+        """Report of a supervised task (knxscada/watchdog.py) into the event log."""
+        self.event(level, text)
 
     def _broadcast_status(self) -> None:
         """Send the connection list (:meth:`status`) to every client after a connect, disconnect or reload."""

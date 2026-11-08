@@ -12,7 +12,13 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# notify: the server says when it is up (READY=1) and pings every 5 s while its loops run (WATCHDOG=1). When the
+# event loop hangs or a loop stops, the pings stop and systemd restarts the server after WatchdogSec – a restart
+# sends nothing to KNX or devices. Loading a large ETS project can take a while, hence TimeoutStartSec.
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
+TimeoutStartSec=300
 User=YOUR_USER
 Group=YOUR_USER
 WorkingDirectory=INSTALL_DIR

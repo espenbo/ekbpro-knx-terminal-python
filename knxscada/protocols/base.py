@@ -339,9 +339,11 @@ class Driver:
             try:
                 await self.session()
                 delay = 2.0
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit, GeneratorExit):
                 raise
-            except Exception as exc:  # noqa: BLE001 - report every problem and retry
+            # BaseException: bacpypes3 raises its error, reject and abort answers as BaseException subclasses, and one
+            # of them escaping a session must reconnect like any other error, not end this loop.
+            except BaseException as exc:  # noqa: BLE001 - report every problem and retry
                 text = str(exc) or type(exc).__name__
                 if self.connected or text != self.error:
                     self.hub.event("error", _("{connection}: {error}. Retrying in {delay} s").format(

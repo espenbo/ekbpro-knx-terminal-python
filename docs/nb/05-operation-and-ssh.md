@@ -31,6 +31,15 @@ bruk: brukeren din, gruppen til anleggsmappa, `-c <config.yaml>` for et anlegg o
 databasen. Uten root skrives enheten til `var/systemd/<navn>.service`, og `sudo`-kommandoene skrives ut (install,
 `daemon-reload`, `enable`, `restart`), så ingenting endres før du kjører dem. `--name` gir et annet tjenestenavn.
 
+**Vakthund.** Alle bakgrunnsoppgavene i serveren (husholdningen med databasecommit, protokolltilkoblingene,
+PLS-broene, KNX-tilkoblingen) kjører under oppsyn: stopper en med en uventet feil, skrives feilen i hendelsesloggen
+(F6, «… feilet: … – startes igjen om N s»), og oppgaven starter igjen. En løkke som slutter å slå («housekeeping har
+ikke kjørt på 45 s») og en hendelsesløkke som har stått fast («Serveren sto fast i 3,2 s»), meldes også. Enheten er
+`Type=notify` med `WatchdogSec=60`: serveren sier fra til systemd når den er oppe og pinger hvert 5. sekund mens
+løkkene går; henger den, stopper pingene, og systemd starter den på nytt. En omstart sender ingenting til KNX eller
+utstyr. En enhet installert før 2026-11-09 (`Type=simple`) virker fortsatt, men uten systemd-vakthunden; installer den
+på nytt med `./scada service install` for å få den.
+
 For hånd:
 
 [`deploy/knxscada.service`](../../deploy/knxscada.service) inneholder plassholderne `YOUR_USER` og `INSTALL_DIR`.

@@ -29,6 +29,15 @@ use: your user, the site folder's group, `-c <config.yaml>` for a site and `Read
 database. Without root it writes the unit to `var/systemd/<name>.service` and prints the `sudo` commands (install,
 `daemon-reload`, `enable`, `restart`), so nothing changes before you run them. `--name` sets another service name.
 
+**Watchdog.** Every background task of the server (housekeeping with the database commit, the protocol connections,
+the PLC bridges, the KNX connection) runs supervised: when one ends with an unexpected error, the error is written
+to the event log (F6, "… failed: … – started again in N s") and the task starts again. A loop that stops beating
+("housekeeping has not run for 45 s") and an event loop that was blocked ("The server was blocked for 3.2 s") are
+reported too. The unit is `Type=notify` with `WatchdogSec=60`: the server tells systemd when it is up and pings it
+every 5 s while its loops run; when it hangs, the pings stop and systemd restarts it. A restart sends nothing to KNX
+or devices. A unit installed before 2026-11-09 (`Type=simple`) keeps working without the systemd watchdog; install
+it again with `./scada service install` to get it.
+
 By hand:
 
 [`deploy/knxscada.service`](../../deploy/knxscada.service) contains the placeholders `YOUR_USER` and `INSTALL_DIR`.
