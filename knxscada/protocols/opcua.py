@@ -20,9 +20,20 @@ becomes a variable; dots or slashes in its name make folders::
 
 The node id is the tag name, so it does not change when the server restarts.
 Targets mapped with ``direction: both`` are writable; what a client writes goes
-back to the source. Anonymous access unless ``username``/``password`` are set;
-with a ``security`` policy the server makes its own certificate
+back to the source. With a ``security`` policy the server makes its own certificate
 (``var/opcua/server_cert.der``) on first start.
+
+Access (the defaults are the safe ones):
+
+* ``endpoint`` defaults to ``opc.tcp://127.0.0.1:4840`` – only this machine. Listening on the network
+  (``0.0.0.0`` or an address) is a choice written in the configuration.
+* Without ``username``/``password`` clients log in anonymously and may **read** only; writing the
+  ``direction: both`` variables (which goes on to KNX or a PLC) needs a user, or ``anonymous_write: true``.
+* With ``username`` set, only that user can log in (no anonymous sessions); it may read and write.
+* Nobody gets administrator rights (adding or deleting nodes) – asyncua would give them to anyone logging in
+  as "admin".
+* An endpoint reachable from the network without ``security``, or with anonymous access, is reported in the event
+  log at every start, so an open server does not go unnoticed (``security: None`` sends the password in clear).
 """
 
 from __future__ import annotations
@@ -53,24 +64,77 @@ DEFAULTS = {"Boolean": False, "Int64": 0, "Double": 0.0, "String": ""}
 #: no value yet: a SCADA must not take the default 0 or a value from before a failure as a valid measurement.
 QUALITY_STATUS = {"bad": "BadNoCommunication", "old": "UncertainLastUsableValue", "none": "BadWaitingForInitialData"}
 
+#: Endpoint of our server when the connection has none: this machine only (a SCADA on another machine needs the
+#: endpoint written out, e.g. opc.tcp://0.0.0.0:4840 – a deliberate choice, see the module docstring).
+DEFAULT_SERVER_ENDPOINT = "opc.tcp://127.0.0.1:4840"
+
 #: Application URI of our server; it must match the URI in the self-signed certificate (see :func:`server_certificate`).
 SERVER_APP_URI = "urn:ekbpro:knx-terminal-python:gateway"
 
 
 class _Users:
-    """One user name and password (asyncua user manager)."""
+    """Who may log in to our server (asyncua user manager): the one configured user, or anonymous clients.
+
+    Replaces asyncua's default (``PermissiveUserManager``), which lets everyone in as a user who may write, and as an
+    administrator under the name "admin". Nobody gets the administrator role here.
+    """
 
     def __init__(self, username: str, password: str) -> None:
-        """The one account (``username``/``password`` from the connection) that may log in."""
+        """The one account (``username``/``password`` from the connection); "" = anonymous clients only."""
         self.username, self.password = username, password
 
     def get_user(self, iserver, username=None, password=None, certificate=None):
-        """asyncua: a session logs in. A normal user for the right name and password, else None (refused)."""
+        """asyncua: a session logs in. The configured user for the right name and password; an anonymous session
+        (no name) when no user is configured – read-only unless ``anonymous_write`` (:class:`_Rules`); else None
+        (refused)."""
         from asyncua.crypto.permission_rules import User, UserRole
 
-        if username == self.username and password == self.password:
-            return User(role=UserRole.User)
+        if self.username:
+            if username == self.username and password == self.password:
+                return User(role=UserRole.User, name=username)
+            return None
+        if not username:
+            return User(role=UserRole.Anonymous)
         return None
+
+
+def _rules(anonymous_write: bool):
+    """The permission ruleset of our server: users may read and write, anonymous sessions may do the same minus
+    Write and Call unless *anonymous_write*, administrators (never given) nothing more. asyncua checks it for every
+    request, with every security policy."""
+    from asyncua import ua
+    from asyncua.crypto.permission_rules import USER_TYPES, PermissionRuleset, UserRole
+
+    user = {ua.NodeId(t) for t in USER_TYPES}
+    writes = {ua.NodeId(ua.ObjectIds.WriteRequest_Encoding_DefaultBinary),
+              ua.NodeId(ua.ObjectIds.CallRequest_Encoding_DefaultBinary)}
+    allowed = {UserRole.Admin: user, UserRole.User: user,
+               UserRole.Anonymous: user if anonymous_write else user - writes}
+
+    class Rules(PermissionRuleset):
+        """Users read and write; anonymous clients read (and write only with ``anonymous_write``)."""
+
+        def check_validity(self, user_, action_type_id, body):
+            """asyncua: may *user_* send a request of type *action_type_id*?"""
+            return action_type_id in allowed.get(getattr(user_, "role", None), set())
+
+    return Rules()
+
+
+def exposure(settings: dict[str, Any]) -> list[str]:
+    """What is open about our server with these *settings*, for the warning at start: anonymous access, writing
+    without a user, no encryption – only when the endpoint is reachable from other machines. [] = nothing to say."""
+    endpoint = str(settings.get("endpoint") or DEFAULT_SERVER_ENDPOINT)
+    host = endpoint.split("://", 1)[-1].rsplit(":", 1)[0].strip("[]")
+    if host in ("127.0.0.1", "localhost", "::1") or host.startswith("127."):
+        return []
+    out = []
+    if not settings.get("username"):
+        out.append(_("anonymous clients can read") + (" " + _("and write") if settings.get("anonymous_write") else ""))
+    if str(settings.get("security") or "None").lower() == "none":
+        out.append(_("unencrypted") + (" – " + _("the password goes in clear text") if settings.get("username")
+                                       else ""))
+    return out
 
 
 class _Handler:
@@ -259,9 +323,13 @@ class Driver(BaseDriver):
 
         s = self.settings
         user = str(s.get("username") or "")
-        server = Server(user_manager=_Users(user, str(s.get("password") or "")) if user else None)
+        # Always our own user manager and rules: asyncua's defaults let anyone write, and "admin" administer.
+        server = Server(user_manager=_Users(user, str(s.get("password") or "")))
         await server.init()
-        server.set_endpoint(str(s.get("endpoint") or "opc.tcp://0.0.0.0:4840"))
+        rules = _rules(bool(s.get("anonymous_write")))   # given with the security policy (asyncua's API)
+        server.allow_remote_admin(False)
+        endpoint = str(s.get("endpoint") or DEFAULT_SERVER_ENDPOINT)
+        server.set_endpoint(endpoint)
         server.set_server_name(f"EKBPRO gateway {self.name}")
         await server.set_application_uri(SERVER_APP_URI)
         security = str(s.get("security") or "None")
@@ -273,9 +341,10 @@ class Driver(BaseDriver):
             await server_certificate(cert, key)
             await server.load_certificate(str(cert))
             await server.load_private_key(str(key))
-            server.set_security_policy([getattr(ua.SecurityPolicyType, f"{policy}_{mode or 'SignAndEncrypt'}")])
+            server.set_security_policy([getattr(ua.SecurityPolicyType, f"{policy}_{mode or 'SignAndEncrypt'}")],
+                                       permission_ruleset=rules)
         else:
-            server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
+            server.set_security_policy([ua.SecurityPolicyType.NoSecurity], permission_ruleset=rules)
         server.set_identity_tokens([ua.UserNameIdentityToken] if user else [ua.AnonymousIdentityToken])
         self.idx = await server.register_namespace(str(s.get("namespace") or "urn:ekbpro:gateway"))
         self.folders[""] = await server.nodes.objects.add_folder(ua.NodeId("Gateway", self.idx),
@@ -285,6 +354,11 @@ class Driver(BaseDriver):
         for tag in list(self.tags.values()):
             await self._add_variable(tag)
         await server.start()
+        open_ = exposure(s)
+        if open_:
+            # At every start: an OPC UA server open on the network must be a decision someone sees, not a default.
+            self.hub.event("error", _("{connection}: OPC UA server on {endpoint} is open on the network: {what}").format(
+                connection=self.name, endpoint=endpoint, what=", ".join(open_)))
         self.set_state(True)
         await self.wait_stopped()
 

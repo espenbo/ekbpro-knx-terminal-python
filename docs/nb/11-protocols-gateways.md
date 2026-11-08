@@ -279,8 +279,9 @@ gateways:
 |---|---|---|
 | `role` | `client` | `client` mot en PLS/server, eller `server` for SCADA-systemer |
 | `endpoint` | `opc.tcp://127.0.0.1:4840` | Server: skriv `opc.tcp://0.0.0.0:4840` for å lytte på alle adresser – uten den kan serveren bare nås fra denne maskinen |
-| `username`, `password` | | Tomt = anonym |
-| `security` | `None` | Som for [PLS-broen](10-plc-opcua.md) |
+| `username`, `password` | | Klient: tomt = anonym. Server: den ene brukeren som kan logge inn (lese og skrive); tomt = anonyme klienter, som bare kan lese |
+| `security` | `None` | Som for [PLS-broen](10-plc-opcua.md). `None` = ukryptert: et passord går i klartekst |
+| `anonymous_write` | `false` | Server: anonyme klienter kan også skrive `direction: both`-variablene |
 | `namespace` | `urn:ekbpro:gateway` | Bare server |
 | `publish_interval_ms` | `500` | Bare klient |
 | `timeout_s` | `10` | Bare klient |
@@ -291,6 +292,24 @@ Klienttagger angir en node-id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`);
 Som server blir hvert gateway-mål en variabel, og punktum eller skråstrek i navnet lager mapper:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. Node-id-en er navnet, så den blir
 den samme når serveren starter på nytt. Mål med `direction: both` er skrivbare.
+
+**Tilgang til serveren vår – standardene er de trygge.** Utelatt er `endpoint` `opc.tcp://127.0.0.1:4840`: bare
+denne maskinen. Uten `username` logger klientene inn anonymt og kan bare **lese**; en skriving (som går videre til KNX
+eller en PLS) avvises med `BadUserAccessDenied` hvis ikke `anonymous_write: true`. Med `username`/`password` kan bare
+den brukeren logge inn, og den kan lese og skrive. Ingen får administratorrettigheter (legge til eller slette noder).
+En server som kan nås fra nettet (`0.0.0.0` eller en adresse) med anonym tilgang eller uten `security`, meldes i
+hendelsesloggen ved hver start («åpen på nettet: anonyme klienter kan lese, ukryptert»). For et SCADA-system på en
+annen maskin:
+
+```yaml
+  scada:
+    protocol: opcua
+    role: server
+    endpoint: opc.tcp://0.0.0.0:4840
+    username: scada
+    password: "…"
+    security: Basic256Sha256,SignAndEncrypt   # sertifikatet vårt lages ved første start: stol på det i SCADA-systemet
+```
 
 Variablene har **kvaliteten** til kilden sin, så et SCADA-system (Ignition …) aldri tar en gammel verdi for en
 gjeldende: en variabel uten verdi ennå er `BadWaitingForInitialData` (ikke 0 som Good); når kilden melder dårlig

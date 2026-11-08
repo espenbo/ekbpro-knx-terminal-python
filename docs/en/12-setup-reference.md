@@ -516,6 +516,10 @@ connections:
     role: server
     endpoint: opc.tcp://0.0.0.0:4841  # left out = only this machine (127.0.0.1)
     namespace: urn:ekbpro:gateway
+    username: scada                   # empty = anonymous clients, read only
+    password: "…"
+    security: Basic256Sha256,SignAndEncrypt   # None = unencrypted (reported at start when on the network)
+    anonymous_write: false            # true = anonymous clients may also write
 
   ahu1:
     protocol: bacnet

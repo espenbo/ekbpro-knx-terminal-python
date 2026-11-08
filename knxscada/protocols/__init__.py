@@ -217,7 +217,10 @@ PROTOCOLS: dict[str, Protocol] = {p.name: p for p in (
                   help=N_("Server: opc.tcp://0.0.0.0:4840 listens on every address")),
             Field("username", N_("User name"), "str", "", help=N_("Empty = anonymous")),
             Field("password", N_("Password"), "password", ""),
-            Field("security", N_("Security"), "choice", "None", ("None", *_OPCUA_SECURE)),
+            Field("security", N_("Security"), "choice", "None", ("None", *_OPCUA_SECURE),
+                  help=N_("None = unencrypted (a password goes in clear text); use a policy for a server on the network")),
+            Field("anonymous_write", N_("Anonymous clients may write"), "bool", False, show={"role": ("server",)},
+                  help=N_("Without a user name clients may only read; writing goes on to KNX or a PLC")),
             Field("namespace", N_("Namespace URI"), "str", "urn:ekbpro:gateway", show={"role": ("server",)}),
             Field("publish_interval_ms", N_("Publish interval (ms)"), "int", 500, show={"role": ("client",)}),
             # Same default as the PLC bridge (opcua_bridge.make_client), which the client driver uses.

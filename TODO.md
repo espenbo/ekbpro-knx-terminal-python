@@ -168,7 +168,11 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           (`COMMAND_LEVEL`); klienten får `PermissionError` ved avvisning, TUI viser nivået i toppfeltet. Ugyldig
           `server.access` = bare serverkontoen og root. Tester `test_access.py`, dok 04/05/08/12 en+nb.
           Anleggene har ikke `server.access` ennå (brukeren bestemmer nivåene).
-   3. [ ] OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet.
+   3. [x] OPC UA-serverens standard: endepunkt uten verdi = 127.0.0.1 (koden falt tilbake til 0.0.0.0). Egen
+          brukerbehandler og regelsett alltid (asyncuas standard lot alle skrive og «admin» administrere):
+          anonyme klienter bare lesing (`anonymous_write: true` for skriving), med `username` bare den brukeren,
+          aldri administrator. Server på nettet med anonym tilgang eller uten `security` meldes i hendelsesloggen
+          ved hver start (`exposure`). Ingen anlegg har OPC UA-server. Test `test_opcua_server_access`, dok 11/12.
    4. [ ] Overvåking av interne oppgaver (watchdog).
    5. [ ] Versjonerte releaser med tilbakeføring.
    6. [ ] Beskyttet `main` med krav om grønn CI (brukeren gjør det i GitHub).

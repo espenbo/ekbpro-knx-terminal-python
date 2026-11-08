@@ -278,8 +278,9 @@ gateways:
 |---|---|---|
 | `role` | `client` | `client` of a PLC/server, or `server` for SCADA systems |
 | `endpoint` | `opc.tcp://127.0.0.1:4840` | Server: write `opc.tcp://0.0.0.0:4840` to listen on every address – left out, the server is only reachable from this machine |
-| `username`, `password` | | Empty = anonymous |
-| `security` | `None` | As for the [PLC bridge](10-plc-opcua.md) |
+| `username`, `password` | | Client: empty = anonymous. Server: the one user that may log in (read and write); empty = anonymous clients, which may only read |
+| `security` | `None` | As for the [PLC bridge](10-plc-opcua.md). `None` = unencrypted: a password goes in clear text |
+| `anonymous_write` | `false` | Server: anonymous clients may also write the `direction: both` variables |
 | `namespace` | `urn:ekbpro:gateway` | Server only |
 | `publish_interval_ms` | `500` | Client only |
 | `timeout_s` | `10` | Client only |
@@ -290,6 +291,23 @@ Client tags name a node id (`node: "ns=4;s=|var|PLC.Application.GVL.rTemp"`); `.
 As a server, every gateway target becomes a variable, and dots or slashes in the name make folders:
 `Building.Room101.Temperature` → `Objects/Gateway/Building/Room101/Temperature`. The node id is the name, so it stays
 the same when the server restarts. Targets with `direction: both` are writable.
+
+**Access to our server – the defaults are the safe ones.** Left out, `endpoint` is `opc.tcp://127.0.0.1:4840`: only
+this machine. Without `username` clients log in anonymously and may **read** only; a write (which goes on to KNX or
+a PLC) is refused with `BadUserAccessDenied` unless `anonymous_write: true`. With `username`/`password` only that user
+logs in, and it may read and write. Nobody gets administrator rights (adding or deleting nodes). A server reachable
+from the network (`0.0.0.0` or an address) with anonymous access or without `security` is reported in the event log
+at every start ("open on the network: anonymous clients can read, unencrypted"). For a SCADA on another machine:
+
+```yaml
+  scada:
+    protocol: opcua
+    role: server
+    endpoint: opc.tcp://0.0.0.0:4840
+    username: scada
+    password: "…"
+    security: Basic256Sha256,SignAndEncrypt   # our certificate is made on first start: trust it in the SCADA
+```
 
 The variables carry the **quality** of their source, so a SCADA (Ignition …) never takes an old value for a current
 one: a variable without a value yet is `BadWaitingForInitialData` (not 0 as Good); when the source reports a bad

@@ -725,7 +725,8 @@ def test_modbus_slave_and_master_through_gateways(tmp_path):
 
 
 def test_opcua_server_and_client_through_gateways(tmp_path):
-    """mem → our OPC UA server → OPC UA client connection → mem; and a client write back to the source."""
+    """mem → our OPC UA server → OPC UA client connection → mem; and a client write back to the source (as the
+    configured user: anonymous clients may only read)."""
     pytest.importorskip("asyncua")
     port = free_port()
 
@@ -735,8 +736,10 @@ def test_opcua_server_and_client_through_gateways(tmp_path):
         sink = Mem("sink", {}, None)
         data = {
             "connections": {
-                "ua": {"protocol": "opcua", "role": "server", "endpoint": f"opc.tcp://127.0.0.1:{port}"},
+                "ua": {"protocol": "opcua", "role": "server", "endpoint": f"opc.tcp://127.0.0.1:{port}",
+                       "username": "scada", "password": "pw"},
                 "cli": {"protocol": "opcua", "endpoint": f"opc.tcp://127.0.0.1:{port}", "publish_interval_ms": 100,
+                        "username": "scada", "password": "pw",
                         "tags": {"T": {"node": "ns=2;s=Bygg.Rom1.Temp"}, "On": {"node": "ns=2;s=Bygg.Rom1.On"}}},
             },
             "gateways": [
@@ -767,6 +770,89 @@ def test_opcua_server_and_client_through_gateways(tmp_path):
             assert hub.drivers["ua"].tags["Bygg.Rom1.On"].writable
             await hub.write("cli", "On", True)
             await until(lambda: ("on", True) in src.writes, 10)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_opcua_server_access(tmp_path):
+    """Our OPC UA server: anonymous clients read but may not write (BadUserAccessDenied) unless anonymous_write;
+    with a user configured, anonymous sessions and a wrong password are refused, and "admin" gets no rights; an
+    endpoint on the network without user or security is reported at start."""
+    pytest.importorskip("asyncua")
+    from asyncua import Client, ua
+
+    from knxscada.protocols.opcua import exposure
+
+    assert exposure({"endpoint": "opc.tcp://127.0.0.1:4840"}) == []
+    assert exposure({}) == []                                                   # the default is this machine only
+    assert exposure({"endpoint": "opc.tcp://0.0.0.0:4840"}) == ["anonymous clients can read", "unencrypted"]
+    assert "the password goes in clear text" in exposure({"endpoint": "opc.tcp://0.0.0.0:4840", "username": "u"})[0]
+    assert exposure({"endpoint": "opc.tcp://0.0.0.0:4840", "username": "u",
+                     "security": "Basic256Sha256,SignAndEncrypt"}) == []
+
+    async def serve(settings):
+        """A hub with our server and one writable variable On (direction both) from a memory source."""
+        src = Mem("src", {"tags": {"on": {"type": "bool"}}}, None, server=False)
+        hub = Hub(FakeServer(tmp_path))
+        hub.data = {"connections": {"ua": {"protocol": "opcua", "role": "server", **settings}},
+                    "gateways": [{"name": "g", "from": "src", "to": "ua",
+                                  "map": [{"from": "on", "to": "On", "direction": "both"}]}]}
+        hub.load = lambda: None
+        src.hub = hub
+        hub._add(src)
+        await asyncio.sleep(0.05)
+        await hub.start()
+        await until(lambda: hub.drivers["ua"].connected, 10)
+        hub.update("src", "on", False)
+        await asyncio.sleep(0.2)
+        return hub, src
+
+    async def run():
+        """Anonymous read-only, anonymous_write, and a server with a user."""
+        port = free_port()
+        url = f"opc.tcp://127.0.0.1:{port}"
+        hub, src = await serve({"endpoint": url})
+        try:
+            async with Client(url) as c:
+                node = c.get_node("ns=2;s=On")
+                assert await node.read_value() is False                          # reading is fine
+                with pytest.raises(ua.uaerrors.BadUserAccessDenied):
+                    await node.write_value(ua.DataValue(ua.Variant(True, ua.VariantType.Boolean)))
+            await asyncio.sleep(0.2)
+            assert ("on", True) not in src.writes
+        finally:
+            await hub.stop()
+
+        port = free_port()
+        url = f"opc.tcp://127.0.0.1:{port}"
+        hub, src = await serve({"endpoint": url, "anonymous_write": True})
+        try:
+            async with Client(url) as c:
+                await c.get_node("ns=2;s=On").write_value(ua.DataValue(ua.Variant(True, ua.VariantType.Boolean)))
+            await until(lambda: ("on", True) in src.writes, 5)
+        finally:
+            await hub.stop()
+
+        port = free_port()
+        url = f"opc.tcp://127.0.0.1:{port}"
+        hub, src = await serve({"endpoint": url, "username": "scada", "password": "pw"})
+        try:
+            for user, password in ((None, None), ("scada", "wrong"), ("admin", "x")):
+                c = Client(url)
+                if user:
+                    c.set_user(user)
+                    c.set_password(password)
+                with pytest.raises(Exception):  # noqa: B017 - asyncua raises different errors per refusal
+                    async with c:
+                        pass
+            c = Client(url)
+            c.set_user("scada")
+            c.set_password("pw")
+            async with c:
+                await c.get_node("ns=2;s=On").write_value(ua.DataValue(ua.Variant(True, ua.VariantType.Boolean)))
+            await until(lambda: ("on", True) in src.writes, 5)
         finally:
             await hub.stop()
 

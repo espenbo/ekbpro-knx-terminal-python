@@ -1143,4 +1143,15 @@ CATALOGUE: dict[str, str] = {
     "no access": "ingen tilgang",
     "Connection refused: {user} is not in server.access": "Tilkobling avvist: {user} står ikke i server.access",
     "{user} has no access to this server": "{user} har ikke tilgang til denne serveren",
+    "Anonymous clients may write": "Anonyme klienter kan skrive",
+    "None = unencrypted (a password goes in clear text); use a policy for a server on the network":
+        "None = ukryptert (et passord går i klartekst); bruk en sikkerhetspolicy for en server på nettet",
+    "Without a user name clients may only read; writing goes on to KNX or a PLC":
+        "Uten brukernavn kan klientene bare lese; skriving går videre til KNX eller en PLS",
+    "anonymous clients can read": "anonyme klienter kan lese",
+    "unencrypted": "ukryptert",
+    "and write": "og skrive",
+    "the password goes in clear text": "passordet går i klartekst",
+    "{connection}: OPC UA server on {endpoint} is open on the network: {what}":
+        "{connection}: OPC UA-serveren på {endpoint} er åpen på nettet: {what}",
 }

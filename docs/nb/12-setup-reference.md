@@ -518,6 +518,10 @@ connections:
     role: server
     endpoint: opc.tcp://0.0.0.0:4841  # utelatt = bare denne maskinen (127.0.0.1)
     namespace: urn:ekbpro:gateway
+    username: scada                   # tomt = anonyme klienter, bare lesing
+    password: "…"
+    security: Basic256Sha256,SignAndEncrypt   # None = ukryptert (meldes ved start når den er på nettet)
+    anonymous_write: false            # true = anonyme klienter kan også skrive
 
   aggregat1:
     protocol: bacnet
