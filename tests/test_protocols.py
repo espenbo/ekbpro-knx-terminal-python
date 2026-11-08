@@ -18,7 +18,12 @@ from knxscada.protocols.config import save
 from knxscada.protocols.gateway import convert, convert_back
 from knxscada.protocols.hub import Hub
 from knxscada.protocols.modbus import from_registers, parse_address, to_registers
-from knxscada.protocols.mqtt import make_payload, parse_payload, topic_matches
+from knxscada.protocols.mqtt import (
+    make_payload,
+    parse_payload,
+    parse_quality,
+    topic_matches,
+)
 
 
 # -- helpers -----------------------------------------------------------------------------------------
@@ -344,6 +349,17 @@ def test_registers_word_order():
 def test_parse_payload(payload, key, expected):
     """MQTT payloads: numbers and true/false are parsed, JSON objects by key or 'value', other text kept."""
     assert parse_payload(payload, key) == expected
+
+
+def test_mqtt_payload_quality():
+    """JSON payloads carry the quality when one is given and are read back with it; plain text and JSON without the
+    key are good, uncertain/stale are old, unknown words are ignored (good)."""
+    assert '"quality": "bad"' in make_payload(1, "json", "bad")
+    assert "quality" not in make_payload(1, "json")
+    assert parse_quality(make_payload(1, "json", "bad")) == "bad"
+    assert parse_quality('{"value": 1, "quality": "Uncertain"}') == "old"
+    assert parse_quality('{"value": 1, "quality": "whatever"}') == "good"
+    assert parse_quality(b"21.5") == "good" and parse_quality('{"value": 1}') == "good"
 
 
 def test_make_payload():

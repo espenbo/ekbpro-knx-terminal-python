@@ -130,6 +130,27 @@ def from_bacnet(value: Any) -> Any:
     return str(value)
 
 
+#: Bits of the BACnet ``status-flags`` property (in this order on the wire).
+STATUS_BITS = ("in-alarm", "fault", "overridden", "out-of-service")
+#: Bits that make a value untrustworthy: *fault* (reliability is not no-fault-detected: a broken sensor, a KNX value
+#: the gateway never received) and *out-of-service* (the present value is decoupled from the process – set by hand or
+#: simply not in use). *in-alarm* and *overridden* (a hand switch at the device) describe a real value: still good.
+BAD_STATUS_BITS = (1, 3)
+#: Reliability shown by our own objects (server) whose source is not trustworthy (``Driver.set_quality``).
+RELIABILITY = {"bad": "unreliable-other", "old": "communication-failure", "none": "unreliable-other"}
+
+
+def flags_quality(flags: Any) -> str:
+    """The quality of a value whose object reports *flags* (a ``status-flags`` value or a list of 0/1): ``"bad"``
+    for fault or out-of-service, else ``"good"``. Flags that cannot be read count as good: the device simply does
+    not tell, and the value itself was read without error."""
+    try:
+        bits = [int(b) for b in flags]
+    except (TypeError, ValueError):
+        return "good"
+    return "bad" if any(i < len(bits) and bits[i] for i in BAD_STATUS_BITS) else "good"
+
+
 def priority_values(array: Any, object_type: str) -> list[Any]:
     """A ``priority-array`` (16 ``PriorityValue`` choices) as plain values, None for an empty slot (Null).
 
@@ -240,6 +261,14 @@ class Driver(BaseDriver):
         self.local: dict[str, Any] = {}   # tag name → our local object (server)
         self._tasks: list[asyncio.Task] = []
         self._numbers: dict[str, str] = {}   # server: target name → "av:3", kept in var/bacnet/<name>.json
+        #: Client: tags whose object answered status-flags with an error (one by one reads): not asked again this
+        #: session, so a device without the property does not cost a failed request every poll.
+        self._no_flags: set[str] = set()
+        #: Client with COV: tag name → [last raw present value, quality from the last status-flags]. A notification
+        #: carries both properties, but bacpypes3 hands them over one at a time, in either order.
+        self._cov_state: dict[str, list[Any]] = {}
+        #: Server: tag name → quality last shown by our object ("good" when its flags are clear).
+        self._shown: dict[str, str] = {}
 
     # -- tags -------------------------------------------------------------------------------------
     def make_tag(self, name: str, spec: dict[str, Any]) -> Tag:
@@ -295,6 +324,14 @@ class Driver(BaseDriver):
     def _prop(self, tag: Tag) -> str:
         """The BACnet property the tag reads and writes (``present-value`` unless ``property`` says otherwise)."""
         return str(tag.extra.get("property") or "present-value")
+
+    def _flagged(self, tag: Tag) -> bool:
+        """Whether the client reads the object's ``status-flags`` with the present value of *tag*: the tag's own
+        ``status_flags``, else the connection's (default on). Only for the present value – another property (a
+        tag reading ``state-text`` or ``status-flags`` itself) has no quality of its own."""
+        own = tag.extra.get("status_flags")
+        on = own if own not in (None, "") else self.settings.get("status_flags", True)
+        return bool(on) and self._prop(tag) == "present-value" and tag.name not in self._no_flags
 
     # -- connection -------------------------------------------------------------------------------
     def normalise(self, tag: Tag, value: Any) -> Any:
@@ -358,6 +395,7 @@ class Driver(BaseDriver):
             with contextlib.suppress(Exception):
                 app.close()
         self.local.clear()
+        self._shown.clear()
 
     # -- client -----------------------------------------------------------------------------------
     async def _client_session(self) -> None:
@@ -384,6 +422,8 @@ class Driver(BaseDriver):
             raise ValueError(_("{connection}: set address or device_id").format(connection=self.name))
         self.identity = await self._identify(device_id)
         self.rpm = True
+        self._no_flags.clear()      # a device updated meanwhile may have the property now
+        self._cov_state.clear()
         self.set_state(True)
         if s.get("cov"):
             self._tasks = [asyncio.create_task(self._cov(tag)) for tag in self.tags.values()
@@ -428,6 +468,10 @@ class Driver(BaseDriver):
         """
         tags = [t for t in self.tags.values() if t.name in self.objects]
         size = max(1, int(self.settings.get("max_per_request") or 20))
+        if any(self._flagged(t) for t in tags):
+            # Two properties per object: half as many objects, so a request and its answer stay as large as before
+            # (an MS/TP device behind a router takes at most 480 bytes, and an answer too big would end RPM).
+            size = max(1, size // 2)
         for i in range(0, len(tags), size):
             chunk = tags[i:i + size]
             if self.rpm and len(chunk) > 1:
@@ -442,11 +486,17 @@ class Driver(BaseDriver):
                 await self._read_one(tag)
 
     async def _read_multiple(self, tags: list[Tag]) -> None:
-        """Read *tags* with one ReadPropertyMultiple and publish them; a property answered with an error is "bad"."""
+        """Read *tags* with one ReadPropertyMultiple and publish them; a property answered with an error is "bad".
+
+        With status flags (:meth:`_flagged`) ``status-flags`` is read in the same request, and fault or
+        out-of-service makes the value "bad" (:func:`flags_quality`). An object without the property answers it
+        with an error, which leaves the value good.
+        """
         params: list[Any] = []
         for tag in tags:
             otype, instance = self.objects[tag.name]
-            params += [f"{otype},{instance}", [self._prop(tag)]]
+            props = [self._prop(tag)] + (["status-flags"] if self._flagged(tag) else [])
+            params += [f"{otype},{instance}", props]
         result = await self.app.read_property_multiple(self.target, params)
         from bacpypes3.primitivedata import ErrorType
 
@@ -456,20 +506,35 @@ class Driver(BaseDriver):
             value = by_key.get((otype, instance, self._prop(tag)))
             if value is None or isinstance(value, ErrorType):
                 self._bad(tag)
-            else:
-                self.publish(tag, from_bacnet(value))
+                continue
+            flags = by_key.get((otype, instance, "status-flags")) if self._flagged(tag) else None
+            quality = "good" if flags is None or isinstance(flags, ErrorType) else flags_quality(flags)
+            self.publish(tag, from_bacnet(value), quality)
 
     async def _read_one(self, tag: Tag) -> None:
-        """Read one tag with ReadProperty and publish it (an error answer marks it "bad", no answer reconnects)."""
+        """Read one tag with ReadProperty and publish it (an error answer marks it "bad", no answer reconnects).
+
+        With status flags a second ReadProperty asks for ``status-flags``; an object that answers it with an error
+        is not asked again this session (:attr:`_no_flags`).
+        """
         otype, instance = self.objects[tag.name]
+        obj = f"{otype},{instance}"
         try:
-            value = await self.app.read_property(self.target, f"{otype},{instance}", self._prop(tag))
+            value = await self.app.read_property(self.target, obj, self._prop(tag))
         except _failures() as exc:
             if _no_answer(exc):
                 raise ConnectionError(_("no answer from {where}").format(where=self.target)) from None
             self._bad(tag)   # unknown object or property, …
             return
-        self.publish(tag, from_bacnet(value))
+        quality = "good"
+        if self._flagged(tag):
+            try:
+                quality = flags_quality(await self.app.read_property(self.target, obj, "status-flags"))
+            except _failures() as exc:
+                if _no_answer(exc):
+                    raise ConnectionError(_("no answer from {where}").format(where=self.target)) from None
+                self._no_flags.add(tag.name)
+        self.publish(tag, from_bacnet(value), quality)
 
     def _bad(self, tag: Tag) -> None:
         """Mark *tag* as "bad" but keep its last value for display (bad values are never passed to gateways)."""
@@ -487,8 +552,18 @@ class Driver(BaseDriver):
                                                 False, lifetime) as sub:
                 while not self._stop:
                     prop, value = await sub.get_value()
+                    state = self._cov_state.setdefault(tag.name, [None, "good"])
                     if str(prop) == "present-value":
-                        self.publish(tag, from_bacnet(value))
+                        state[0] = from_bacnet(value)
+                        self.publish(tag, state[0], state[1])
+                    elif str(prop) == "status-flags" and self._flagged(tag):
+                        quality = flags_quality(value)
+                        if quality != state[1]:
+                            state[1] = quality
+                            # The flags changed after the value in this notification (or alone): show the value
+                            # with its new quality now rather than at the next poll.
+                            if state[0] is not None:
+                                self.publish(tag, state[0], quality)
         except asyncio.CancelledError:
             raise
         except _failures() as exc:   # the device does not do COV for it: polled instead
@@ -572,10 +647,19 @@ class Driver(BaseDriver):
                 connection=self.name, object=tag.address, tag=tag.name, error=exc))
             return
         self.local[tag.name] = obj
+        self._shown.pop(tag.name, None)
         rec = self.hub.values.get(f"{self.name}/{tag.name}")
+        written = False
         if rec is not None and rec.get("v") is not None:
             with contextlib.suppress(TypeError, ValueError):
                 self._set_local(tag, tag.to_raw(rec["v"]))
+                written = True
+        # As the OPC UA server: the neutral start value is no measurement, and a value kept from before the restart
+        # is not a current one – a BMS sees fault (reliability) until the gateway writes a new value.
+        if not written:
+            self._show_quality(tag, "none")
+        elif rec.get("q") not in ("good", None):
+            self._show_quality(tag, "old")
 
     def _set_local(self, tag: Tag, raw: Any) -> None:
         """Set the present value of our object for *tag* to *raw* (COV subscribers are notified by bacpypes3).
@@ -593,6 +677,30 @@ class Driver(BaseDriver):
         elif otype.startswith("multi-state") and not 1 <= value <= obj.numberOfStates:
             raise ValueError(_("{value} is not a state 1–{n}").format(value=value, n=obj.numberOfStates))
         obj.presentValue = value
+        self._show_quality(tag, "good")     # a new value from the gateway is trustworthy again
+
+    def _show_quality(self, tag: Tag, quality: str) -> None:
+        """Show *quality* in our object for *tag*: ``"good"`` clears ``reliability`` (no-fault-detected), anything
+        else sets it from :data:`RELIABILITY`, which raises the *fault* bit of ``status-flags`` (bacpypes3 derives the
+        flags from the reliability). COV subscribers are told: bacpypes3 notices a change of the present value by
+        itself, but not of the derived flags, so their monitors are called here."""
+        obj = self.local.get(tag.name)
+        if obj is None or self._shown.get(tag.name) == quality:
+            return
+        before = obj.statusFlags
+        obj.reliability = "no-fault-detected" if quality == "good" else RELIABILITY.get(quality, "unreliable-other")
+        self._shown[tag.name] = quality
+        after = obj.statusFlags
+        if list(before) != list(after):
+            for fn in list(obj._property_monitors["statusFlags"]):
+                fn(before, after)
+
+    async def set_quality(self, tag: Tag, quality: str) -> None:
+        """Server: the source of our object for *tag* turned bad (``"bad"``) or was lost (``"old"``) – keep the
+        present value, but show fault with a reliability (:meth:`_show_quality`), so a BMS does not take it as a
+        current measurement. The next value written makes it good again. Called by the gateway engine."""
+        if self.role == "server":
+            self._show_quality(tag, quality)
 
     async def remote_write(self, tag: Tag, value: Any) -> None:
         """A BMS wrote the present value of one of our objects."""
@@ -694,8 +802,10 @@ def _local_class(otype: str):
             The start value (0, inactive, state 1, "") only lives until :meth:`Driver._add_object` sets the
             last known value; ``cov_increment`` (default 0.1) and ``states`` (default 16) come from the tag.
             """
+            # reliability is set from the start, so a BMS always finds the property (Driver._show_quality changes it).
             kwargs: dict[str, Any] = {"objectIdentifier": (otype, instance), "objectName": tag.name,
-                                      "statusFlags": [0, 0, 0, 0], "outOfService": False}
+                                      "statusFlags": [0, 0, 0, 0], "outOfService": False,
+                                      "reliability": "no-fault-detected"}
             if tag.description:
                 kwargs["description"] = tag.description
             if otype.startswith("analog"):

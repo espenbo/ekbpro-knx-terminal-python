@@ -484,6 +484,7 @@ connections:
     payload: plain                    # plain | json
     qos: '0'                          # 0 | 1 | 2
     retain: true
+    quality: true                     # mål: «quality» i JSON, ellers <topic>/quality
     tags:
       Outdoor: {topic: weather/temp, type: float, json_key: value, unit: °C}
 
@@ -525,6 +526,7 @@ connections:
     poll_ms: 5000
     timeout_s: 3
     cov: true                         # også COV-abonnement
+    status_flags: true                # fault/out-of-service = dårlig kvalitet
     priority: 8                       # tom = enhetens standard (16)
     tags:
       Tilluft: {object: ai:1, unit: °C}
@@ -577,6 +579,7 @@ Tilkoblingsinnstillinger for **Modbus**, **MQTT**, **OPC UA** og **BACnet**: se 
 | `object`, `property` | BACnet | klient: påkrevd, `present-value`; server: neste ledige nummer | `av:3`, `bi:1`, `analog-value,3`; et egenskapsnavn |
 | `priority` | BACnet-klient | tilkoblingens | 1–16 |
 | `states`, `cov_increment` | BACnet-server | `16`, `0.1` | for `msv`/`msi` og analoge objekter |
+| `status_flags` | BACnet-klient | tilkoblingens (`true`) | `true`, `false` |
 | `scale`, `offset` | alle | – | verdi = råverdi × scale + offset |
 | `unit`, `description` | alle | – | |
 | `writable` | alle | `true` (Modbus `ir`/`di` skrivebeskyttet uten `write_address`) | |

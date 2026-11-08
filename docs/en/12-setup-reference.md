@@ -482,6 +482,7 @@ connections:
     payload: plain                    # plain | json
     qos: '0'                          # 0 | 1 | 2
     retain: true
+    quality: true                     # targets: "quality" in JSON, else <topic>/quality
     tags:
       Outdoor: {topic: weather/temp, type: float, json_key: value, unit: °C}
 
@@ -523,6 +524,7 @@ connections:
     poll_ms: 5000
     timeout_s: 3
     cov: true                         # also COV subscriptions
+    status_flags: true                # fault/out-of-service = bad quality
     priority: 8                       # empty = the device's default (16)
     tags:
       Supply air: {object: ai:1, unit: °C}
@@ -575,6 +577,7 @@ Connection settings for **Modbus**, **MQTT**, **OPC UA** and **BACnet**: see the
 | `object`, `property` | BACnet | client: required, `present-value`; server: the next free number | `av:3`, `bi:1`, `analog-value,3`; a property name |
 | `priority` | BACnet client | the connection's | 1–16 |
 | `states`, `cov_increment` | BACnet server | `16`, `0.1` | for `msv`/`msi` and analog objects |
+| `status_flags` | BACnet client | the connection's (`true`) | `true`, `false` |
 | `scale`, `offset` | all | – | value = raw × scale + offset |
 | `unit`, `description` | all | – | |
 | `writable` | all | `true` (Modbus `ir`/`di` read-only unless `write_address`) | |

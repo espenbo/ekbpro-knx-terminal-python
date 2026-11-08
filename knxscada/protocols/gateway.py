@@ -593,8 +593,8 @@ class GatewayEngine:
         """
         dst_conn, dst_tag = (link.b_conn, link.b_tag) if forward else (link.a_conn, link.a_tag)
         drv = self.hub.drivers.get(dst_conn)
-        tag = drv.tags.get(dst_tag) if drv is not None and drv.role == "server" else None
-        if tag is None:
+        tag = drv.tags.get(dst_tag) if drv is not None else None
+        if tag is None or not drv.owns(tag):
             return
         self._set_last(link, not forward, MISSING)
         try:

@@ -184,6 +184,64 @@ def test_client_follows_changes_with_cov(tmp_path):
     asyncio.run(run())
 
 
+def test_flags_quality():
+    """fault and out-of-service make a value bad; in-alarm and overridden describe a real value; unreadable flags
+    (the device does not tell) leave it good."""
+    from knxscada.protocols.bacnet import flags_quality
+
+    assert flags_quality([0, 0, 0, 0]) == "good"
+    assert flags_quality([1, 0, 1, 0]) == "good"
+    assert flags_quality([0, 1, 0, 0]) == "bad"
+    assert flags_quality([0, 0, 0, 1]) == "bad"
+    assert flags_quality(None) == "good"
+
+
+@pytestmark_bacnet
+@pytest.mark.parametrize("cov", [False, True])
+def test_status_flags_carry_quality(tmp_path, cov):
+    """Our device shows fault (reliability) while its source is bad, and the client reads status-flags with the
+    value: mem bad → our object fault → client value bad (and nothing passed on); good again → good. With COV the
+    flags arrive by notification, long before the next poll. ``status_flags: false`` leaves the value good, and a
+    target without any value yet shows fault rather than its neutral 0."""
+    port = free_port()
+
+    async def run():
+        """src → our device → two clients (with and without status flags)."""
+        src = Mem("src", {"tags": {"t": {"type": "float"}, "u": {"type": "float"}}}, None, server=False)
+        data = {"connections": {"bac": _device(port)},
+                "gateways": [{"name": "g", "from": "src", "to": "bac",
+                              "map": [{"from": "t", "to": "T", "object": "av:1"},
+                                      {"from": "u", "to": "U", "object": "av:2"}]}]}
+        hub = _hub(tmp_path, data, (src,))
+        await asyncio.sleep(0.05)
+        await hub.start()
+        try:
+            bac = hub.drivers["bac"]
+            await until(lambda: bac.connected, 10)
+            assert str(bac.local["U"].reliability) == "unreliable-other"   # no value yet: not a measurement
+            hub.update("src", "t", 1.0)
+            await until(lambda: str(bac.local["T"].reliability) == "no-fault-detected", 5)
+            poll = 60000 if cov else 200
+            hub._make("cli", _client(port, {"T": {"object": "av:1"}, "U": {"object": "av:2"}}, poll_ms=poll, cov=cov))
+            hub._make("raw", _client(port, {"T": {"object": "av:1"}}, status_flags=False))
+            v = hub.values
+            await until(lambda: hub.drivers["cli"].ready and hub.drivers["raw"].ready, 10)
+            await until(lambda: v.get("cli/T", {}).get("q") == "good" and v.get("cli/U", {}).get("q") == "bad", 5)
+            # The source turns bad: our object shows fault, the client's value is bad, the value itself is kept.
+            hub.update("src", "t", 1.0, "bad")
+            await until(lambda: list(bac.local["T"].statusFlags) == [0, 1, 0, 0], 5)
+            await until(lambda: v["cli/T"]["q"] == "bad", 5)
+            assert v["cli/T"]["v"] == 1.0
+            await asyncio.sleep(0.5)
+            assert v["raw/T"]["q"] == "good"                 # status_flags: false
+            hub.update("src", "t", 2.0)
+            await until(lambda: v["cli/T"]["q"] == "good" and v["cli/T"]["v"] == 2.0, 5)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
 @pytestmark_bacnet
 def test_instance_numbers_are_kept(tmp_path):
     """The numbers given to gateway targets are saved, kept after a restart and never given to another target."""

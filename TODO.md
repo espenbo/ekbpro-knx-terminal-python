@@ -147,9 +147,21 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
        tellertrinn går tapt (10 000 001 forblir 10 000 001).
 8. [x] `.gitignore`: `protocols.yaml`, `*.bak`, `.*.tmp`, `.claude/settings.json` (og brukerens tillegg: `.env`,
        nøkler, `*.db`, `*.log`).
-9. [ ] Gjenstår fra gjennomgangen (beslutninger/større): BACnet statusFlags og kvalitet i MQTT/Sparkplug-server,
-       tilgangsstyring på socketen, OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet, overvåking av
-       interne oppgaver (watchdog), versjonerte releaser med tilbakeføring, beskyttet `main` med krav om grønn CI.
+9. [ ] Gjenstår fra gjennomgangen – tas ett og ett (brukeren 2026-11-08):
+   1. [x] BACnet statusFlags og kvalitet i MQTT/Sparkplug. BACnet-klient: `status-flags` leses med nåverdien (RPM
+          med halve bolker, enkeltlesing, COV); fault eller out-of-service = «bad» (`status_flags: false` slår av).
+          BACnet-server: `reliability` (og dermed fault) når kilden er dårlig/borte/uten verdi. MQTT: `quality` i
+          JSON eller `<topic>/quality`, og innkommende JSON-`quality` leses. Sparkplug: egenskapen `Quality`
+          (192/0/500) begge veier. Nytt `Driver.owns()`. **Funnet underveis:** et enveis gateway-mål på MQTT ble
+          avvist som skrivebeskyttet (MQTT har ingen `role`) – rettet. Lest på anleggene før endringen (bare
+          lesing): tomteveien30 2 fault + 14 out-of-service, lerkeveien2 12 fault i UBR1; ingen av dem går i en
+          gateway, så endringen gjelder bare visningen. Tester i `test_bacnet.py`, `test_sparkplug.py`,
+          `test_protocols.py`, dok 11/12 en+nb.
+   2. [ ] Tilgangsstyring på socketen.
+   3. [ ] OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet.
+   4. [ ] Overvåking av interne oppgaver (watchdog).
+   5. [ ] Versjonerte releaser med tilbakeføring.
+   6. [ ] Beskyttet `main` med krav om grønn CI (brukeren gjør det i GitHub).
 
 ## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)
 

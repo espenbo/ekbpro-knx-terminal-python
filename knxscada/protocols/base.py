@@ -308,13 +308,21 @@ class Driver:
             return tag
         return next((t for t in self.tags.values() if t.address and t.address == ref), None)
 
+    def owns(self, tag: Tag) -> bool:
+        """Is *tag* a value we serve (a point of our own server, an MQTT topic we publish) rather than a device's?
+
+        The gateway engine shows a bad or lost source only in tags we own (:meth:`set_quality`); a device keeps its
+        own value and quality. MQTT has no roles and overrides this for its gateway targets.
+        """
+        return self.role == "server"
+
     def initial_default(self, tag: Tag) -> bool:
         """Do gateways send initial values to *tag* when the gateway does not say (``initial``)?
 
         Only to our own servers: filling our address space sends nothing to a device. A client
         tag is a device, which keeps its own value until something really changes.
         """
-        return self.role == "server"
+        return self.owns(tag)
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """Add a tag that a gateway writes to. Clients can only use tags they have (ValueError)."""
@@ -408,8 +416,9 @@ class Driver:
         """Show that the value of *tag* (a gateway target of our own server) is not trustworthy now: *quality* is
         ``"bad"`` (its source reports a bad status) or ``"old"`` (its source connection is lost).
 
-        Called by the gateway engine. The next value written (:meth:`write`) makes it good again. Only drivers that
-        can show a quality to their clients override this (OPC UA server); the others keep the last value.
+        Called by the gateway engine for tags we own (:meth:`owns`). The next value written (:meth:`write`) makes it
+        good again. Drivers that can show a quality override this (OPC UA status, BACnet reliability/status-flags,
+        MQTT ``quality``, Sparkplug ``Quality`` property); the others keep the last value.
         """
 
     async def priority_array(self, tag: Tag) -> dict[str, Any]:

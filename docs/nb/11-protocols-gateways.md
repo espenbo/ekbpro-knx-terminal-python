@@ -214,10 +214,19 @@ En ny mal er en YAML-fil i `knxscada/protocols/devices/` – se WAGO-fila og doc
 | `subscribe` | | Topic-filtre (`sensors/#`): hvert topic som kommer inn, blir en tag av seg selv |
 | `payload` | `plain` | `plain`: `21.5` · `json`: `{"value": 21.5, "ts": …}` |
 | `qos`, `retain` | `0`, `true` | |
+| `quality` | `true` | Publiser kvaliteten til gateway-mål (se under) |
 
 Tagger: `topic` (standard er prefiks + tagnavn), `json_key` (plukk verdien ut av et større JSON-objekt) og `set_topic`
 (dit skrivinger går; tomt = taggens eget topic, og `<topic>/set` for tagger funnet via `subscribe`). Et gateway-mål publiseres til prefiks + navn; med `direction: both` lytter gatewayen også
 på `<topic>/set`.
+
+**Kvalitet.** Et gateway-mål der kilden blir dårlig eller forsvinner, publiseres på nytt med siste verdi og
+kvaliteten `bad` eller `old`. Neste gode verdi publiserer `good`. Med `payload: json` er kvaliteten en nøkkel i
+innholdet (`{"value": 21.5, "ts": …, "quality": "good"}`). Ren tekst har ikke plass til den, så der går den på
+`<topic>/quality` (retained, bare når den endrer seg). Ved lesing gir JSON-innhold med `"quality"` (`good`, `bad`,
+`old`, `uncertain`, `stale`) taggen den kvaliteten, så en dårlig verdi ikke sendes videre av gatewayene. Ren tekst
+er god. `<topic>/quality` blir aldri en tagg via `subscribe`. Før 2026-11-08 ble et enveis gateway-mål på en
+MQTT-tilkobling avvist som skrivebeskyttet. Nå skrives det.
 
 ### MQTT Sparkplug B
 
@@ -246,6 +255,11 @@ direkte. Modulen trenger bare `aiomqtt`, som `mqtt`: protobuf-meldingene kodes i
   Verdiene i en fødsel er alltid status, uansett når den kommer (en node som starter etter oss, en ny fødsel mens
   forbindelsen er oppe): de vises og gis til våre egne servere, men sendes aldri til KNX eller utstyr – det gjør bare
   endringer i NDATA/DDATA. Et heltall utenfor Sparkplug-typen (f.eks. -1 til en UInt64) avvises med en feil.
+- **Kvalitet:** metrikkene har Int32-egenskapen `Quality` (192 god, 0 dårlig, 500 foreldet – slik Ignitions
+  MQTT-moduler gjør det) når de ikke er gode. Vår edge node sender en metrikk på nytt med 0 (kilden er dårlig) eller
+  500 (kilden er borte), og med 192 ved neste gode verdi. Fødselen gir kvaliteten til verdier som er tatt vare på
+  fra før. En host-applikasjon leser egenskapen: under 64 er dårlig, 500 og 64–191 er gammel, så gatewayene sender
+  ikke verdien videre.
 
 ```yaml
 connections:
@@ -307,6 +321,7 @@ til én enkelt verdi.
 | `cov` | `false` | Klient: abonner også på endringer i nåverdiene (COV); avlesningen fortsetter som reserve |
 | `cov_lifetime_s` | `300` | Klient: fornyes av seg selv |
 | `max_per_request` | `20` | Klient: egenskaper i én ReadPropertyMultiple (én og én når enheten ikke støtter det) |
+| `status_flags` | `true` | Klient: les `status-flags` sammen med hver nåverdi (også per tagg) |
 | `priority` | enhetens standard (16) | Klient: skriveprioritet 1–16 |
 | `bbmd`, `bbmd_ttl` | –, `300` | Registrer som «foreign device» hos en BBMD (`ip:port`) for å nå et annet subnett |
 
@@ -318,6 +333,16 @@ operatør kan velge en annen prioritet for én skriving, og slippe en prioritet 
 (brukerveiledningen, «Skriving til BACnet»); `point_write` tar `priority` og `release: true` til dette.
 Prioritet 1, 2 og 5 avvises for operatører. `point_priorities` (bare lesing) gir objektets `priority-array` og
 `relinquish-default`, som dialogen viser.
+
+**Kvalitet.** Klienten leser `status-flags` sammen med hver nåverdi (i samme ReadPropertyMultiple, med halvparten
+så mange objekter per forespørsel; med COV fra meldingen). *fault* (enhetens reliability er ikke
+no-fault-detected – en ødelagt føler, en KNX-verdi gatewayen aldri har fått) og *out-of-service* (verdien er satt
+for hånd eller ikke i bruk) gjør verdien dårlig: den vises, men gatewayene sender den ikke videre. *in-alarm* og
+*overridden* (en hånd-bryter) beskriver en ekte verdi og lar den være god. `status_flags: false` på tilkoblingen
+eller en tagg slår dette av. Vår egen enhet viser kvaliteten til kilden på samme måte: et objekt der kilden er
+dårlig eller borte – eller som ikke har fått noen verdi ennå – beholder nåverdien, men melder `reliability`
+(`unreliable-other`, `communication-failure`) og dermed *fault* i `status-flags`, også til COV-abonnenter. Neste
+verdi fjerner det.
 
 `./scada bacnet-scan ADRESSE` finner enheten med en Who-Is sendt til adressen. Mange enheter (Siemens Climatix,
 Belimo) svarer med en kringkastet I-Am som aldri kommer gjennom en VPN; da leser skanningen jokerinstansen

@@ -212,10 +212,19 @@ A new template is a YAML file in `knxscada/protocols/devices/` – see the WAGO 
 | `subscribe` | | Topic filters (`sensors/#`): every topic that arrives becomes a tag by itself |
 | `payload` | `plain` | `plain`: `21.5` · `json`: `{"value": 21.5, "ts": …}` |
 | `qos`, `retain` | `0`, `true` | |
+| `quality` | `true` | Publish the quality of gateway targets (see below) |
 
 Tags: `topic` (default prefix + tag name), `json_key` (pick the value out of a larger JSON object) and `set_topic`
 (where writes go; empty = the tag's own topic, and `<topic>/set` for tags found through `subscribe`). A gateway target is published to prefix + name; with `direction: both` the gateway also listens
 to `<topic>/set`.
+
+**Quality.** A gateway target whose source turns bad or is lost is published again with its last value and the
+quality `bad` or `old`; the next good value publishes `good`. With `payload: json` the quality is a key in the
+payload (`{"value": 21.5, "ts": …, "quality": "good"}`); plain text has no room for it, so it goes on
+`<topic>/quality` (retained, only when it changes). Reading, a JSON payload with `"quality"` (`good`, `bad`, `old`,
+`uncertain`, `stale`) gives the tag that quality, so a bad value is not passed on by gateways; plain payloads are
+good. `<topic>/quality` never becomes a tag through `subscribe`. Before 2026-11-08 a one-way gateway target of an
+MQTT connection was refused as read-only; it is written now.
 
 ### MQTT Sparkplug B
 
@@ -246,6 +255,10 @@ directly. The module needs only `aiomqtt`, like `mqtt`: the protobuf messages ar
   servers, but never sent to KNX or to devices – only NDATA/DDATA changes are. An integer outside its Sparkplug type
   (e.g. -1 for a UInt64) is refused with an error.
   Asking for a rebirth is a standard control command, not a process value.
+- **Quality:** metrics carry the Int32 property `Quality` (192 good, 0 bad, 500 stale – the convention of Ignition's
+  MQTT modules) when they are not good. Our edge node sends a metric again with 0 (source bad) or 500 (source lost)
+  and with 192 at its next good value, and the birth gives the quality of values kept from before. A host
+  application reads the property: below 64 is bad, 500 and 64–191 are old, so gateways do not pass the value on.
 
 ```yaml
 connections:
@@ -307,6 +320,7 @@ to a single value.
 | `cov` | `false` | Client: also subscribe to changes of the present values (COV); polling goes on as a fallback |
 | `cov_lifetime_s` | `300` | Client: renewed by itself |
 | `max_per_request` | `20` | Client: properties in one ReadPropertyMultiple (one by one when the device does not support it) |
+| `status_flags` | `true` | Client: read `status-flags` with every present value (also per tag) |
 | `priority` | device default (16) | Client: write priority 1–16 |
 | `bbmd`, `bbmd_ttl` | –, `300` | Register as a foreign device with a BBMD (`ip:port`) to reach another subnet |
 
@@ -318,6 +332,15 @@ choose another priority for a single write, and release a priority again, in the
 "Writing to BACnet"); `point_write` takes `priority` and `release: true` for this. Priorities 1, 2 and 5 are
 refused for operators. `point_priorities` (read-only) returns the object's `priority-array` and
 `relinquish-default`, which the dialog shows.
+
+**Quality.** The client reads `status-flags` together with each present value (in the same ReadPropertyMultiple,
+with half as many objects per request; with COV from the notification). *fault* (the device's reliability is not
+no-fault-detected – a broken sensor, a KNX value the gateway never received) and *out-of-service* (the value is
+set by hand or not in use) make the value bad: it is shown, but gateways do not pass it on. *in-alarm* and
+*overridden* (a hand switch) describe a real value and leave it good. `status_flags: false` on the connection or a
+tag turns this off. Our own device shows the quality of its source the same way: an object whose source is bad or
+lost – or that has no value yet – keeps its present value but reports `reliability` (`unreliable-other`,
+`communication-failure`) and thus *fault* in `status-flags`, also to COV subscribers; the next value clears it.
 
 `./scada bacnet-scan ADDRESS` finds the device with a Who-Is sent to its address. Many devices (Siemens Climatix,
 Belimo) answer with a broadcast I-Am that never crosses a VPN; the scan then reads the wildcard device instance

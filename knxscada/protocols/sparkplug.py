@@ -25,7 +25,14 @@ Roles
 
 The protobuf messages are encoded and decoded here (:func:`encode_payload`, :func:`decode_payload`) – only the fields
 Sparkplug uses for single values – so the module needs no protobuf package, only ``aiomqtt`` like ``mqtt``.
-Datasets, templates, properties and metadata are skipped when reading.
+Datasets, templates and metadata are skipped when reading; of the properties only ``Quality`` is used.
+
+Quality
+-------
+Metrics carry the Int32 property ``Quality`` (192 good, 0 bad, 500 stale – the Ignition convention) when they are
+not good. Server: a gateway target whose source turns bad or is lost is sent again with 0 or 500, and with 192 at its
+next good value; the birth gives the quality of values kept from before. Client: a metric with Quality below 192 (or
+500) is bad or old, so gateways do not pass it on.
 """
 
 from __future__ import annotations
@@ -94,9 +101,63 @@ def metric_type(value: Any) -> int:
     return STRING
 
 
+#: The metric property that carries a value's quality (Ignition / Cirrus Link convention, Int32).
+QUALITY_PROPERTY = "Quality"
+#: Our quality → the code sent in the ``Quality`` property: 192 good, 0 bad, 500 stale (the value from before the
+#: source was lost). "none" (no value yet) is bad.
+QUALITY_CODES = {"good": 192, "bad": 0, "old": 500, "none": 0}
+
+
+def code_quality(code: Any) -> str:
+    """A received ``Quality`` code → our quality: 500 (stale) and the OPC "uncertain" range 64–191 are ``"old"``,
+    below 64 ``"bad"``, the rest (192 and up) ``"good"``. No code (None) is good: most edge nodes never send one."""
+    if code is None or isinstance(code, bool):
+        return "good"
+    try:
+        n = int(code)
+    except (TypeError, ValueError):
+        return "good"
+    if n == QUALITY_CODES["old"] or 64 <= n < 192:
+        return "old"
+    return "bad" if n < 64 else "good"
+
+
+def encode_quality(code: int) -> bytes:
+    """A ``PropertySet`` with one Int32 property ``Quality`` = *code* (keys = field 1, values = field 2; a
+    ``PropertyValue`` has its type in field 1 and an int in ``int_value``, field 3)."""
+    value = _field(1, 0, _varint(INT32)) + _field(3, 0, _varint(code))
+    return _field(1, 2, QUALITY_PROPERTY.encode("utf-8")) + _field(2, 2, value)
+
+
+def decode_properties(data: bytes) -> dict[str, Any]:
+    """A ``PropertySet`` → ``{key: value}`` for the simple kinds (ints, floats, booleans, strings); nested property
+    sets and extensions are skipped (None)."""
+    keys: list[str] = []
+    values: list[Any] = []
+    for number, _wire, value in _fields(data):
+        if number == 1:
+            keys.append(value.decode("utf-8", "replace"))
+        elif number == 2:
+            v: Any = None
+            for n, _w, item in _fields(value):
+                if n in (3, 4):
+                    v = item
+                elif n == 5:
+                    v = struct.unpack("<f", item)[0]
+                elif n == 6:
+                    v = struct.unpack("<d", item)[0]
+                elif n == 7:
+                    v = bool(item)
+                elif n == 8:
+                    v = item.decode("utf-8", "replace")
+            values.append(v)
+    return dict(zip(keys, values, strict=False))
+
+
 def encode_metric(name: str | None, value: Any, datatype: int, alias: int | None = None,
-                  ts: int | None = None) -> bytes:
-    """One ``Metric``: name (left out in DATA when the alias is enough), alias, timestamp (ms), datatype, value.
+                  ts: int | None = None, quality: int | None = None) -> bytes:
+    """One ``Metric``: name (left out in DATA when the alias is enough), alias, timestamp (ms), datatype, the
+    ``Quality`` property (*quality*, a code of :data:`QUALITY_CODES`, when given) and the value.
 
     None is sent as ``is_null``. Signed integers go as two's complement in the unsigned field (as Eclipse Tahu).
     """
@@ -108,6 +169,8 @@ def encode_metric(name: str | None, value: Any, datatype: int, alias: int | None
     if ts is not None:
         out += _field(3, 0, _varint(ts))
     out += _field(4, 0, _varint(datatype))
+    if quality is not None:
+        out += _field(9, 2, encode_quality(quality))
     if value is None:
         return out + _field(7, 0, _varint(1))
     if datatype == BOOLEAN:
@@ -175,8 +238,10 @@ def _read_varint(data: bytes, i: int) -> tuple[int, int]:
 
 
 def decode_metric(data: bytes) -> dict[str, Any]:
-    """A ``Metric`` → ``{name, alias, timestamp, datatype, value}`` (value None for is_null or unknown kinds)."""
-    m: dict[str, Any] = {"name": None, "alias": None, "timestamp": None, "datatype": 0, "value": None}
+    """A ``Metric`` → ``{name, alias, timestamp, datatype, value, quality}`` (value None for is_null or unknown
+    kinds; quality from the ``Quality`` property, :func:`code_quality`, "good" without one)."""
+    m: dict[str, Any] = {"name": None, "alias": None, "timestamp": None, "datatype": 0, "value": None,
+                         "quality": "good"}
     raw: Any = None
     for number, _wire, value in _fields(data):
         if number == 1:
@@ -187,6 +252,8 @@ def decode_metric(data: bytes) -> dict[str, Any]:
             m["timestamp"] = value
         elif number == 4:
             m["datatype"] = value
+        elif number == 9:
+            m["quality"] = code_quality(decode_properties(value).get(QUALITY_PROPERTY))
         elif number in (10, 11):
             raw = value
         elif number == 12:
@@ -247,6 +314,9 @@ class Driver(BaseDriver):
         self.types: dict[tuple[str, str, str], int] = {}
         self.by_metric: dict[tuple[str, str, str], Tag] = {}   # client: (node, device, metric) → tag
         self._birth_pending = False
+        #: Server: metric name → quality last sent with it. A metric that was not good gets ``Quality`` 192 with its
+        #: next value; good metrics carry no property (smaller messages, and a host without the convention is happy).
+        self._shown: dict[str, str] = {}
         super().__init__(name, settings, hub)
 
     # tags --------------------------------------------------------------------------------------------------------
@@ -353,12 +423,18 @@ class Driver(BaseDriver):
         if self.client is None:
             return
         self.seq = 0
+        self._shown.clear()
         metrics = [encode_metric("bdSeq", self.bd_seq, INT64), encode_metric(REBIRTH, False, BOOLEAN)]
         for name, tag in self.tags.items():
             rec = self.hub.values.get(f"{self.name}/{name}")
             value = rec["v"] if rec else None
+            # A value kept from before a restart or a lost source is announced as stale (500), a missing one as bad.
+            quality = "none" if rec is None else str(rec.get("q") or "good")
+            code = QUALITY_CODES.get(quality, 0) if quality != "good" else None
+            if code is not None:
+                self._shown[name] = quality
             metrics.append(encode_metric(name, value, self._type(tag, value), alias=self.aliases.setdefault(
-                name, len(self.aliases) + 1)))
+                name, len(self.aliases) + 1), quality=code))
         await self.client.publish(topic(self.group, "NBIRTH", self.node), encode_payload(metrics, self._next_seq()),
                                   qos=0, retain=False)
 
@@ -436,15 +512,16 @@ class Driver(BaseDriver):
                 self.by_metric[(node, device, m["name"])] = tag
             # A birth is a status by its kind – whenever it comes (a node starting after us, a delayed birth, a
             # rebirth while connected) – never a change: nothing of it goes to KNX or to devices.
-            self.publish(tag, m["value"], status=True)
+            self.publish(tag, m["value"], m["quality"], status=True)
 
     def _values(self, node: str, device: str, metrics: list[dict[str, Any]]) -> None:
-        """A DATA message: metrics by name or by the alias from the birth."""
+        """A DATA message: metrics by name or by the alias from the birth, with the quality the node gave them (a bad
+        or stale metric is not passed on by gateways)."""
         for m in metrics:
             name = m["name"] or self.alias_names.get((node, device, m["alias"]))
             tag = self.by_metric.get((node, device, name or ""))
             if tag is not None:
-                self.publish(tag, m["value"])
+                self.publish(tag, m["value"], m["quality"])
 
     async def _command(self, node: str, device: str, metric: str, value: Any, datatype: int) -> None:
         """Publish NCMD (node metric) or DCMD (device metric) with one metric."""
@@ -454,14 +531,30 @@ class Driver(BaseDriver):
         await self.client.publish(topic(self.group, kind, node, device),
                                   encode_payload([encode_metric(metric, value, datatype)], None), qos=self.qos)
 
-    async def _data(self, tag: Tag, value: Any) -> None:
-        """Server: NDATA with one metric, by alias."""
+    async def _data(self, tag: Tag, value: Any, quality: str = "good") -> None:
+        """Server: NDATA with one metric, by alias. The ``Quality`` property is sent when *quality* is not good, and
+        once more (192) with the first good value after that; good values otherwise carry none."""
         if self.client is None:
             raise ConnectionError(_("{connection} is not connected").format(connection=self.name))
         alias = self.aliases.setdefault(tag.name, len(self.aliases) + 1)
+        code = None
+        if quality != "good" or self._shown.get(tag.name, "good") != "good":
+            code = QUALITY_CODES.get(quality, 0)
         await self.client.publish(topic(self.group, "NDATA", self.node),
-                                  encode_payload([encode_metric(None, value, self._type(tag, value), alias=alias)],
+                                  encode_payload([encode_metric(None, value, self._type(tag, value), alias=alias,
+                                                                quality=code)],
                                                  self._next_seq()), qos=0, retain=False)
+        self._shown[tag.name] = quality
+
+    async def set_quality(self, tag: Tag, quality: str) -> None:
+        """Server: the source of metric *tag* turned bad (``"bad"``, Quality 0) or was lost (``"old"``, 500): send its
+        last value again with that quality, so a host shows it as not current. The next value written sends 192.
+        Called by the gateway engine; nothing while disconnected (the next birth carries the quality)."""
+        if self.role != "server" or self.client is None or not self.connected:
+            return
+        rec = self.hub.values.get(f"{self.name}/{tag.name}")
+        with contextlib.suppress(TypeError, ValueError):
+            await self._data(tag, tag.to_raw(rec["v"]) if rec else None, "old" if quality == "old" else "bad")
 
     async def write(self, tag: Tag, value: Any, user: str = "") -> None:
         """Server: the metric's new value as NDATA. Client: NCMD/DCMD to the edge node with the type from its birth."""

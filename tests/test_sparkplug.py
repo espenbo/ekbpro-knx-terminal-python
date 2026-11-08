@@ -250,3 +250,68 @@ def test_late_birth_is_a_status(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def test_quality_property_round_trip():
+    """The Quality property is encoded as an Int32 in the metric's property set and read back: 0 bad, 500 stale (old),
+    192 good; a metric without it is good, and the OPC uncertain range counts as old."""
+    from knxscada.protocols.sparkplug import QUALITY_CODES, code_quality
+
+    for quality, code in (("bad", 0), ("old", 500), ("good", 192)):
+        m = decode_metric(encode_metric("T", 21.5, DOUBLE, alias=3, quality=code))
+        assert (m["name"], m["alias"], m["value"], m["quality"]) == ("T", 3, 21.5, quality)
+    assert decode_metric(encode_metric("T", 1, INT64))["quality"] == "good"
+    assert code_quality(100) == "old" and code_quality(None) == "good" and QUALITY_CODES["none"] == 0
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")   # amqtt's own configuration notes
+def test_quality_travels_over_mqtt_and_sparkplug(tmp_path):
+    """A bad source is shown by our own MQTT and Sparkplug targets and understood by their readers: plain MQTT gets
+    ``<topic>/quality``, JSON a ``"quality"`` key, Sparkplug the Quality property. The readers' values turn bad (so
+    their gateways would pass nothing on), and the next good source value makes everything good again."""
+    amqtt = pytest.importorskip("amqtt.broker")
+    port = free_port()
+
+    async def run():
+        """Broker; src → edge node, plain and JSON MQTT targets; a host application and an MQTT reader."""
+        broker = amqtt.Broker({"listeners": {"default": {"type": "tcp", "bind": f"127.0.0.1:{port}"}},
+                               "sys_interval": 0, "auth": {"allow-anonymous": True},
+                               "topic-check": {"enabled": False}})
+        await broker.start()
+        src = Mem("src", {"tags": {"T": {"type": "float"}}}, None, server=False)
+
+        async def lasting():
+            """Stay connected (the default Mem session ends at once)."""
+            src.set_state(True)
+            await src.wait_stopped(60)
+
+        src.session = lasting
+        mq = {"host": "127.0.0.1", "port": port}
+        data = {"connections": {
+            "edge": {"protocol": "sparkplug", "role": "server", "edge_node": "knx", "group_id": "Hus", **mq},
+            "host": {"protocol": "sparkplug", "role": "client", "edge_node": "knx", "group_id": "Hus", **mq},
+            "plain": {"protocol": "mqtt", "topic_prefix": "p/", **mq},
+            "js": {"protocol": "mqtt", "topic_prefix": "j/", "payload": "json", **mq},
+            "watch": {"protocol": "mqtt", **mq, "tags": {"pq": {"topic": "p/T/quality", "type": "str"},
+                                                          "pv": {"topic": "p/T"}, "jv": {"topic": "j/T"}}}},
+            "gateways": [{"name": f"to-{c}", "from": "src", "to": c, "map": ["T"]} for c in ("edge", "plain", "js")]}
+        hub = await make_hub(tmp_path, data, {"src": src})
+        v = hub.values
+        try:
+            await until(lambda: all(hub.drivers[c].ready for c in data["connections"]), 15)
+            hub.update("src", "T", 20.5)
+            await until(lambda: v.get("host/T", {}).get("v") == 20.5 and v.get("watch/jv", {}).get("v") == 20.5
+                        and v.get("watch/pq", {}).get("v") == "good", 10)
+            assert v["host/T"]["q"] == v["watch/jv"]["q"] == "good"
+            hub.update("src", "T", 20.5, "bad")                 # the source reports a bad status
+            await until(lambda: v["host/T"]["q"] == "bad" and v["watch/jv"]["q"] == "bad"
+                        and v["watch/pq"]["v"] == "bad", 10)
+            assert v["host/T"]["v"] == 20.5 and v["watch/jv"]["v"] == 20.5 and v["watch/pv"]["q"] == "good"
+            hub.update("src", "T", 21.0)
+            await until(lambda: v["host/T"]["q"] == "good" and v["host/T"]["v"] == 21.0
+                        and v["watch/jv"]["q"] == "good" and v["watch/pq"]["v"] == "good", 10)
+        finally:
+            await hub.stop()
+            await broker.shutdown()
+
+    asyncio.run(run())

@@ -251,8 +251,10 @@ class Hub:
                 self._log(drv, tag, value, rec["ts"])
         else:
             # A bad status (e.g. a PLC loading a new application): the gateways forget the value, so the next good
-            # one is only remembered, and changes from this connection towards KNX pause for a while.
-            self.engine.on_bad(conn, tag)
+            # one is only remembered, and changes from this connection towards KNX pause for a while. The quality
+            # itself travels on: a stale value ("old", e.g. Sparkplug Quality 500) shows as Uncertain at an OPC UA
+            # target, not as Bad.
+            self.engine.on_bad(conn, tag, quality if quality == "old" else "bad")
         if hasattr(self.server, "point_value"):
             self.server.point_value(key, value, quality)
 
@@ -375,7 +377,10 @@ class Hub:
         t = drv.resolve(tag)
         if t is None:
             raise ValueError(_("{connection} has no tag {tag}").format(connection=conn, tag=repr(tag)))
-        if not t.writable and drv.role == "client":
+        # A tag we own (our server's point, an MQTT topic a gateway publishes) is written by the gateways even when its
+        # clients may not write it; a device's tag only when it is writable. (MQTT has no roles, so "client" alone
+        # refused every one-way gateway target of an MQTT connection.)
+        if not t.writable and not drv.owns(t):
             raise ValueError(_("{tag} is read-only").format(tag=f"{conn}/{t.name}"))
         if drv.role == "client" and not drv.connected:
             raise RuntimeError(_("{connection} is not connected").format(connection=conn))

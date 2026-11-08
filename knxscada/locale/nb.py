@@ -1120,4 +1120,10 @@ CATALOGUE: dict[str, str] = {
     "Empty = a metric of the edge node itself": "Tom = en metrikk i selve edge-noden",
     "Empty = the followed edge node (needed when it is +)": "Tom = edge-noden som følges (må fylles ut når den er +)",
     "{tag}: no birth from its edge node yet": "{tag}: ingen fødsel fra edge-noden ennå",
+    "Publish quality": "Publiser kvalitet",
+    "Gateway targets: \"quality\" in a JSON payload, else on <topic>/quality (good, bad, old)":
+        "Gatewaymål: «quality» i JSON-innholdet, ellers på <topic>/quality (good, bad, old)",
+    "Read status flags": "Les statusflagg",
+    "A value whose object reports fault or out-of-service is bad (not passed on by gateways)":
+        "En verdi der objektet melder fault eller out-of-service, er dårlig (gatewayene sender den ikke videre)",
 }
