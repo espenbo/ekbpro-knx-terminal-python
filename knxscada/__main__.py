@@ -33,7 +33,7 @@ import os
 import sys
 from datetime import datetime
 
-from . import PRODUCT
+from . import PRODUCT, __version__
 from .config import Config, load_config
 from .fileutil import backup_private, write_private
 from .i18n import LANGUAGES, _, set_language
@@ -62,6 +62,8 @@ def _run(argv: list[str] | None = None) -> int:
     """
     ap = argparse.ArgumentParser(prog="knxscada", description=f"{PRODUCT} – terminal SCADA for KNX")
     ap.add_argument("-c", "--config", help="path to config.yaml (or set KNXSCADA_CONFIG)")
+    # The version in knxscada/__init__.py = the git tag vX.Y.Z of the release (see CHANGELOG.md).
+    ap.add_argument("-V", "--version", action="version", version=f"{PRODUCT} {__version__}")
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("server", help="start the SCADA server (KNX connection, logging, alarms)")

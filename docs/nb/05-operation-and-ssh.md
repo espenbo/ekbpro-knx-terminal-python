@@ -37,7 +37,7 @@ PLS-broene, KNX-tilkoblingen) kjører under oppsyn: stopper en med en uventet fe
 ikke kjørt på 45 s») og en hendelsesløkke som har stått fast («Serveren sto fast i 3,2 s»), meldes også. Enheten er
 `Type=notify` med `WatchdogSec=60`: serveren sier fra til systemd når den er oppe og pinger hvert 5. sekund mens
 løkkene går; henger den, stopper pingene, og systemd starter den på nytt. En omstart sender ingenting til KNX eller
-utstyr. En enhet installert før 2026-11-09 (`Type=simple`) virker fortsatt, men uten systemd-vakthunden; installer den
+utstyr. En enhet installert før 0.3.0 (`Type=simple`) virker fortsatt, men uten systemd-vakthunden; installer den
 på nytt med `./scada service install` for å få den.
 
 For hånd:

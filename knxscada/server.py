@@ -57,6 +57,7 @@ except ImportError:          # the KNX module is not installed: only the protoco
     # ScadaServer refuses a configuration with KNX when the module is missing (see __init__).
     pass
 
+from . import __version__
 from . import access as accesslib
 from . import dpt as dptlib
 from .alarms import Rule, build_rules, normalize_severity, point_rule
@@ -245,7 +246,9 @@ class ScadaServer:
         # rw for owner and group only: whoever can open the socket can operate the plant.
         os.chmod(sock, 0o660)
         log.info(_("Listening on %s"), sock)
-        self.event("info", "system", _("Server started ({mode})").format(mode="demo" if self.demo else "KNX"))
+        # The version in the event log: after an update or a rollback it shows which code is running since when.
+        self.event("info", "system", _("Server {version} started ({mode})").format(
+            version=__version__, mode="demo" if self.demo else "KNX"))
         for problem in accesslib.validate(self.cfg.server.get("access")):
             self.event("error", "system", problem)
 

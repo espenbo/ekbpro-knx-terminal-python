@@ -35,7 +35,7 @@ to the event log (F6, "… failed: … – started again in N s") and the task s
 ("housekeeping has not run for 45 s") and an event loop that was blocked ("The server was blocked for 3.2 s") are
 reported too. The unit is `Type=notify` with `WatchdogSec=60`: the server tells systemd when it is up and pings it
 every 5 s while its loops run; when it hangs, the pings stop and systemd restarts it. A restart sends nothing to KNX
-or devices. A unit installed before 2026-11-09 (`Type=simple`) keeps working without the systemd watchdog; install
+or devices. A unit installed before 0.3.0 (`Type=simple`) keeps working without the systemd watchdog; install
 it again with `./scada service install` to get it.
 
 By hand:

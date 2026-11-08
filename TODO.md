@@ -180,7 +180,11 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           (READY/WATCHDOG/STOPPING). `deploy/*.service`: `Type=notify`, `WatchdogSec=60`, `TimeoutStartSec=300`.
           Anleggenes enheter er fortsatt `Type=simple` (virker, men uten systemd-vakthund) til brukeren installerer
           dem på nytt. Tester `test_watchdog.py`, dok 05/08 en+nb.
-   5. [ ] Versjonerte releaser med tilbakeføring.
+   5. [x] Versjonerte releaser (brukeren valgte «bare versjoner og tagger»; tjenestene kjører fortsatt fra
+          arbeidskatalogen): versjon 0.3.0, `CHANGELOG.md`, `./scada --version`, versjonen i hendelsesloggen ved
+          start, `tools/release.py` (prepare/check/notes), `.github/workflows/release.yml` (alle tester på taggen,
+          tagg = `__version__`, release med notater fra CHANGELOG). Oppdatering og tilbakeføring i dok 01 en+nb.
+          Første tagg `v0.3.0` når brukeren sier ja.
    6. [ ] Beskyttet `main` med krav om grønn CI (brukeren gjør det i GitHub).
 
 ## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)

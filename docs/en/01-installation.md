@@ -115,13 +115,26 @@ Then start the visualisation with `./scada`.
 
 To run the server permanently as a service that starts automatically, see [Operation and SSH](05-operation-and-ssh.md).
 
-## Updating
+## Updating and going back
+
+Every version is a git tag (`v0.3.0`) with release notes in [CHANGELOG.md](../../CHANGELOG.md) and under Releases on
+GitHub. A release is only made after every test has passed on the tagged code.
 
 ```bash
-git pull
-venv/bin/pip install -r requirements.txt
+./scada --version                     # what is installed now
+git fetch --tags
+git tag --sort=-v:refname | head      # the versions, newest first
+git checkout v0.3.0                   # this version (the newest code in development instead: git checkout main && git pull)
+venv/bin/pip install -r requirements.txt -c constraints.txt
 ./scada modules install knx          # once, when updating from a version before 2026-11 (KNX became a module)
 sudo systemctl restart knxscada      # if the server runs as a service
 ```
 
-Also restart the visualisation in open sessions.
+Also restart the visualisation in open sessions. The event log (F6) shows which version started ("Server 0.3.0
+started").
+
+**Going back** is the same with an earlier tag (`git checkout v0.3.0`, then restart). The database and the
+configuration stay as they are: newer versions only add tables and columns, and an older version ignores settings it
+does not know. Read the changelog of the versions you leave, though – what they added disappears, including safety
+settings (going back before 0.3.0 removes `server.access`, so everyone with access to the socket may do everything
+again, and the safe defaults of the OPC UA server).

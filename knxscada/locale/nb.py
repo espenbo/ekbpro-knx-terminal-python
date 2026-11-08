@@ -120,7 +120,7 @@ CATALOGUE: dict[str, str] = {
     "Not connected to KNX": "Ikke tilkoblet KNX",
     "Client connected": "Klient tilkoblet",
     "Client disconnected": "Klient frakoblet",
-    "Server started ({mode})": "Server startet ({mode})",
+    "Server {version} started ({mode})": "Server {version} startet ({mode})",
     "KNX connection: {state}": "KNX-forbindelse: {state}",
     "Reading the status of {n} group addresses": "Leser status for {n} gruppeadresser",
     "Client is not keeping up – disconnecting it": "Klienten henger etter – kobler den fra",

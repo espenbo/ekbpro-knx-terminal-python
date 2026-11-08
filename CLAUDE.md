@@ -127,6 +127,9 @@ venv/bin/ruff check knxscada/ tests/      # skal gi «All checks passed!» (null
 - Nye databasetabeller legges i `SCHEMA` i `store.py` (`CREATE … IF NOT EXISTS`), nye kolonner i `_migrate`,
   og tabellen tas med i `purge_batch`.
 - Commit og push bare når brukeren ber om det.
+- **Versjoner:** skriv endringer i `CHANGELOG.md` under «Unreleased» (engelsk). En release: `tools/release.py prepare
+  X.Y.Z` → commit → `tools/release.py check` → `git tag -a vX.Y.Z` og push av taggen (bare når brukeren ber om det);
+  `.github/workflows/release.yml` lager releasen etter grønn CI. Tjenestene kjører fortsatt arbeidskatalogen.
 
 ## Erfaringer med utstyr
 

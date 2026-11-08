@@ -1,0 +1,41 @@
+# A release for every version tag vX.Y.Z: first every test of tests.yml on the tagged commit, then a check that the
+# tag is the version in knxscada/__init__.py, then the GitHub release with that version's section of CHANGELOG.md.
+#
+#   python tools/release.py prepare X.Y.Z   # version + changelog (then commit)
+#   python tools/release.py check
+#   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+#
+# A failed test means no release: delete the tag (git push --delete origin vX.Y.Z), fix, and tag again.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # to create the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: The tag is the program's version
+        run: |
+          version=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('knxscada/__init__.py').read_text()).group(1))")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but __version__ is $version"; exit 1; }
+      - name: Release notes from CHANGELOG.md
+        run: python tools/release.py notes "$GITHUB_REF_NAME" > notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

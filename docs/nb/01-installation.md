@@ -117,13 +117,26 @@ Start så visualiseringen med `./scada`.
 
 For å kjøre serveren fast som en tjeneste som starter av seg selv, se [Drift og SSH](05-operation-and-ssh.md).
 
-## Oppdatering
+## Oppdatering og tilbakeføring
+
+Hver versjon er en git-tagg (`v0.3.0`) med endringer i [CHANGELOG.md](../../CHANGELOG.md) og under Releases på
+GitHub. En release lages bare når alle testene har gått gjennom på koden som er tagget.
 
 ```bash
-git pull
-venv/bin/pip install -r requirements.txt
+./scada --version                     # det som er installert nå
+git fetch --tags
+git tag --sort=-v:refname | head      # versjonene, nyeste først
+git checkout v0.3.0                   # denne versjonen (nyeste kode under utvikling i stedet: git checkout main && git pull)
+venv/bin/pip install -r requirements.txt -c constraints.txt
 ./scada modules install knx          # én gang, ved oppdatering fra en versjon før 2026-11 (KNX ble en modul)
 sudo systemctl restart knxscada      # hvis serveren kjører som tjeneste
 ```
 
-Start også visualiseringen på nytt i åpne økter.
+Start også visualiseringen på nytt i åpne økter. Hendelsesloggen (F6) viser hvilken versjon som startet («Server
+0.3.0 startet»).
+
+**Tilbakeføring** er det samme med en eldre tagg (`git checkout v0.3.0`, så omstart). Databasen og oppsettet blir
+som de er: nyere versjoner legger bare til tabeller og kolonner, og en eldre versjon ser bort fra innstillinger den
+ikke kjenner. Les likevel endringsloggen for versjonene du forlater – det de la til, forsvinner, også
+sikkerhetsinnstillinger (tilbake til før 0.3.0 fjerner `server.access`, så alle med tilgang til socketen kan gjøre alt
+igjen, og de trygge standardene i OPC UA-serveren).
