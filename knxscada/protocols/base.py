@@ -148,14 +148,26 @@ def as_int(value: Any) -> int:
 
 
 def float32(value: float) -> float:
-    """*value* as a 32-bit float stores it, rounded to 7 significant digits – exactly what the drivers report for a
-    float32 value they read (OPC UA Float, BACnet REAL, Sparkplug Float), so the read-back of our own write compares
-    equal to what was written. Values outside the float32 range are returned unchanged."""
+    """*value* as a 32-bit float stores it, written as the shortest decimal that is still the same float32: 16.6, not
+    16.600000381469727, but 10 000 001 stays 10 000 001 (a fixed 7 digits made it 10 000 000, so a float32 energy
+    counter above 10 MWh in Wh moved in steps of 10). Nothing the float32 holds is lost.
+
+    Used by every driver that reads float32 values (OPC UA Float, BACnet REAL, Modbus float32, Sparkplug Float) and
+    by their ``normalise``, so the read-back of our own write compares equal to what was written. Values outside the
+    float32 range (and non-numbers) are returned unchanged.
+    """
     try:
         stored = struct.unpack("<f", struct.pack("<f", value))[0]
-    except (OverflowError, struct.error):
+    except (OverflowError, struct.error, TypeError):
         return value
-    return float(f"{stored:.7g}")
+    if math.isnan(stored) or math.isinf(stored):
+        return stored
+    # 9 significant digits always identify a float32; most values need far fewer.
+    for digits in range(6, 10):
+        short = float(f"{stored:.{digits}g}")
+        if struct.unpack("<f", struct.pack("<f", short))[0] == stored:
+            return short
+    return stored
 
 
 def scale_value(value: Any, scale: float | None, offset: float | None) -> Any:
@@ -407,14 +419,21 @@ class Driver:
         """
         raise ValueError(_("{connection} has no write priorities (only BACnet has)").format(connection=self.name))
 
-    def publish(self, tag: Tag, raw: Any, quality: str = "good") -> None:
-        """Report a raw value read from or sent by the other side."""
+    def publish(self, tag: Tag, raw: Any, quality: str = "good", status: bool = False) -> None:
+        """Report a raw value read from or sent by the other side.
+
+        *status* marks a value that by its kind is a status and never a change – e.g. a Sparkplug birth, whenever it
+        arrives – so the gateways only remember it (nothing goes to KNX or to devices), as at start-up.
+        """
         try:
             value = coerce(tag.from_raw(raw), tag.type)
         except (TypeError, ValueError) as exc:
             log.debug("%s/%s: %r: %s", self.name, tag.name, raw, exc)
             value, quality = raw, "bad"
-        self.hub.update(self.name, tag.name, value, quality)
+        if status:
+            self.hub.update(self.name, tag.name, value, quality, status=True)
+        else:   # the plain call, which hub stand-ins (tools, tests) without *status* also take
+            self.hub.update(self.name, tag.name, value, quality)
 
     def set_state(self, connected: bool, error: str = "") -> None:
         """Report the connection state (the hub tells the clients and resets *initial* values)."""

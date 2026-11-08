@@ -6,6 +6,7 @@
 knxscada/
   __main__.py     command line: server, tui, init, import, info, plan-dxf, plc-map, plc-browse, modules, gateway
   config.py       loading of config.yaml, path resolution
+  fileutil.py     private, atomic writes of files with passwords (config.yaml, protocols.yaml and their .bak)
   prefs.py        per-user preferences (~/.config/knxscada/ui.json: colour theme, language)
   i18n.py         translation support: _(), N_(), set_language(), LANGUAGES
   locale/

@@ -150,3 +150,103 @@ def test_two_edge_nodes_with_the_same_metric_names(tmp_path):
     assert sent == [("B", "", "Temp", 31.0)]
     message("NDEATH", "A", [])
     assert hub.values["host/A/Temp"]["q"] == "bad" and hub.values["host/B temp"]["q"] == "good"
+
+
+@pytest.mark.parametrize(("value", "datatype"), [(-1, 8), (2**64, 8), (256, 5), (-129, INT8), (2**63, INT64),
+                                                 (-1, UINT16), (2**32, 7)])
+def test_out_of_range_integers_are_refused(value, datatype):
+    """A value outside its integer type is refused with ValueError before encoding – -1 as UInt64 used to hang the
+    server in an endless _varint loop (the third review)."""
+    with pytest.raises(ValueError):
+        encode_metric("x", value, datatype)
+
+
+def test_varint_refuses_negative_numbers():
+    """_varint itself refuses a negative number instead of looping for ever."""
+    from knxscada.protocols.sparkplug import _varint
+
+    with pytest.raises(ValueError):
+        _varint(-1)
+
+
+def test_range_limits_round_trip():
+    """The edges of every integer type are accepted and come back unchanged."""
+    from knxscada.protocols.sparkplug import INT_RANGES
+
+    for datatype, (low, high) in INT_RANGES.items():
+        for v in (low, high):
+            assert decode_metric(encode_metric("x", v, datatype))["value"] == v
+
+
+def test_hub_write_of_an_out_of_range_value_returns(tmp_path):
+    """Hub.write of -1 to a UInt64 metric raises at once (it never returned before)."""
+    from knxscada.protocols.hub import Hub
+    from knxscada.protocols.sparkplug import UINT64, Driver
+
+    from .test_protocols import FakeServer
+
+    async def run():
+        """A client with a known UInt64 metric; the command would be published if it got that far."""
+        hub = Hub(FakeServer(tmp_path))
+        host = Driver("host", {"protocol": "sparkplug", "role": "client", "group_id": "Hus", "edge_node": "A",
+                               "tags": {"N": {"metric": "N", "type": "int", "writable": True}}}, hub)
+        hub.drivers["host"] = host
+        host.connected = host.ready = True
+        host.types[("A", "", "N")] = UINT64
+        sent = []
+
+        class Client:
+            """Records publishes."""
+            async def publish(self, *a, **kw):
+                """Record."""
+                sent.append(a)
+
+        host.client = Client()
+        with pytest.raises(ValueError):
+            await asyncio.wait_for(hub.write("host", "N", -1), 2)
+        assert sent == []
+
+    asyncio.run(run())
+
+
+def test_late_birth_is_a_status(tmp_path):
+    """A birth that arrives after the connection is ready – a node starting after us, or a rebirth while connected –
+    is a status: its values are not passed to a target that never takes initial values (KNX). A DATA message
+    afterwards is a change and is. (The driver is not started: no broker is needed, messages are fed directly.)"""
+    from knxscada.protocols.sparkplug import Driver
+
+    from .test_protocols import Mem
+
+    async def run():
+        """host (Sparkplug client, ready) → knx-like target."""
+        knx = Mem("knx", {"tags": {"1/1/1": {"type": "float"}}}, None, initial_allowed=False, server=False)
+
+        async def lasting():
+            """Stay connected."""
+            knx.set_state(True)
+            await knx.wait_stopped(60)
+
+        knx.session = lasting
+        data = {"connections": {},
+                "gateways": [{"name": "g", "from": "host", "to": "knx", "settle_ms": 0, "map": ["T -> 1/1/1"]}]}
+        hub = await make_hub(tmp_path, data, {"knx": knx})
+        try:
+            host = Driver("host", {"protocol": "sparkplug", "role": "client", "group_id": "Hus", "edge_node": "A",
+                                   "tags": {"T": {"metric": "T", "type": "float"}}}, hub)
+            hub.drivers["host"] = host
+            host.connected = host.ready = True             # as BIRTH_WAIT_S after subscribing
+            hub._build_engine()
+            await until(lambda: knx.connected, 2)
+            hub.update("knx", "1/1/1", 20.0)
+            host._message("spBv1.0/Hus/NBIRTH/A", encode_payload([encode_metric("T", 25.0, DOUBLE, alias=1)], 0))
+            await asyncio.sleep(0.1)
+            assert hub.values["host/T"]["v"] == 25.0 and knx.writes == []    # the late birth is only remembered
+            host._message("spBv1.0/Hus/NDATA/A", encode_payload([encode_metric(None, 26.0, DOUBLE, alias=1)], 1))
+            await until(lambda: ("1/1/1", 26.0) in knx.writes, 2)
+            host._message("spBv1.0/Hus/NBIRTH/A", encode_payload([encode_metric("T", 27.0, DOUBLE, alias=1)], 0))
+            await asyncio.sleep(0.1)
+            assert ("1/1/1", 27.0) not in knx.writes        # a rebirth while connected: a status too
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

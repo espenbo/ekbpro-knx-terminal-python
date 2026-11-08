@@ -20,7 +20,9 @@ KNX-buss ─KNX IP─────────┘   gatewayer (nytt navn, skala) 
 Alt står i `var/protocols.yaml` ved siden av `config.yaml` (for et anlegg: `sites/<site>/var/protocols.yaml`; satt med
 `server.protocols: var/protocols.yaml` – den ligger i `var/` fordi systemd-tjenesten bare får skrive der), og kan
 redigeres i fila eller i TUI-en (**F11 Gatewayer**). Serveren leser fila på nytt når den lagres fra TUI-en;
-har du redigert fila for hånd, trykker du **r** i F11 (eller starter serveren på nytt).
+har du redigert fila for hånd, trykker du **r** i F11 (eller starter serveren på nytt). En fil med YAML-feil eller
+en ugyldig innstilling avvises: hendelsesloggen sier hva som er galt, og alt fortsetter med innstillingene det har.
+Fila lagres med rettigheter bare for eieren (og gruppen), og det samme gjelder `.bak`-kopien av forrige versjon.
 
 ## 1. Installer modulene du trenger
 
@@ -241,6 +243,9 @@ direkte. Modulen trenger bare `aiomqtt`, som `mqtt`: protobuf-meldingene kodes i
   noder holdes fra hverandre), bare for lesing. Tagger under `tags:` velger en metrikk (`metric`, `device`, og `node`
   når alle noder følges) for å gi den navn, skala, enhet eller `writable: true`; skriving sender NCMD/DCMD til den
   noden med metrikkens type fra fødselen. En død merker bare den nodens (eller enhetens) tagger «bad». Å be om rebirth er en vanlig kontrollkommando, ikke en prosessverdi.
+  Verdiene i en fødsel er alltid status, uansett når den kommer (en node som starter etter oss, en ny fødsel mens
+  forbindelsen er oppe): de vises og gis til våre egne servere, men sendes aldri til KNX eller utstyr – det gjør bare
+  endringer i NDATA/DDATA. Et heltall utenfor Sparkplug-typen (f.eks. -1 til en UInt64) avvises med en feil.
 
 ```yaml
 connections:
@@ -281,7 +286,8 @@ en kjede av gatewayer (kilde → OPC UA-server 1 → OPC UA-server 2: begge blir
 variabelen har den også, så TUI-en, alarmene og databasen ser den.
 
 Klienten leser høyst så mange noder per forespørsel som serveren tillater (`OperationLimits`; WAGO PFC: 100), så
-lange tagglister virker. En REAL (float32) rundes til 7 siffer (16.6, ikke 16.600000381469727). En tabell (f.eks.
+lange tagglister virker. En REAL (float32) vises som det korteste desimaltallet (16.6, ikke 16.600000381469727) uten at noe trinn den kan
+holde, går tapt (10 000 001 forblir 10 000 001); det samme gjelder float32 i BACnet, Modbus og Sparkplug. En tabell (f.eks.
 et ukeprogram med én verdi per dag) blir en liste; den kan vises og logges, men ikke sendes gjennom en gateway
 til én enkelt verdi.
 

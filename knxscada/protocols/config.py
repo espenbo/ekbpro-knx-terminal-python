@@ -36,13 +36,13 @@ Settings that are left out take the defaults from the registry
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from ..fileutil import backup_private, write_private
 from ..i18n import _
 from . import PROTOCOLS, Field, devices
 
@@ -357,9 +357,7 @@ def save(path: Path, data: dict[str, Any], knx: bool = False) -> None:
     if errors:
         raise ValueError("\n".join(errors))
     text = dump(data)
-    if path.exists():
-        path.with_suffix(path.suffix + ".bak").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.chmod(0o600)  # may hold passwords (MQTT, OPC UA)
-    os.replace(tmp, path)
+    # Both may hold passwords (MQTT, OPC UA): the backup and the new file are created with restricted rights from the
+    # start (fileutil), never with the umask.
+    backup_private(path)
+    write_private(path, text)

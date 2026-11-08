@@ -37,7 +37,7 @@ import time
 from typing import Any
 
 from ..i18n import _
-from .base import TYPES, Tag, as_float
+from .base import TYPES, Tag, as_float, as_int, float32
 from .base import Driver as BaseDriver
 
 #: Topic namespace of Sparkplug B.
@@ -54,11 +54,18 @@ FLOAT, DOUBLE, BOOLEAN, STRING, DATETIME, TEXT = 9, 10, 11, 12, 13, 14
 SIGNED_BITS = {INT8: 8, INT16: 16, INT32: 32, INT64: 64}
 #: Integer types carried in ``int_value`` (uint32); the 64-bit ones and DateTime use ``long_value`` (uint64).
 INT_FIELD_TYPES = {INT8, INT16, INT32, UINT8, UINT16, UINT32}
+#: Allowed range (inclusive) of every integer type; DateTime is milliseconds since 1970 in a uint64.
+INT_RANGES = {INT8: (-(2**7), 2**7 - 1), INT16: (-(2**15), 2**15 - 1), INT32: (-(2**31), 2**31 - 1),
+              INT64: (-(2**63), 2**63 - 1), UINT8: (0, 2**8 - 1), UINT16: (0, 2**16 - 1), UINT32: (0, 2**32 - 1),
+              UINT64: (0, 2**64 - 1), DATETIME: (0, 2**64 - 1)}
 
 
 # -- protobuf ---------------------------------------------------------------------------------------------------------
 def _varint(n: int) -> bytes:
-    """An unsigned protobuf varint."""
+    """An unsigned protobuf varint. A negative *n* is refused: shifting -1 right stays -1, so the loop would never
+    end – and it runs in the server's event loop, where it would stop every protocol and client."""
+    if n < 0:
+        raise ValueError(_("{value} cannot be sent as an unsigned number").format(value=n))
     out = bytearray()
     while True:
         b = n & 0x7F
@@ -111,7 +118,12 @@ def encode_metric(name: str | None, value: Any, datatype: int, alias: int | None
         return out + _field(13, 1, struct.pack("<d", float(value)))
     if datatype in (STRING, TEXT):
         return out + _field(15, 2, str(value).encode("utf-8"))
-    n = round(float(value)) if not isinstance(value, int) else value
+    n = as_int(value)   # not via float: an Int64/UInt64 keeps every digit
+    low, high = INT_RANGES.get(datatype, (0, 2**64 - 1))
+    if not low <= n <= high:
+        # Checked here, before encoding: -1 for a UInt64 would otherwise reach _varint, and 300 for a UInt8 would be
+        # sent as a value the edge node cannot hold.
+        raise ValueError(_("{value} is outside {low}…{high}").format(value=n, low=low, high=high))
     bits = SIGNED_BITS.get(datatype)
     if bits and n < 0:
         n += 1 << bits
@@ -179,7 +191,7 @@ def decode_metric(data: bytes) -> dict[str, Any]:
             raw = value
         elif number == 12:
             raw = struct.unpack("<f", value)[0]
-            raw = float(f"{raw:.7g}")                 # float32: 21.5, not 21.499999046325684
+            raw = float32(raw)                        # float32: 21.5, not 21.499999046325684
         elif number == 13:
             raw = struct.unpack("<d", value)[0]
         elif number == 14:
@@ -422,7 +434,9 @@ class Driver(BaseDriver):
                           extra={"auto": True, "metric": m["name"], "device": device, "node": node})
                 self.tags[tname] = tag
                 self.by_metric[(node, device, m["name"])] = tag
-            self.publish(tag, m["value"])
+            # A birth is a status by its kind – whenever it comes (a node starting after us, a delayed birth, a
+            # rebirth while connected) – never a change: nothing of it goes to KNX or to devices.
+            self.publish(tag, m["value"], status=True)
 
     def _values(self, node: str, device: str, metrics: list[dict[str, Any]]) -> None:
         """A DATA message: metrics by name or by the alias from the birth."""

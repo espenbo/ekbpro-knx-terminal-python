@@ -32,6 +32,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .fileutil import backup_private, write_private
 from .i18n import _, set_language
 
 #: TCP ports searched for in the equipment search: Modbus TCP and OPC UA.
@@ -354,9 +355,8 @@ class Wizard:
         from .config import load_config
 
         a = self.answers
-        if self.target.exists():
-            self.target.with_suffix(".yaml.bak").write_text(self.target.read_text(encoding="utf-8"), encoding="utf-8")
         self.target.parent.mkdir(parents=True, exist_ok=True)
+        backup_private(self.target)       # the old config may hold passwords: the copy is as private as the file
         if knx:
             template = (Path(__file__).resolve().parent.parent / "config.example.yaml").read_text(encoding="utf-8")
             project = a["project_path"]
@@ -373,8 +373,7 @@ class Wizard:
         else:
             text = (f"# Made by ./scada setup – a site without KNX: connections and gateways are in protocols.yaml.\n"
                     f"knx:\n  enabled: false\nui:\n  language: {a['language']}\n  title: {_yaml_str(PRODUCT)}\n")
-        self.target.write_text(text, encoding="utf-8")
-        self.target.chmod(0o600)          # may hold the project, keyring and PLC passwords
+        write_private(self.target, text)  # may hold the project, keyring and PLC passwords
         self.say(_("Wrote {path}").format(path=self.target))
         cfg = load_config(self.target)
         if knx:

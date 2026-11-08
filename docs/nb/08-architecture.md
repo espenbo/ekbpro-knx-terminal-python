@@ -8,6 +8,7 @@
 knxscada/
   __main__.py     kommandolinje: server, tui, init, import, info, plan-dxf, plc-map, plc-browse, modules, gateway
   config.py       lasting av config.yaml, oppløsing av stier
+  fileutil.py     private, atomiske skrivinger av filer med passord (config.yaml, protocols.yaml og .bak-kopiene)
   prefs.py        innstillinger per bruker (~/.config/knxscada/ui.json: fargetema, språk)
   i18n.py         oversettelsesstøtte: _(), N_(), set_language(), LANGUAGES
   locale/

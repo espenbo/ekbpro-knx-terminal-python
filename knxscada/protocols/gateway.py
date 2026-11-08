@@ -213,6 +213,14 @@ class GatewayEngine:
         self.quiet_until: dict[str, float] = {}
         self._quiet_timer: dict[str, asyncio.TimerHandle] = {}
         self.unknown: set[tuple[str, str]] = set()
+        # Validity of waiting writes: a counter per source tag (bumped by a bad status) and per source connection
+        # (bumped when it is lost). A write remembers both when it is scheduled and is skipped when either changed
+        # before it is due – a change from before a bad status or a reconnect never becomes valid again.
+        self.epoch: dict[tuple[str, str], int] = {}
+        self.conn_epoch: dict[str, int] = {}
+        #: True once the engine is stopped (replaced by a reload or the server stopping): writes already scheduled –
+        #: even a task created a moment before – do nothing then, so a removed gateway cannot write any more.
+        self.stopped = False
 
     # -- building ---------------------------------------------------------------------------------
     def build(self) -> None:
@@ -424,10 +432,14 @@ class GatewayEngine:
         """
         key = (conn, tag)
         self.unknown.add(key)
+        self.epoch[key] = self.epoch.get(key, 0) + 1   # every write from this tag still waiting is void now
         quiet = 0.0
         for link, forward in self.by_tag.get(key, ()):
             self._set_last(link, forward, MISSING)
             self._mark_target(link, forward, quality)
+            handle = link.pending.pop(forward, None)    # waiting for the rate limit: cancelled
+            if handle is not None:
+                handle.cancel()
             dst = self.hub.drivers.get(link.b_conn if forward else link.a_conn)
             if dst is not None and not dst.initial_allowed and link.settle > 0:
                 quiet = max(quiet, link.quiet)
@@ -525,6 +537,7 @@ class GatewayEngine:
         lost because the device restarted, and its last value before that is not trustworthy (towards KNX this is
         the same protection as the restart guard).
         """
+        self.conn_epoch[conn] = self.conn_epoch.get(conn, 0) + 1
         for link in self.links:
             if link.a_conn == conn:
                 self._mark_target(link, True, "old")
@@ -606,12 +619,19 @@ class GatewayEngine:
         old = link.pending.pop(forward, None)
         if old is not None:
             old.cancel()
+        token = self._token(link, forward)
         wait = link.sent_at.get(forward, 0.0) + link.min_interval - time.monotonic()
         if wait <= 0:
-            loop.create_task(self._write(link, forward, conn, tag, value))
+            loop.create_task(self._write(link, forward, conn, tag, value, token))
         else:
             link.pending[forward] = loop.call_later(
-                wait, lambda: loop.create_task(self._write(link, forward, conn, tag, value)))
+                wait, lambda: loop.create_task(self._write(link, forward, conn, tag, value, token)))
+
+    def _token(self, link: Link, forward: bool) -> tuple[int, int]:
+        """The validity of the source of *link* now: (connection epoch, tag epoch). A write scheduled with an older
+        token is from before a bad status or a reconnect of its source and is not carried out (:meth:`_write`)."""
+        src_conn, src_tag = (link.a_conn, link.a_tag) if forward else (link.b_conn, link.b_tag)
+        return self.conn_epoch.get(src_conn, 0), self.epoch.get((src_conn, src_tag), 0)
 
     def _source_ok(self, link: Link, forward: bool) -> bool:
         """The source of a write is still connected and its value good – checked just before the write, because a
@@ -623,15 +643,28 @@ class GatewayEngine:
         rec = self.hub.values.get(f"{src_conn}/{src_tag}")
         return rec is None or rec.get("q") == "good"
 
-    async def _write(self, link: Link, forward: bool, conn: str, tag: str, value: Any) -> None:
+    def _quiet_towards_knx(self, link: Link, forward: bool) -> bool:
+        """Whether the target never takes initial values (KNX) and the source is in its quiet time after a restart or
+        a bad status – checked again just before writing, because a write may have been scheduled before it began."""
+        src_conn = link.a_conn if forward else link.b_conn
+        dst = self.hub.drivers.get(link.b_conn if forward else link.a_conn)
+        return dst is not None and not dst.initial_allowed and time.monotonic() < self.quiet_until.get(src_conn, 0.0)
+
+    async def _write(self, link: Link, forward: bool, conn: str, tag: str, value: Any,
+                     token: tuple[int, int] | None = None) -> None:
         """Write through the hub as user ``gw:<gateway>`` (so the hub's checks – ``writable``, connected – apply).
 
         Nothing is written when the source is no longer connected or its value has turned bad meanwhile
-        (:meth:`_source_ok`); the target then keeps what it had, and its last value is forgotten so the next good
-        source value is passed on.
+        (:meth:`_source_ok`), when the source went through a bad status or a reconnect after the write was scheduled
+        (*token*, :meth:`_token` – it may be good again, but this value is from before), when the source is in its
+        quiet time towards KNX, or when the engine is stopped. The target then keeps what it had, and its last value
+        is forgotten so the next good source value is passed on.
         """
+        if self.stopped:
+            return   # the engine was replaced or stopped after this write was scheduled: its gateway may be gone
         link.pending.pop(forward, None)
-        if not self._source_ok(link, forward):
+        if not self._source_ok(link, forward) or (token is not None and token != self._token(link, forward)) \
+                or self._quiet_towards_knx(link, forward):
             self._set_last(link, not forward, MISSING)
             return
         link.sent_at[forward] = time.monotonic()
@@ -653,7 +686,12 @@ class GatewayEngine:
             self.hub.event("error", f"{link.gateway}: {text}")
 
     def stop(self) -> None:
-        """Cancel every rate-limited write and guard timer still waiting (the engine is replaced or the server stops)."""
+        """Cancel every rate-limited write and guard timer still waiting (the engine is replaced or the server stops).
+
+        Write tasks that are already created are not cancelled (one may be half-way through a protocol write); they
+        see :attr:`stopped` and do nothing if they have not started writing yet.
+        """
+        self.stopped = True
         for link in self.links:
             for h in link.pending.values():
                 h.cancel()

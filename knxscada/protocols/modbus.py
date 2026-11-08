@@ -68,7 +68,7 @@ from typing import Any, ClassVar
 from ..i18n import _
 from . import MODBUS_TYPES, devices
 from .base import Driver as BaseDriver
-from .base import Tag, as_float, as_int
+from .base import Tag, as_float, as_int, float32
 
 #: Table aliases → short name.
 TABLES = {"co": "co", "coil": "co", "coils": "co", "di": "di", "discrete": "di", "hr": "hr", "holding": "hr",
@@ -151,16 +151,10 @@ def from_registers(regs: list[int], dtype: str, word_order: str = "big") -> int 
     if word_order == "little":
         words.reverse()
     value = struct.unpack(">" + fmt, b"".join(w.to_bytes(2, "big") for w in words))[0]
-    if fmt in "fd":
-        # float32 carries ~7 digits: rounding hides the binary noise (21.5 instead of 21.499999046325684).
-        return round(value, 6) if fmt == "f" else value
+    if fmt == "f":
+        # The shortest decimal of the float32 (21.4, not 21.399999618530273), without losing any step it holds.
+        return float32(value)
     return value
-
-
-def _float32_registers(value: float) -> float:
-    """*value* after a trip through two float32 registers, rounded as :func:`from_registers` rounds it (6 decimals),
-    for :meth:`Driver.normalise`. Raises OverflowError outside the float32 range (the caller then compares as is)."""
-    return round(struct.unpack(">f", struct.pack(">f", value))[0], 6)
 
 
 @dataclass
@@ -320,7 +314,7 @@ class Driver(BaseDriver):
         if p is None or p.dtype in ("bool", "float64"):
             return value
         if p.dtype == "float32":
-            return self.normalise_raw(tag, value, rounding=_float32_registers)
+            return self.normalise_raw(tag, value)          # float32, as from_registers gives it
         # Integer registers: the raw value is whole (as_int keeps int64 exact, rounds a scaled float).
         return self.normalise_raw(tag, value, rounding=as_int)
 

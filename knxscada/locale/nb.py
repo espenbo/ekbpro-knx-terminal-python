@@ -649,6 +649,11 @@ CATALOGUE: dict[str, str] = {
     "{connection} has no tag {tag}": "{connection} har ingen tag {tag}",
     "{connection}: {error}. Retrying in {delay} s": "{connection}: {error}. Prøver igjen om {delay} s",
     "{value} is not a number": "{value} er ikke et tall",
+    "see the event log": "se hendelsesloggen",
+    "{value} is outside {low}…{high}": "{value} er utenfor {low}…{high}",
+    "{value} cannot be sent as an unsigned number": "{value} kan ikke sendes som et tall uten fortegn",
+    "{path} has errors – the running settings are kept: {error}":
+        "{path} har feil – innstillingene som kjører, beholdes: {error}",
     "{value} is not on/off": "{value} er ikke på/av",
     "Unknown value type {type}": "Ukjent verditype {type}",
     "{key}: expected true or false": "{key}: forventet true eller false",

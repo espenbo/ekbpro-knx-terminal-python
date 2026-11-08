@@ -21,9 +21,12 @@ her. Det som gjelder ett anlegg, står i `sites/<anlegg>/TODO.md` og `sites/<anl
 
 ## Status
 
-- 2026-11-07 (kveld): stabiliseringen under (punkt 1–8) er gjort: 506 tester grønne (1 hoppet over) med xknx 3.10.0,
-  også med `NO_COLOR` og med xknx 4.1.1; ruff 0, oversettelser 0 mangler. Ikke committet ennå. CI
-  (`.github/workflows/tests.yml`) kjører først når den er pushet.
+- 2026-11-08: tredje gjennomgang (av 818561c) – seks feil rettet, se «Stabilisering 2026-11-08 (2)». CI på GitHub
+  var grønn for 818561c (alle fire jobbene).
+- 2026-11-08: `.claude/settings.json` er fjernet fra hele git-historikken (force-push, 818561c); den står nå i
+  `.gitignore`.
+- 2026-11-07 (kveld): stabiliseringen under (punkt 1–8) er gjort og pushet (fa16913, nå 8f336eb etter
+  omskrivingen); CI grønn.
 - 2026-11-07: arbeidsplanen (punkt 1–9) er gjort og pushet (8b0bd89).
 - [x] Kommentarer (brukerens krav 2026-11-01, ferdig ~23:45): docstring på alle moduler, klasser og funksjoner i
       `knxscada/` (1073 definisjoner, 0 uten) og alle tester (352 nye), pluss `#`/`#:`-kommentarer om sikkerhet,
@@ -98,7 +101,7 @@ Rekkefølge etter gjennomgangen – kryss av underveis. Hver feil får en regres
 7. [x] `NO_COLOR`: plantegningens «ingen plantegning»-linje hadde tekstbiter uten stil, som Textuals
        monokromfilter ikke tåler – `apply_style(base)` som i LineLog. Hele pakken grønn med `NO_COLOR=1`.
 8. [x] CI: `.github/workflows/tests.yml` – ruff og tester (oversettelser inkludert) på Python 3.12/3.13 med
-       `constraints.txt`, en jobb med `NO_COLOR` og en med xknx 4. Ikke kjørt på GitHub ennå (krever push).
+       `constraints.txt`, en jobb med `NO_COLOR` og en med xknx 4. Grønn på GitHub.
 9. [ ] Senere (beslutninger): tilgangsstyring (lese/operatør/konfigurasjon på socketen), OPC UA-server-standard
        (binding, anonym, kryptering), versjonerte releaser, Sparkplug mot Ignition MQTT Engine.
 
@@ -122,8 +125,31 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
        float32 i OPC UA (Float), BACnet (REAL), Sparkplug-klient (Float) og Modbus float32, og skalerte
        heltallsregistre i Modbus (`normalise_raw`). 1 000 000 → 1 000 001 Wh og 1000,000 → 1000,001 kWh er
        endringer. `same_value` ser NaN = NaN (ingen endring ved hver lesing). Dok 11 en+nb.
-       Rest: Modbus runder float32 til 6 desimaler og OPC UA/BACnet til 7 siffer, så en float32-teller over
-       10 000 000 går i trinn på 10. Det er nesten oppløsningen til float32 (trinn 1 opp til 16 777 216).
+       (Avrundingen til 7 siffer er erstattet i runden under.)
+
+## Stabilisering 2026-11-08 (2) (tredje gjennomgang, av 818561c)
+
+1. [x] Ventende skriving i hastighetsbegrensningen (`link.pending`) ble skrevet etter dårlig → god kilde (også i
+       stilleperioden mot KNX). Nå: `on_bad` kansellerer den, hver skriving bærer et gyldighetsmerke for kilden
+       (`epoch` per tagg ved dårlig status, `conn_epoch` per tilkobling ved brudd – `_token`) og hoppes over når det
+       er endret, og `_write` skriver ikke mot KNX i kildens stilleperiode (`_quiet_towards_knx`).
+2. [x] Sparkplug: -1 til en UInt64 hengte serveren (`_varint` løp evig). Nå sjekkes verdiområdet per heltallstype
+       (`INT_RANGES`) før koding, og `_varint` avviser negative tall. Grensene testes for alle typene.
+3. [x] Sparkplug: en sen NBIRTH/DBIRTH (etter `BIRTH_WAIT_S`, eller ny fødsel mens forbindelsen er oppe) ble behandlet
+       som endringer. Nå er fødselsverdier alltid status (`Driver.publish(status=True)` → `Hub.update(status=True)`).
+4. [x] En fjernet gateway kunne skrive: oppgaver som alt var laget, sjekker nå `engine.stopped` før skriving.
+5. [x] YAML-feil eller ugyldig innstilling ved «last inn på nytt» stoppet alle tilkoblinger. Nå leses og valideres
+       fila før den tas i bruk; ved feil beholdes alt som kjører, feilen står i hendelsesloggen, og kommandoen feiler.
+6. [x] `protocols.yaml.bak` (og init/setup sin `config.yaml.bak`) fikk umask-rettigheter (0644). Ny `fileutil.py`:
+       filen, backupen og den midlertidige filen lages med endelige rettigheter fra start (0600 for nye, eksisterende
+       beholder gruppebitene, aldri «andre»), atomisk med `os.replace`.
+7. [x] float32: korteste desimal som gir samme float32 (`base.float32`) i stedet for 7 siffer / 6 desimaler – ingen
+       tellertrinn går tapt (10 000 001 forblir 10 000 001).
+8. [x] `.gitignore`: `protocols.yaml`, `*.bak`, `.*.tmp`, `.claude/settings.json` (og brukerens tillegg: `.env`,
+       nøkler, `*.db`, `*.log`).
+9. [ ] Gjenstår fra gjennomgangen (beslutninger/større): BACnet statusFlags og kvalitet i MQTT/Sparkplug-server,
+       tilgangsstyring på socketen, OPC UA-serverens standard (anonym/ukryptert) tydelig i oppsettet, overvåking av
+       interne oppgaver (watchdog), versjonerte releaser med tilbakeføring, beskyttet `main` med krav om grønn CI.
 
 ## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)
 

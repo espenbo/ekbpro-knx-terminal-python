@@ -37,7 +37,7 @@ from typing import Any
 
 from ..i18n import _
 from .base import Driver as BaseDriver
-from .base import Tag, as_int, tag_from_spec
+from .base import Tag, as_int, float32, tag_from_spec
 
 #: OPC UA variant type name → tag type.
 VARIANT_TYPES = {"Boolean": "bool", "SByte": "int", "Byte": "int", "Int16": "int", "UInt16": "int", "Int32": "int",
@@ -144,12 +144,12 @@ class Driver(BaseDriver):
             tag.address = name
         return tag
 
-    def publish(self, tag: Tag, raw: Any, quality: str = "good") -> None:
-        """Report a value; a Float (float32) variable's value is rounded to 7 significant digits first."""
+    def publish(self, tag: Tag, raw: Any, quality: str = "good", status: bool = False) -> None:
+        """Report a value; a Float (float32) variable's value is written as its shortest decimal first (``float32``)."""
         vt = self.vtypes.get(tag.name)
         if isinstance(raw, float) and vt is not None and vt.name == "Float":   # float32: 16.6, not 16.600000381469727
-            raw = float(f"{raw:.7g}")
-        super().publish(tag, raw, quality)
+            raw = float32(raw)
+        super().publish(tag, raw, quality, status)
 
     def normalise(self, tag: Tag, value: Any) -> Any:
         """A Float (float32) variable gives back what it stores, rounded as :meth:`publish` does; Double and integer

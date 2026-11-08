@@ -18,7 +18,9 @@ KNX bus ─KNX IP──────────┘   gateways (rename, scale)└
 Everything is in `var/protocols.yaml` next to `config.yaml` (for a site: `sites/<site>/var/protocols.yaml`; set with
 `server.protocols: var/protocols.yaml` – it is in `var/` because the systemd service may only write there), and can be
 edited in the file or in the TUI (**F11 Gateways**). The server reads the file again when it is saved from the TUI;
-after editing the file by hand press **r** in F11 (or restart the server).
+after editing the file by hand press **r** in F11 (or restart the server). A file with a YAML error or an invalid
+setting is refused: the event log says what is wrong, and everything keeps running with the settings it has. The file
+is saved with rights for its owner (and group) only, and so is the `.bak` copy of the previous version.
 
 ## 1. Install the modules you need
 
@@ -239,7 +241,10 @@ directly. The module needs only `aiomqtt`, like `mqtt`: the protobuf messages ar
   metrics; with `edge_node: "+"` the node comes first, `<node>/<device>/<metric>`, so equal metric names of two nodes
   stay apart), read-only. Tags under `tags:` pick a metric (`metric`, `device`, and `node` when following every node)
   to give it a name, scale, unit or `writable: true`; writing sends NCMD/DCMD to that node with the metric's type from
-  the birth. A death marks only that node's (or device's) tags "bad".
+  the birth. A death marks only that node's (or device's) tags "bad". The values of a birth are always a status,
+  whenever it arrives (a node starting after us, a rebirth while connected): they are shown and given to our own
+  servers, but never sent to KNX or to devices – only NDATA/DDATA changes are. An integer outside its Sparkplug type
+  (e.g. -1 for a UInt64) is refused with an error.
   Asking for a rebirth is a standard control command, not a process value.
 
 ```yaml
@@ -281,7 +286,8 @@ travels on through a chain of gateways (source → OPC UA server 1 → OPC UA se
 own value of the variable carries it too, so the TUI, alarms and the database see it.
 
 The client reads at most as many nodes per request as the server allows (`OperationLimits`; WAGO PFC: 100), so
-long tag lists work. A REAL (float32) is rounded to 7 digits (16.6, not 16.600000381469727). An array (e.g. a
+long tag lists work. A REAL (float32) is shown as its shortest decimal (16.6, not 16.600000381469727) without losing any step it
+holds (10 000 001 stays 10 000 001); the same goes for float32 in BACnet, Modbus and Sparkplug. An array (e.g. a
 week program with one value per day) becomes a list; it can be shown and logged, but not sent through a gateway
 to a single value.
 

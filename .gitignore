@@ -10,6 +10,24 @@ GVL_*.st
 *.pdf
 *.dxf
 var/
+.claude/settings.json
+.claude/settings.local.json
+# protocols.yaml holds the site's connections and passwords (MQTT, OPC UA, BACnet); only the example is published
+protocols.yaml
+*.bak
+.*.tmp
+.env
+.env.*
+!.env.example
+*.knxprojarchive
+*.key
+*.pem
+*.p12
+*.pfx
+*.db
+*.db-wal
+*.db-shm
+*.log
 
 # --- Python and tools ---
 venv/

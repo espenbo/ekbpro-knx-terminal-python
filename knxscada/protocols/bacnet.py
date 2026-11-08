@@ -53,7 +53,7 @@ from typing import Any
 
 from ..i18n import _
 from .base import Driver as BaseDriver
-from .base import Tag, tag_from_spec
+from .base import Tag, float32, tag_from_spec
 
 #: Short object type names → BACnet names.
 SHORT = {"ai": "analog-input", "ao": "analog-output", "av": "analog-value", "bi": "binary-input",
@@ -120,7 +120,7 @@ def from_bacnet(value: Any) -> Any:
     if isinstance(value, Boolean):
         return bool(value)
     if isinstance(value, Real) and not isinstance(value, Double):   # float32: 1.688, not 1.687999963760376
-        return float(f"{float(value):.7g}")
+        return float32(float(value))
     if isinstance(value, float):
         return float(value)
     if isinstance(value, int):

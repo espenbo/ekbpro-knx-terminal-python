@@ -35,6 +35,7 @@ from datetime import datetime
 
 from . import PRODUCT
 from .config import Config, load_config
+from .fileutil import backup_private, write_private
 from .i18n import LANGUAGES, _, set_language
 
 
@@ -747,8 +748,7 @@ def init_config(args) -> int:
     if target.exists() and not args.force:
         print(_("{path} already exists. Use --force to overwrite it (a .bak copy is kept).").format(path=target))
         return 1
-    if target.exists():
-        target.with_suffix(".yaml.bak").write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+    backup_private(target)   # the old config may hold passwords: the copy is as private as the file
     # Store the project path relative to the config when possible (portable installs).
     try:
         rel = project.relative_to(target.parent)
@@ -767,8 +767,7 @@ def init_config(args) -> int:
         language=args.language, connection=args.connection, gateway=args.gateway, password=args.password,
         keyring=str(keyring) if keyring else None, keyring_password=args.keyring_password, user_id=args.user_id,
         usb_device=args.usb_device)
-    target.write_text(text, encoding="utf-8")
-    target.chmod(0o600)  # may contain the KNX Secure keyring password and the PLC password
+    write_private(target, text)  # may contain the KNX Secure keyring password and the PLC password
     print(_("Wrote {path}").format(path=target))
 
     _quiet_project_logging()
@@ -781,7 +780,7 @@ def init_config(args) -> int:
         cfg_text = target.read_text(encoding="utf-8").replace(
             f"title: {_yaml_str(f'{PRODUCT} – {project.stem}')}", f"title: {_yaml_str(f'{PRODUCT} – ' + model['info']['name'])}"
         )
-        target.write_text(cfg_text, encoding="utf-8")
+        write_private(target, cfg_text)
     print_summary(model)
     print("\n" + _("Next: check the knx: section in config.yaml, start ./scada server and then ./scada"))
     return 0

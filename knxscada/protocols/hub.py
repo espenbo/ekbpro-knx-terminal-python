@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from ..i18n import _
 from . import PROTOCOLS, driver_class, installed
 from .base import Driver, coerce, same_value
-from .config import load_data, protocols_path, save, settings_of
+from .config import load_data, protocols_path, save, settings_of, validate
 from .gateway import GatewayEngine
 
 if TYPE_CHECKING:
@@ -181,13 +181,26 @@ class Hub:
         for name in list(self.drivers):
             await self._stop_driver(name)
 
-    async def reload(self, data: dict[str, Any] | None = None) -> None:
-        """Apply new settings: restart only the connections that changed, rebuild every gateway."""
+    async def reload(self, data: dict[str, Any] | None = None) -> bool:
+        """Apply new settings: restart only the connections that changed, rebuild every gateway.
+
+        *data* None reads ``protocols.yaml`` again (F11 "reload"). The new settings are read and validated first and
+        only then replace the running ones: a YAML error or an invalid setting is reported and **everything keeps
+        running as it is** – before, a broken file was read as empty, and the reload stopped every connection.
+        Returns False when the settings were refused.
+        """
         old = self.data.get("connections") or {}
         if data is None:
-            self.load()
-        else:
-            self.data = data
+            try:
+                data = load_data(self.path)
+                errors = validate(data, self.knx)
+            except Exception as exc:  # noqa: BLE001 - YAML error, unreadable file
+                errors = [str(exc)]
+            if errors:
+                self.event("error", _("{path} has errors – the running settings are kept: {error}").format(
+                    path=self.path.name, error="; ".join(errors)))
+                return False
+        self.data = data
         new = self.data.get("connections") or {}
         for name in list(self.drivers):
             if name == "knx":
@@ -206,10 +219,12 @@ class Hub:
                 self._make(str(name), conn)
         self._build_engine()
         self._broadcast_status()
+        return True
 
     # -- values -----------------------------------------------------------------------------------
-    def update(self, conn: str, tag: str, value: Any, quality: str = "good") -> None:
-        """A driver got a value for one of its tags."""
+    def update(self, conn: str, tag: str, value: Any, quality: str = "good", status: bool = False) -> None:
+        """A driver got a value for one of its tags. *status*: the value is a status by its kind (a Sparkplug birth),
+        not a change, also when the connection is ready (see ``Driver.publish``)."""
         key = f"{conn}/{tag}"
         st = self._stats(conn)
         st["reads"] += 1
@@ -217,7 +232,7 @@ class Hub:
             st["errors"] += 1
         # Until its connection has read everything once, a value is a status, not a change.
         drv = self.drivers.get(conn)
-        initial = drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
+        initial = status or drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
         self._seen.add(key)
         old = self.values.get(key)
         # Exact: a value read from a device is a change whenever it differs at all (a float32 value arrives already
@@ -541,7 +556,10 @@ class Hub:
             await self.reload(data)
             return self.snapshot()
         if cmd == "protocols_reload":
-            await self.reload()
+            if not await self.reload():
+                # The reason is in the event log; the TUI shows this as the command's error.
+                raise ValueError(_("{path} has errors – the running settings are kept: {error}").format(
+                    path=self.path.name, error=_("see the event log")))
             self.event("info", _("Connections and gateways re-read from {path}").format(path=self.path.name), user)
             return self.snapshot()
         raise ValueError(_("Unknown command {cmd}").format(cmd=repr(cmd)))

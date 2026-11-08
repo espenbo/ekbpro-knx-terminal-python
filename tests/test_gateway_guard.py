@@ -385,7 +385,7 @@ def test_quality_loop_of_both_way_lines_ends(tmp_path):
 
 def test_float32_echo_is_an_echo_and_a_counter_step_is_a_change(tmp_path):
     """Echo suppression follows the target's own resolution (Driver.normalise), not a size-dependent tolerance: the
-    read-back of 21.123456789 written to a float32 tag (21.12346) is an echo, while 1 000 000 → 1 000 001 Wh is a
+    read-back of 21.123456789 written to a float32 tag (21.123457) is an echo, while 1 000 000 → 1 000 001 Wh is a
     change in both directions of the line."""
     from knxscada.protocols.base import float32
 
@@ -413,6 +413,89 @@ def test_float32_echo_is_an_echo_and_a_counter_step_is_a_change(tmp_path):
             assert meter.writes == []                                     # neither echo went back
             hub.update("dev", "e", 21.5)                                  # a real change on the device
             await until(lambda: ("e", 21.5) in meter.writes, 2)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_rate_limited_change_is_void_after_a_bad_status(tmp_path):
+    """The third review's reproduction: 1 written, 2 waiting for min_interval, the source turns bad and good again
+    with 3 – the old 2 must never be written (it was, because on_bad left link.pending alone)."""
+    async def run():
+        """src → dev with a rate limit, both lasting."""
+        src = Mem("src", {"tags": {"a": {"type": "int"}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"b": {"type": "int", "writable": True}}}, None, server=False)
+        _lasting(src)
+        _lasting(dev)
+        gws = [{"name": "g", "from": "src", "to": "dev", "min_interval_ms": 300, "map": ["a -> b"]}]
+        hub = await make_hub(tmp_path, {"gateways": gws}, {"src": src, "dev": dev})
+        try:
+            await until(lambda: src.connected and dev.connected, 2)
+            hub.update("src", "a", 0)
+            await asyncio.sleep(0.05)
+            hub.update("src", "a", 1)
+            await until(lambda: ("b", 1) in dev.writes, 1)
+            hub.update("src", "a", 2)                       # waits for the rate limit
+            hub.update("src", "a", 2, "bad")
+            hub.update("src", "a", 3)                       # good again: a status after bad, only remembered
+            await asyncio.sleep(0.5)
+            assert ("b", 2) not in dev.writes
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_waiting_write_is_void_after_a_bad_status_with_the_guard(tmp_path):
+    """The same towards KNX with the restart guard: the old value is not written in the quiet time either."""
+    async def run():
+        """PLC → KNX with settle_ms 0 (straight to the rate limit) and a quiet time after bad."""
+        knx, plc, hub_coro = setup(tmp_path, settle_ms=1, min_interval_ms=300, restart_quiet_s=0.3)
+        _lasting(knx)
+        _lasting(plc)
+        hub = await hub_coro
+        try:
+            await until(lambda: knx.connected and plc.connected, 2)
+            for i in range(N):
+                hub.update("knx", f"k{i}", 0)
+                hub.update("plc", f"v{i}", 0)
+            await asyncio.sleep(0.05)
+            hub.update("plc", "v1", 1)
+            await until(lambda: ("k1", 1) in knx.writes, 1)
+            hub.update("plc", "v1", 2)
+            await asyncio.sleep(0.05)                       # through the settle time, now waiting for the rate limit
+            hub.update("plc", "v1", 2, "bad")
+            hub.update("plc", "v1", 3)
+            await asyncio.sleep(0.6)
+            assert ("k1", 2) not in knx.writes
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_removed_gateway_writes_nothing(tmp_path):
+    """A change followed at once by a reload that removes the gateway: the write task already created does nothing
+    (the third review: 0 links, 1 write)."""
+    async def run():
+        """One change, then reload without gateways in the same loop turn."""
+        src = Mem("src", {"tags": {"a": {"type": "int"}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"b": {"type": "int", "writable": True}}}, None, server=False)
+        _lasting(src)
+        _lasting(dev)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["a -> b"]}]},
+                             {"src": src, "dev": dev})
+        try:
+            await until(lambda: src.connected and dev.connected, 2)
+            hub.update("src", "a", 0)
+            await asyncio.sleep(0.05)
+            hub.update("src", "a", 1)                       # a write task is created …
+            hub.engine.stop()                               # … and the engine replaced before it runs
+            hub.data = {"connections": {}, "gateways": []}
+            hub._build_engine()
+            await asyncio.sleep(0.1)
+            assert hub.engine.links == [] and ("b", 1) not in dev.writes
         finally:
             await hub.stop()
 

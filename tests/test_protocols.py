@@ -1216,16 +1216,69 @@ def test_normalise_raw_follows_the_device_resolution():
     """Driver.normalise_raw gives a value as the device returns it: float32 rounded as the drivers read it, a scaled
     integer register as a whole raw number, an int64 untouched, and anything else (bool, text, too large) unchanged."""
     from knxscada.protocols.base import as_int, float32
-    from knxscada.protocols.modbus import _float32_registers
 
     drv = Mem("m", {}, None)
     plain = tag_from_spec("e", {"type": "float"})
     scaled = tag_from_spec("t", {"type": "float", "scale": 0.1})
     big = tag_from_spec("n", {"type": "int"})
-    assert float32(21.123456789) == 21.12346 and float32(1e39) == 1e39
-    assert drv.normalise_raw(plain, 21.123456789) == 21.12346
+    assert float32(21.123456789) == 21.123457 and float32(1e39) == 1e39 and float32(16.600000381469727) == 16.6
+    assert float32(10_000_001.0) == 10_000_001.0                                 # 7 digits made this 10 000 000
+    assert drv.normalise_raw(plain, 21.123456789) == 21.123457
     assert drv.normalise_raw(plain, 1_000_001.0) == 1_000_001.0                  # a counter step survives
     assert drv.normalise_raw(scaled, 21.57, rounding=as_int) == pytest.approx(21.6)
     assert drv.normalise_raw(big, 9007199254740993, rounding=as_int) == 9007199254740993
     assert drv.normalise_raw(plain, True) is True and drv.normalise_raw(plain, "x") == "x"
-    assert drv.normalise_raw(plain, 1e300, rounding=_float32_registers) == 1e300
+    assert drv.normalise_raw(plain, 1e300, rounding=float32) == 1e300
+
+
+def test_reload_with_a_broken_file_keeps_everything_running(tmp_path):
+    """A YAML error (or an invalid setting) in protocols.yaml at F11 "reload": the running connections and gateways
+    stay, an error is reported, and the command fails – before, the file was read as empty and every connection
+    stopped (the third review)."""
+    async def run():
+        """One lasting connection, then a broken file and an invalid one."""
+        src = Mem("src", {"tags": {"a": {}}}, None, server=False)
+        src.session = _lasting_session(src)
+        hub = await make_hub(tmp_path, {"connections": {}, "gateways": []}, {"src": src})
+        hub.path = tmp_path / "protocols.yaml"
+        try:
+            await until(lambda: src.connected, 2)
+            hub.path.write_text("connections: [\n", encoding="utf-8")                   # a YAML error
+            assert await hub.reload() is False
+            assert "src" in hub.drivers and src.connected
+            hub.path.write_text("connections:\n  m:\n    protocol: modbus\n    port: nope\n", encoding="utf-8")
+            assert await hub.reload() is False                                           # invalid: refused too
+            assert "src" in hub.drivers
+            assert sum("running settings are kept" in t for _lvl, t in hub.server.events) == 2
+            with pytest.raises(ValueError):
+                await hub.command({"cmd": "protocols_reload"}, "")
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_saved_config_and_backup_are_private(tmp_path):
+    """protocols.yaml and its .bak are never readable by others, whatever the umask (the .bak was 0644 with the
+    usual umask 022); an existing file keeps its group bits (a site's config is 640 for its group)."""
+    import os
+
+    from knxscada.fileutil import backup_private, write_private
+    from knxscada.protocols.config import save
+
+    old = os.umask(0o022)
+    try:
+        path = tmp_path / "protocols.yaml"
+        save(path, {"connections": {}})
+        assert path.stat().st_mode & 0o777 == 0o600
+        save(path, {"connections": {}, "gateways": []})
+        assert (tmp_path / "protocols.yaml.bak").stat().st_mode & 0o777 == 0o600
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("a: 1\n")
+        cfg.chmod(0o644)
+        backup_private(cfg)
+        write_private(cfg, "a: 2\n")
+        assert cfg.stat().st_mode & 0o777 == 0o640 and (tmp_path / "config.yaml.bak").stat().st_mode & 0o777 == 0o640
+        assert cfg.read_text() == "a: 2\n" and not list(tmp_path.glob(".*.tmp"))
+    finally:
+        os.umask(old)
