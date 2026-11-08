@@ -274,6 +274,58 @@ def test_large_integers_keep_every_digit(value, dtype):
 
     assert from_registers(to_registers(value, dtype), dtype) == value
     assert as_int(215.00000000000003) == 215 and as_int("42") == 42 and as_int("21,6") == 22 and as_int(True) == 1
+    assert as_int("9007199254740993.0") == 9007199254740993                  # decimal text: not via float either
+    with pytest.raises(ValueError):
+        as_int("abc")
+    with pytest.raises(ValueError):
+        as_int("inf")
+
+
+@pytest.mark.parametrize("value", [9007199254740993, -9007199254740993, 2**63 - 1, -(2**63),
+                                   [9007199254740993, -9007199254740995]])
+def test_large_integers_through_the_write_path(tmp_path, value):
+    """The ordinary write path keeps every digit: Hub.write (coerce to the tag type) and a gateway line from an int
+    tag to an int tag – the second review's reproduction (9007199254740993 arrived as …992). Lists too (arrays)."""
+    async def run():
+        """A user write, then the same value from a source through a gateway."""
+        src = Mem("src", {"tags": {"n": {"type": "int"}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"n": {"type": "int", "writable": True}, "m": {"type": "int", "writable": True}}},
+                  None, server=False)
+        for drv in (src, dev):
+            drv.session = _lasting_session(drv)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["n -> m"]}]},
+                             {"src": src, "dev": dev})
+        try:
+            await until(lambda: src.connected and dev.connected, 2)
+            await hub.write("dev", "n", value)
+            assert dev.writes[-1] == ("n", value)
+            hub.update("src", "n", 0)
+            await asyncio.sleep(0.05)
+            hub.update("src", "n", value)
+            await until(lambda: ("m", value) in dev.writes, 2)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def _lasting_session(drv):
+    """A session that keeps *drv* connected until the hub stops it (the default Mem session ends at once)."""
+    async def session():
+        """Connected until stopped."""
+        drv.set_state(True)
+        await drv.wait_stopped(60)
+
+    return session
+
+
+def test_coerce_int_never_goes_through_float():
+    """coerce(…, "int") – used for every write through the hub – keeps 64-bit integers and rounds the rest."""
+    assert coerce(9007199254740993, "int") == 9007199254740993
+    assert coerce("-9007199254740993", "int") == -9007199254740993
+    assert coerce(2.5, "int") == 2 and coerce("2,6", "int") == 3 and coerce(True, "int") == 1
+    with pytest.raises(ValueError):
+        coerce("x", "int")
 
 
 def test_registers_word_order():
@@ -753,6 +805,18 @@ def test_opcua_server_shows_the_source_quality(tmp_path):
                 src.set_state(False)                                               # the source connection is lost
                 await asyncio.sleep(0.2)
                 assert await status(temp) == (21.0, "UncertainLastUsableValue")
+                # Good → Bad → lost must end as Uncertain too (the second review: reading the Bad value raised, and
+                # the change to Uncertain was lost).
+                src.set_state(True)
+                hub.update("src", "t", 22.0)
+                await until(lambda: hub.values.get("ua/Rom.Temp", {}).get("v") == 22.0, 5)
+                hub.update("src", "t", 22.0, "bad")
+                await asyncio.sleep(0.2)
+                assert (await status(temp))[1] == "BadNoCommunication"
+                src.set_state(False)
+                await asyncio.sleep(0.2)
+                assert await status(temp) == (22.0, "UncertainLastUsableValue")
+                assert hub.values["ua/Rom.Temp"]["q"] == "old"                     # the hub knows it too
         finally:
             await hub.stop()
 
@@ -1146,3 +1210,22 @@ def test_alarm_on_protocol_tag_with_delay(knx_server):
         assert alarm["cleared_ts"] is not None
 
     asyncio.run(run())
+
+
+def test_normalise_raw_follows_the_device_resolution():
+    """Driver.normalise_raw gives a value as the device returns it: float32 rounded as the drivers read it, a scaled
+    integer register as a whole raw number, an int64 untouched, and anything else (bool, text, too large) unchanged."""
+    from knxscada.protocols.base import as_int, float32
+    from knxscada.protocols.modbus import _float32_registers
+
+    drv = Mem("m", {}, None)
+    plain = tag_from_spec("e", {"type": "float"})
+    scaled = tag_from_spec("t", {"type": "float", "scale": 0.1})
+    big = tag_from_spec("n", {"type": "int"})
+    assert float32(21.123456789) == 21.12346 and float32(1e39) == 1e39
+    assert drv.normalise_raw(plain, 21.123456789) == 21.12346
+    assert drv.normalise_raw(plain, 1_000_001.0) == 1_000_001.0                  # a counter step survives
+    assert drv.normalise_raw(scaled, 21.57, rounding=as_int) == pytest.approx(21.6)
+    assert drv.normalise_raw(big, 9007199254740993, rounding=as_int) == 9007199254740993
+    assert drv.normalise_raw(plain, True) is True and drv.normalise_raw(plain, "x") == "x"
+    assert drv.normalise_raw(plain, 1e300, rounding=_float32_registers) == 1e300

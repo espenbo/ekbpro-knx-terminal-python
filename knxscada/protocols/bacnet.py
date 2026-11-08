@@ -297,6 +297,14 @@ class Driver(BaseDriver):
         return str(tag.extra.get("property") or "present-value")
 
     # -- connection -------------------------------------------------------------------------------
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """Analog values in BACnet are REAL (float32), and :func:`from_bacnet` rounds them to 7 digits: a float tag is
+        compared as such. (A Double property would be compared a little more loosely – no standard object has one
+        as its present value.)"""
+        if tag.type == "float":
+            return self.normalise_raw(tag, value)
+        return value
+
     def describe(self) -> str:
         """Short text for the TUI: our device instance and UDP address (server), or the device and its identity."""
         s = self.settings

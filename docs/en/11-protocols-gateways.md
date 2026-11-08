@@ -276,7 +276,9 @@ the same when the server restarts. Targets with `direction: both` are writable.
 The variables carry the **quality** of their source, so a SCADA (Ignition …) never takes an old value for a current
 one: a variable without a value yet is `BadWaitingForInitialData` (not 0 as Good); when the source reports a bad
 status it becomes `BadNoCommunication`; when the source connection is lost, `UncertainLastUsableValue` with the
-last value. The next good value from the source – also when it is the same – makes it `Good` again.
+last value. The next good value from the source – also when it is the same – makes it `Good` again. The quality
+travels on through a chain of gateways (source → OPC UA server 1 → OPC UA server 2: both turn bad), and the hub's
+own value of the variable carries it too, so the TUI, alarms and the database see it.
 
 The client reads at most as many nodes per request as the server allows (`OperationLimits`; WAGO PFC: 100), so
 long tag lists work. A REAL (float32) is rounded to 7 digits (16.6, not 16.600000381469727). An array (e.g. a
@@ -398,7 +400,13 @@ guard towards KNX: `settle_ms`, `burst_limit`, `restart_quiet_s`.
 
 Rules that keep the plant safe and quiet:
 
-- **No echoes.** A value that was just written and is read back does not travel back to the source.
+- **No echoes.** A value that was just written and is read back does not travel back to the source. Each end is
+  compared at its own resolution: a KNX DPT, a float32 (OPC UA Float, BACnet REAL, Modbus float32) or a scaled
+  integer register returns what was written rounded, and that is recognised as the echo. Otherwise values are
+  compared exactly, so every step of a large counter (1 000 000 → 1 000 001 Wh) is a change. To pass on fewer
+  small changes, set a `deadband`.
+- **Nothing old is written later.** A change that waits (for the target to finish reading, in the restart guard or
+  for the rate limit) is dropped when either end loses its connection or the source turns bad meanwhile.
 - **Read first, send afterwards.** After a start-up or a reconnect every connection first reads the status of its
   tags; the F11 view shows `reading …` until it is done. These start-up values are remembered on both sides of
   every line, but **not sent to devices**: a device keeps its own value until something really changes, and only

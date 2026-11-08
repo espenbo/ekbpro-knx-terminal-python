@@ -648,6 +648,7 @@ CATALOGUE: dict[str, str] = {
     "scale 0 cannot be reversed": "skala 0 kan ikke regnes baklengs",
     "{connection} has no tag {tag}": "{connection} har ingen tag {tag}",
     "{connection}: {error}. Retrying in {delay} s": "{connection}: {error}. Prøver igjen om {delay} s",
+    "{value} is not a number": "{value} er ikke et tall",
     "{value} is not on/off": "{value} er ikke på/av",
     "Unknown value type {type}": "Ukjent verditype {type}",
     "{key}: expected true or false": "{key}: forventet true eller false",

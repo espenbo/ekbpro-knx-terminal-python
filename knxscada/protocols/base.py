@@ -23,7 +23,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
+import struct
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from ..i18n import _
@@ -64,11 +67,9 @@ def coerce(value: Any, typ: str) -> Any:
             return False
         raise ValueError(_("{value} is not on/off").format(value=repr(value)))
     if typ == "int":
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, float):
-            return round(value)
-        return int(float(str(value).strip().replace(",", ".")))
+        # Never through float: a 64-bit counter or id above 2**53 would lose its last digits on the way to the
+        # driver (9007199254740993 → …992). Floats and decimal text are rounded, as everywhere else.
+        return as_int(value)
     if typ == "float":
         if isinstance(value, (bool, int, float)):
             return float(value)
@@ -106,16 +107,24 @@ def same_value(a: Any, b: Any, rel: float = 1e-4) -> bool:
         return a is b or (a == b and type(a) is type(b))
     if isinstance(a, float) or isinstance(b, float):
         try:
-            return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(a)), abs(float(b)))
+            fa, fb = float(a), float(b)
         except (TypeError, ValueError):
             return False
+        if math.isnan(fa) and math.isnan(fb):   # NaN twice (a sensor fault value) is no change, or every poll would be one
+            return True
+        if fa == fb:                # also equal infinities, which the subtraction below cannot compare
+            return True
+        return abs(fa - fb) <= rel * max(1.0, abs(fa), abs(fb))
     return a == b
 
 
 def as_int(value: Any) -> int:
     """*value* as an integer without going through float when it already is one: ``round(float(v))`` loses the last
     digits of 64-bit values above 2**53 (9007199254740993 → …992). Floats (a scaled value like 215.00000000000003) and
-    numeric text are rounded. Raises ValueError/TypeError for anything else."""
+    numeric text are rounded (half to even, like ``round``). Raises ValueError/TypeError for anything else.
+
+    Used by :func:`coerce` (every value written through the hub) and by the drivers that pack integers themselves.
+    """
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -125,8 +134,28 @@ def as_int(value: Any) -> int:
         try:
             return int(text)
         except ValueError:
-            return round(float(text.replace(",", ".")))
+            pass
+        # Decimal, not float: "9007199254740993.0" or "1,0e16" keep every digit. Decimal's own errors are not
+        # ValueErrors, so they are turned into one (callers catch ValueError for "not a number").
+        try:
+            number = Decimal(text.replace(",", "."))
+        except InvalidOperation:
+            raise ValueError(_("{value} is not a number").format(value=repr(value))) from None
+        if not number.is_finite():
+            raise ValueError(_("{value} is not a number").format(value=repr(value)))
+        return int(number.to_integral_value(rounding=ROUND_HALF_EVEN))
     return round(float(value))
+
+
+def float32(value: float) -> float:
+    """*value* as a 32-bit float stores it, rounded to 7 significant digits – exactly what the drivers report for a
+    float32 value they read (OPC UA Float, BACnet REAL, Sparkplug Float), so the read-back of our own write compares
+    equal to what was written. Values outside the float32 range are returned unchanged."""
+    try:
+        stored = struct.unpack("<f", struct.pack("<f", value))[0]
+    except (OverflowError, struct.error):
+        return value
+    return float(f"{stored:.7g}")
 
 
 def scale_value(value: Any, scale: float | None, offset: float | None) -> Any:
@@ -343,6 +372,25 @@ class Driver:
         Must not raise: a value that cannot be converted is returned unchanged.
         """
         return value
+
+    def normalise_raw(self, tag: Tag, value: Any, rounding=float32) -> Any:
+        """:meth:`normalise` for a tag whose device stores less than a Python number: the value as it comes back after
+        a write – to the raw value, through *rounding* (what the device keeps: :func:`float32` by default, a whole
+        number for an integer register), back to the tag's value and type. Other values (bool, text, lists, None) are
+        returned unchanged. Called by the drivers' :meth:`normalise`.
+
+        Without this the gateways would need a loose tolerance to recognise a float32 echo, and a loose tolerance
+        hides real steps of a large counter (1 000 000 → 1 000 001 Wh).
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return value
+        try:
+            raw = tag.to_raw(value)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                return value
+            return coerce(tag.from_raw(rounding(raw)), tag.type)   # raw as it is: an int64 must not pass float
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+            return value
 
     async def set_quality(self, tag: Tag, quality: str) -> None:
         """Show that the value of *tag* (a gateway target of our own server) is not trustworthy now: *quality* is

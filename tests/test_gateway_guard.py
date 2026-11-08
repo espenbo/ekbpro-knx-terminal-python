@@ -247,3 +247,173 @@ def test_counter_step_passes_and_a_coarse_knx_echo_does_not(tmp_path):
             await hub.stop()
 
     asyncio.run(run())
+
+
+def test_change_held_for_a_reading_target_is_dropped_when_the_source_reconnects(tmp_path):
+    """The second review's reproduction for ``link.held`` (a target connected but still reading): the source goes
+    False → True (held), is lost, comes back reporting False as its status, then the target finishes reading. The old
+    True must not be written – it belongs to the source's previous connection."""
+    async def run():
+        """Source and target both read first, so the test decides when each is ready."""
+        src = Mem("src", {"tags": {"a": {"type": "bool"}}}, None, server=False, reads_first=True)
+        dev = Mem("dev", {"tags": {"b": {"type": "bool", "writable": True}}}, None, server=False, reads_first=True)
+        _lasting(src)
+        _lasting(dev)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["a -> b"]}]},
+                             {"src": src, "dev": dev})
+        try:
+            await until(lambda: src.connected and dev.connected, 2)
+            hub.update("src", "a", False)                   # status
+            src.set_ready()
+            hub.update("src", "a", True)                    # a change; dev still reading → held
+            assert hub.engine.links[0].held
+            src.set_state(False)                            # the source is lost …
+            assert not hub.engine.links[0].held
+            src.set_state(True)                             # … and back, with False as its status
+            hub.update("src", "a", False)
+            src.set_ready()
+            dev.set_ready()                                 # the target is ready now
+            await asyncio.sleep(0.1)
+            assert ("b", True) not in dev.writes
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_held_change_is_dropped_when_the_source_turns_bad(tmp_path):
+    """A change held for a reading target is not written when the source reports a bad status before the target is
+    ready."""
+    async def run():
+        """Change, held, bad, target ready."""
+        src = Mem("src", {"tags": {"a": {"type": "int"}}}, None, server=False, reads_first=True)
+        dev = Mem("dev", {"tags": {"b": {"type": "int", "writable": True}}}, None, server=False, reads_first=True)
+        _lasting(src)
+        _lasting(dev)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "src", "to": "dev", "map": ["a -> b"]}]},
+                             {"src": src, "dev": dev})
+        try:
+            await until(lambda: src.connected and dev.connected, 2)
+            hub.update("src", "a", 1)
+            src.set_ready()
+            hub.update("src", "a", 2)                       # held
+            hub.update("src", "a", 2, "bad")
+            dev.set_ready()
+            await asyncio.sleep(0.1)
+            assert dev.writes == []
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+class QualityMem(Mem):
+    """A server connection that records the qualities the gateway engine gives its tags."""
+
+    def __init__(self, *args, **kw):
+        """As :class:`Mem`, plus the list of (tag, quality) calls."""
+        super().__init__(*args, **kw)
+        self.qualities: list[tuple[str, str]] = []
+
+    async def set_quality(self, tag, quality):
+        """Record instead of showing it to clients."""
+        self.qualities.append((tag.name, quality))
+
+
+def test_quality_travels_through_a_chain_of_gateways(tmp_path):
+    """Source → server 1 → server 2 (the second review: bad stopped at the first server). A bad source makes both
+    servers bad – in the hub and towards their clients; a lost source makes both old; the next good value makes
+    both good again, even when it is the same value."""
+    async def run():
+        """Two gateways in a row between in-memory servers."""
+        src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False)
+        s1 = QualityMem("s1", {}, None)
+        s2 = QualityMem("s2", {}, None)
+        _lasting(src)
+        gws = [{"name": "g1", "from": "src", "to": "s1", "map": ["t -> x"]},
+               {"name": "g2", "from": "s1", "to": "s2", "map": ["x -> y"]}]
+        hub = await make_hub(tmp_path, {"gateways": gws}, {"src": src, "s1": s1, "s2": s2})
+        try:
+            await until(lambda: src.connected, 2)
+            hub.update("src", "t", 21.0)
+            await until(lambda: hub.values.get("s2/y", {}).get("v") == 21.0, 2)
+
+            def q():
+                """The qualities of the two servers' values in the hub."""
+                return hub.values["s1/x"]["q"], hub.values["s2/y"]["q"]
+
+            hub.update("src", "t", 21.0, "bad")
+            await asyncio.sleep(0.05)
+            assert q() == ("bad", "bad")
+            assert ("x", "bad") in s1.qualities and ("y", "bad") in s2.qualities
+            hub.update("src", "t", 21.0)                    # good again, the same value
+            await until(lambda: q() == ("good", "good"), 2)
+            src.set_state(False)
+            await asyncio.sleep(0.05)
+            assert q() == ("old", "old")
+            assert ("y", "old") in s2.qualities
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_quality_loop_of_both_way_lines_ends(tmp_path):
+    """Two servers linked both ways: marking one bad marks the other and stops there (no endless walk)."""
+    async def run():
+        """src → s1 ↔ s2."""
+        src = Mem("src", {"tags": {"t": {"type": "float"}}}, None, server=False)
+        s1 = QualityMem("s1", {}, None)
+        s2 = QualityMem("s2", {}, None)
+        _lasting(src)
+        gws = [{"name": "g1", "from": "src", "to": "s1", "map": ["t -> x"]},
+               {"name": "g2", "from": "s1", "to": "s2", "direction": "both", "map": ["x -> y"]}]
+        hub = await make_hub(tmp_path, {"gateways": gws}, {"src": src, "s1": s1, "s2": s2})
+        try:
+            await until(lambda: src.connected, 2)
+            hub.update("src", "t", 5.0)
+            await until(lambda: hub.values.get("s2/y", {}).get("v") == 5.0, 2)
+            hub.update("src", "t", 5.0, "bad")
+            await asyncio.sleep(0.05)
+            assert hub.values["s1/x"]["q"] == hub.values["s2/y"]["q"] == "bad"
+            assert len(s2.qualities) == 1
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())
+
+
+def test_float32_echo_is_an_echo_and_a_counter_step_is_a_change(tmp_path):
+    """Echo suppression follows the target's own resolution (Driver.normalise), not a size-dependent tolerance: the
+    read-back of 21.123456789 written to a float32 tag (21.12346) is an echo, while 1 000 000 → 1 000 001 Wh is a
+    change in both directions of the line."""
+    from knxscada.protocols.base import float32
+
+    async def run():
+        """meter ↔ dev (float32) both ways."""
+        meter = Mem("meter", {"tags": {"e": {"type": "float", "writable": True}}}, None, server=False)
+        dev = Mem("dev", {"tags": {"e": {"type": "float", "writable": True}}}, None, server=False)
+        dev.normalise = lambda tag, v: dev.normalise_raw(tag, v)          # a float32 device
+        _lasting(meter)
+        _lasting(dev)
+        hub = await make_hub(tmp_path, {"gateways": [{"name": "g", "from": "meter", "to": "dev", "direction": "both",
+                                                      "map": ["e"]}]}, {"meter": meter, "dev": dev})
+        try:
+            await until(lambda: meter.connected and dev.connected, 2)
+            hub.update("meter", "e", 1_000_000.0)
+            hub.update("dev", "e", 1_000_000.0)
+            await asyncio.sleep(0.05)
+            hub.update("meter", "e", 1_000_001.0)
+            await until(lambda: ("e", 1_000_001.0) in dev.writes, 2)
+            hub.update("dev", "e", 1_000_001.0)                           # echo
+            hub.update("meter", "e", 21.123456789)
+            await until(lambda: ("e", 21.123456789) in dev.writes, 2)
+            hub.update("dev", "e", float32(21.123456789))                 # the device's rounded read-back
+            await asyncio.sleep(0.1)
+            assert meter.writes == []                                     # neither echo went back
+            hub.update("dev", "e", 21.5)                                  # a real change on the device
+            await until(lambda: ("e", 21.5) in meter.writes, 2)
+        finally:
+            await hub.stop()
+
+    asyncio.run(run())

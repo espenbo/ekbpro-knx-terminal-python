@@ -157,6 +157,12 @@ def from_registers(regs: list[int], dtype: str, word_order: str = "big") -> int 
     return value
 
 
+def _float32_registers(value: float) -> float:
+    """*value* after a trip through two float32 registers, rounded as :func:`from_registers` rounds it (6 decimals),
+    for :meth:`Driver.normalise`. Raises OverflowError outside the float32 range (the caller then compares as is)."""
+    return round(struct.unpack(">f", struct.pack(">f", value))[0], 6)
+
+
 @dataclass
 class Point:
     """Where a tag is in the device: table, first address, number of registers/bits, bit, data type, unit id."""
@@ -306,6 +312,17 @@ class Driver(BaseDriver):
         self.tags[name] = tag
         self.store.index()
         return tag
+
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """A value as the registers give it back after a write: float32 as :func:`from_registers` rounds it, an integer
+        register as a whole raw number (with a ``scale`` of 0.1, 21.57 comes back as 21.6). float64 is exact."""
+        p = self.points.get(tag.name)
+        if p is None or p.dtype in ("bool", "float64"):
+            return value
+        if p.dtype == "float32":
+            return self.normalise_raw(tag, value, rounding=_float32_registers)
+        # Integer registers: the raw value is whole (as_int keeps int64 exact, rounds a scaled float).
+        return self.normalise_raw(tag, value, rounding=as_int)
 
     # -- connection -------------------------------------------------------------------------------
     def describe(self) -> str:

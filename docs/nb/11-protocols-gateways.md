@@ -276,7 +276,9 @@ den samme når serveren starter på nytt. Mål med `direction: both` er skrivbar
 Variablene har **kvaliteten** til kilden sin, så et SCADA-system (Ignition …) aldri tar en gammel verdi for en
 gjeldende: en variabel uten verdi ennå er `BadWaitingForInitialData` (ikke 0 som Good); når kilden melder dårlig
 status, blir den `BadNoCommunication`; når forbindelsen til kilden er borte, `UncertainLastUsableValue` med siste
-verdi. Neste gode verdi fra kilden – også når den er lik – gjør den `Good` igjen.
+verdi. Neste gode verdi fra kilden – også når den er lik – gjør den `Good` igjen. Kvaliteten følger med gjennom
+en kjede av gatewayer (kilde → OPC UA-server 1 → OPC UA-server 2: begge blir dårlige), og hubens egen verdi for
+variabelen har den også, så TUI-en, alarmene og databasen ser den.
 
 Klienten leser høyst så mange noder per forespørsel som serveren tillater (`OperationLimits`; WAGO PFC: 100), så
 lange tagglister virker. En REAL (float32) rundes til 7 siffer (16.6, ikke 16.600000381469727). En tabell (f.eks.
@@ -398,7 +400,13 @@ omstartsvernet mot KNX: `settle_ms`, `burst_limit`, `restart_quiet_s`.
 
 Regler som holder anlegget trygt og rolig:
 
-- **Ingen ekko.** En verdi som nettopp ble skrevet og leses tilbake, går ikke tilbake til kilden.
+- **Ingen ekko.** En verdi som nettopp ble skrevet og leses tilbake, går ikke tilbake til kilden. Hver ende
+  sammenlignes med sin egen oppløsning: en KNX-DPT, en float32 (OPC UA Float, BACnet REAL, Modbus float32) eller et
+  skalert heltallsregister gir tilbake det som ble skrevet, avrundet, og det kjennes igjen som ekkoet. Ellers
+  sammenlignes verdiene eksakt, så hvert trinn i en stor teller (1 000 000 → 1 000 001 Wh) er en endring. Vil du
+  sende færre små endringer, sett `deadband`.
+- **Ingenting gammelt skrives senere.** En endring som venter (på at målet blir ferdig med å lese, i omstartsvernet
+  eller på hastighetsgrensen), forkastes når en av endene mister forbindelsen eller kilden blir dårlig i mellomtiden.
 - **Les først, send etterpå.** Etter oppstart eller ny tilkobling leser hver tilkobling først statusen til
   taggene sine; F11-visningen viser `leser …` til den er ferdig. Disse oppstartsverdiene huskes på begge sider av
   hver linje, men **sendes ikke til utstyr**: utstyret beholder sin egen verdi til noe faktisk endrer seg, og bare

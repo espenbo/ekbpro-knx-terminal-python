@@ -102,6 +102,29 @@ Rekkefølge etter gjennomgangen – kryss av underveis. Hver feil får en regres
 9. [ ] Senere (beslutninger): tilgangsstyring (lese/operatør/konfigurasjon på socketen), OPC UA-server-standard
        (binding, anonym, kryptering), versjonerte releaser, Sparkplug mot Ignition MQTT Engine.
 
+## Stabilisering 2026-11-08 (ny gjennomgang av fa16913)
+
+Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 og består nå.
+
+1. [x] `link.held` (endring som venter på at målet skal bli ferdig med å lese) ble bare tømt når **målet** falt ut.
+       Nå tømmes den når en av endene faller ut eller kilden blir dårlig (`on_bad`), og `on_ready` sjekker
+       `_source_ok` før den sender. Test: kilde False → True (venter), brudd, tilbake med False, mål klart → ingen
+       True.
+2. [x] Kvalitet gjennom flere gatewayledd: `_mark_target` setter også kvaliteten i hubens verdi (`Hub.mark_quality`),
+       som kaller `on_bad` for taggen, slik at kvaliteten går videre til neste ledd. En løkke av `direction: both`
+       stopper fordi samme kvalitet ikke settes to ganger. OPC UA: Good → Bad → frakoblet gir nå
+       UncertainLastUsableValue med verdien (asyncua leser en Bad-variabel som Null, så serveren husker siste gode
+       verdi selv i `good`). Tester i `test_gateway_guard.py` og `test_protocols.py`, dok 11 en+nb.
+3. [x] `coerce(…, "int")` gikk via float: bruker nå `as_int` (Decimal for desimaltekst). Test gjennom `Hub.write` og
+       en gatewaylinje, også negative tall og lister.
+4. [x] Tellere: huben sammenligner nå **eksakt** (støy fra float32 rundes allerede bort i driverne), og
+       gatewayens `SAME_REL` er 1e-12. Ekkosperren følger oppløsningen til hver ende (`Driver.normalise`):
+       float32 i OPC UA (Float), BACnet (REAL), Sparkplug-klient (Float) og Modbus float32, og skalerte
+       heltallsregistre i Modbus (`normalise_raw`). 1 000 000 → 1 000 001 Wh og 1000,000 → 1000,001 kWh er
+       endringer. `same_value` ser NaN = NaN (ingen endring ved hver lesing). Dok 11 en+nb.
+       Rest: Modbus runder float32 til 6 desimaler og OPC UA/BACnet til 7 siffer, så en float32-teller over
+       10 000 000 går i trinn på 10. Det er nesten oppløsningen til float32 (trinn 1 opp til 16 777 216).
+
 ## Arbeidsplan 2026-11-07 (brukeren: «gjør ferdig alle punkter som kan gjøres»)
 
 Rekkefølge – kryss av underveis (økten kan bli brutt). Punkter som trenger utstyr, beslutninger fra brukeren eller

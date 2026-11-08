@@ -350,6 +350,17 @@ class Driver(BaseDriver):
         await self.client.publish(topic(self.group, "NBIRTH", self.node), encode_payload(metrics, self._next_seq()),
                                   qos=0, retain=False)
 
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """Client: a metric the edge node declared as Float (float32 in its birth) comes back rounded as
+        :func:`decode_metric` rounds it. Our own edge node sends Double (:meth:`_type`), so its values are exact."""
+        if self.role != "client":
+            return value
+        node = str(tag.extra.get("node") or (self.node if self.node != "+" else ""))
+        metric, device = str(tag.extra.get("metric") or tag.name), str(tag.extra.get("device") or "")
+        if self.types.get((node, device, metric)) == FLOAT:
+            return self.normalise_raw(tag, value)
+        return value
+
     def _type(self, tag: Tag, value: Any) -> int:
         """The Sparkplug type of a metric: from the tag's type, else from the value (Double when unknown)."""
         return {"bool": BOOLEAN, "int": INT64, "float": DOUBLE, "str": STRING}.get(

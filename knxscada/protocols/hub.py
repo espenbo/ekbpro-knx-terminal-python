@@ -220,8 +220,11 @@ class Hub:
         initial = drv is None or not drv.ready or (drv.first_value_is_status and key not in self._seen)
         self._seen.add(key)
         old = self.values.get(key)
-        # Tighter than the echo check: float32 rounds at ~6e-8, and energy counters must not move in 15 kWh steps.
-        if old is not None and old["q"] == quality and same_value(old["v"], value, rel=1e-6):
+        # Exact: a value read from a device is a change whenever it differs at all (a float32 value arrives already
+        # rounded by its driver, so it does not flicker). Any tolerance here is size-dependent and swallows real
+        # steps of a large counter (1e-6 hid 1 000 000 → 1 000 001 Wh). Echoes of our own writes are judged by the
+        # gateways (with Driver.normalise), and how often a value is stored by log_deadband / log_min_s.
+        if old is not None and old["q"] == quality and same_value(old["v"], value, rel=0.0):
             return
         st["changes"] += 1
         rec = {"v": value, "ts": time.time(), "q": quality}
@@ -237,6 +240,26 @@ class Hub:
             self.engine.on_bad(conn, tag)
         if hasattr(self.server, "point_value"):
             self.server.point_value(key, value, quality)
+
+    def mark_quality(self, conn: str, tag: str, quality: str) -> None:
+        """Give the value of *conn/tag* (a gateway target on our own server) the *quality* ``"bad"`` or ``"old"``
+        because its source turned bad or was lost; the value itself is kept. Called by the gateway engine.
+
+        The record changes like any other value (clients, alarms, the database see the quality), and the gateways
+        reading from this tag are told (``on_bad``), so the quality travels on through a chain of gateways. The next
+        good value written to the tag (:meth:`update`) makes it good again. Nothing is done when the tag has no
+        value yet or already has this quality – which also ends the walk round a loop of ``direction: both`` lines.
+        """
+        key = f"{conn}/{tag}"
+        old = self.values.get(key)
+        if old is None or old["q"] == quality:
+            return
+        rec = {**old, "q": quality}   # the time stays: when the value was last good
+        self.values[key] = rec
+        self._dirty[key] = rec
+        self.engine.on_bad(conn, tag, quality)
+        if hasattr(self.server, "point_value"):
+            self.server.point_value(key, rec["v"], quality)
 
     # -- logging ----------------------------------------------------------------------------------
     def logs(self, drv: Driver, tag: str) -> bool:

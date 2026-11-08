@@ -60,11 +60,13 @@ from typing import TYPE_CHECKING, Any
 
 from ..i18n import _
 from .base import coerce, same_value, scale_value, unscale_value
-
-#: Relative tolerance of :meth:`GatewayEngine._same` after normalising: float32 rounds at ~6e-8, so 1e-6 hides only
-#: rounding noise (the hub uses the same for its change detection).
-SAME_REL = 1e-6
 from .config import parse_link
+
+#: Relative tolerance of :meth:`GatewayEngine._same` after normalising. The resolution of each end (KNX DPT, float32,
+#: integer registers) is handled by ``Driver.normalise``, so this only absorbs float64 arithmetic noise from
+#: scale/offset (a few units of 1e-16). 1e-12 still sees a step of 1 in a counter up to 10**12 – a looser value
+#: (1e-6) hid 1 000 000 → 1 000 001 Wh.
+SAME_REL = 1e-12
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -411,22 +413,26 @@ class GatewayEngine:
         for lk, forward, dst_conn, dst_tag, out in held:
             self._send(lk, forward, dst_conn, dst_tag, out)
 
-    def on_bad(self, conn: str, tag: str) -> None:
-        """*conn/tag* reported a bad status (no value, uncertain, the PLC loading an application).
+    def on_bad(self, conn: str, tag: str, quality: str = "bad") -> None:
+        """*conn/tag* reported a bad status (no value, uncertain, the PLC loading an application) – or, with
+        *quality* ``"old"``/``"bad"`` from :meth:`Hub.mark_quality`, it is a target of our own server whose source
+        turned bad or was lost one gateway earlier.
 
         Its last value is forgotten on every link, so its next good value is only remembered (:meth:`on_value`);
-        if *conn* sends changes towards KNX, its quiet time starts as after a restart.
+        the targets of its links get the same *quality* (so it travels down a chain of gateways); if *conn* sends
+        changes towards KNX, its quiet time starts as after a restart.
         """
         key = (conn, tag)
         self.unknown.add(key)
         quiet = 0.0
         for link, forward in self.by_tag.get(key, ()):
             self._set_last(link, forward, MISSING)
-            self._mark_target(link, forward, "bad")
+            self._mark_target(link, forward, quality)
             dst = self.hub.drivers.get(link.b_conn if forward else link.a_conn)
             if dst is not None and not dst.initial_allowed and link.settle > 0:
                 quiet = max(quiet, link.quiet)
             self._batch.get((link.gateway, conn), {}).pop((link.key, forward), None)   # a held change is void
+            link.held.pop(forward, None)                                                 # also one waiting for ready
         if quiet:
             self._start_quiet(conn, quiet)
 
@@ -498,7 +504,10 @@ class GatewayEngine:
                 if dst_conn != conn or (not forward and not link.both):
                     continue
                 if forward in link.held:
-                    self._send(link, forward, dst_conn, dst_tag, link.held.pop(forward))
+                    out = link.held.pop(forward)
+                    # Checked again here, not only when it was held: the source may have turned bad meanwhile.
+                    if self._source_ok(link, forward):
+                        self._send(link, forward, dst_conn, dst_tag, out)
                     continue
                 drv = self.hub.drivers.get(dst_conn)
                 tag = drv.tags.get(dst_tag) if drv else None
@@ -525,8 +534,11 @@ class GatewayEngine:
                 link.last_b = MISSING
             if link.a_conn == conn:
                 link.last_a = MISSING
+            # A change held for a target that is still reading belongs to this connection's session at both ends:
+            # when the source is lost, its value may be from before a device restart and must not be written once
+            # the target is ready (the review's case: True held, source reconnects with False, True was written).
             for forward in list(link.held):
-                if (link.b_conn if forward else link.a_conn) == conn:
+                if conn in (link.a_conn, link.b_conn):
                     del link.held[forward]
             for forward in list(link.pending):
                 if conn in (link.a_conn, link.b_conn):
@@ -560,7 +572,12 @@ class GatewayEngine:
     def _mark_target(self, link: Link, forward: bool, quality: str) -> None:
         """The source end of *link* turned bad or was lost: tell a target that is our own server (it shows the
         quality to its clients, e.g. OPC UA Bad/Uncertain instead of the old value as Good), and forget what the
-        target has, so the next good source value is written again even when it is the same."""
+        target has, so the next good source value is written again even when it is the same.
+
+        The quality is also set on the target's value in the hub (:meth:`Hub.mark_quality`), which passes it on to
+        the gateways that read from that target: source → OPC UA server 1 → OPC UA server 2 shows Bad at both
+        servers, not only at the first. A device (client) target is not marked: it keeps its own value and quality.
+        """
         dst_conn, dst_tag = (link.b_conn, link.b_tag) if forward else (link.a_conn, link.a_tag)
         drv = self.hub.drivers.get(dst_conn)
         tag = drv.tags.get(dst_tag) if drv is not None and drv.role == "server" else None
@@ -571,6 +588,9 @@ class GatewayEngine:
             asyncio.get_running_loop().create_task(drv.set_quality(tag, quality))
         except RuntimeError:
             pass   # no event loop (unit tests of the engine alone): nothing to tell
+        mark = getattr(self.hub, "mark_quality", None)
+        if mark is not None:   # absent in engine tests with a bare hub stand-in
+            mark(dst_conn, dst_tag, quality)
 
     @staticmethod
     def _set_last(link: Link, a_side: bool, value: Any) -> None:

@@ -4,6 +4,8 @@
 
 import asyncio
 
+import pytest
+
 from knxscada.config import Config
 from knxscada.protocols.hub import Hub
 from knxscada.tui.energy import (
@@ -247,17 +249,24 @@ def test_settings_sections():
     assert strip_title("Supply fanatic", "Supply fan") == "Supply fanatic"               # whole words only
 
 
-def test_hub_sees_small_steps_of_a_large_counter(tmp_path):
-    """1e-4 of 147 912 kWh is 15 kWh: the hub must not hold back a counter until it moved that far."""
-    from knxscada.protocols.base import same_value
-
-    assert same_value(147912.0, 147913.0) and not same_value(147912.0, 147913.0, rel=1e-6)
+@pytest.mark.parametrize(("before", "after"), [
+    (147912.0, 147912.5),
+    (1_000_000.0, 1_000_001.0),          # Wh: a tolerance of 1e-6 hid this step (the second review)
+    (1000.0, 1000.001),                  # the same energy in kWh
+    (10**12, 10**12 + 1),                # an integer counter
+])
+def test_hub_sees_small_steps_of_a_large_counter(tmp_path, before, after):
+    """The hub's change detection is exact, whatever the size of the value: every step of a counter reaches the
+    gateways, in Wh and in kWh alike. (float32 noise never gets here – the drivers round what they read.)"""
     hub = Hub(FakeServer(tmp_path))
-    hub.update("m", "E", 147912.0)
-    hub.update("m", "E", 147912.5)
-    assert hub.values["m/E"]["v"] == 147912.5
-    hub.update("m", "E", 147912.5000001)                                 # float32 rounding noise: no change
-    assert hub.values["m/E"]["v"] == 147912.5
+    hub.update("m", "E", before)
+    hub.update("m", "E", after)
+    assert hub.values["m/E"]["v"] == after
+    changes = hub.stats["m"]["changes"]
+    hub.update("m", "E", after)                                          # the same value again: no change
+    hub.update("m", "E", float("nan"))
+    hub.update("m", "E", float("nan"))                                   # a fault value repeated: one change only
+    assert hub.stats["m"]["changes"] == changes + 1
 
 
 def test_tui_systems_write(tmp_path, monkeypatch):

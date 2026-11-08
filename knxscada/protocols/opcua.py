@@ -130,6 +130,9 @@ class Driver(BaseDriver):
         self.by_node: dict[Any, Tag] = {}
         self.nodes: dict[str, Any] = {}      # tag name → Node
         self.vtypes: dict[str, Any] = {}     # tag name → ua.VariantType
+        #: Server: tag name → (ua.Variant, source time) of the last good value set, for set_quality. The variable
+        #: itself cannot be asked: asyncua reads a Bad variable as Null, so Bad → Uncertain would lose the value.
+        self.good: dict[str, tuple[Any, Any]] = {}
         self.folders: dict[str, Any] = {}    # server: "Building.Room101" → folder node ("" = Objects/Gateway)
         #: Set by the subscription handler when the server stops answering; the session then reconnects.
         self.lost = asyncio.Event()
@@ -147,6 +150,14 @@ class Driver(BaseDriver):
         if isinstance(raw, float) and vt is not None and vt.name == "Float":   # float32: 16.6, not 16.600000381469727
             raw = float(f"{raw:.7g}")
         super().publish(tag, raw, quality)
+
+    def normalise(self, tag: Tag, value: Any) -> Any:
+        """A Float (float32) variable gives back what it stores, rounded as :meth:`publish` does; Double and integer
+        variables keep every digit, so they are compared exactly (a counter step of 1 is always a change)."""
+        vt = self.vtypes.get(tag.name)
+        if vt is not None and vt.name == "Float":
+            return self.normalise_raw(tag, value)
+        return value
 
     def create_tag(self, name: str, spec: dict[str, Any]) -> Tag:
         """Add a gateway target as a variable of our server (node id = the tag name); clients refuse.
@@ -183,6 +194,7 @@ class Driver(BaseDriver):
                 await asyncio.wait_for(server.stop(), 5)
         self.nodes.clear()
         self.by_node.clear()
+        self.good.clear()
         self.folders.clear()
 
     # -- client -----------------------------------------------------------------------------------
@@ -334,6 +346,7 @@ class Driver(BaseDriver):
                 continue
             tag = self.by_node.get(wv.NodeId)
             if tag is not None:
+                self.good[tag.name] = (wv.Value.Value, wv.Value.SourceTimestamp or datetime.now(UTC))
                 self.publish(tag, wv.Value.Value.Value)
 
     # -- values -----------------------------------------------------------------------------------
@@ -368,6 +381,7 @@ class Driver(BaseDriver):
             dv = ua.DataValue(ua.Variant(raw, vt))
             dv.SourceTimestamp = dv.ServerTimestamp = datetime.now(UTC)
             await self.server.write_attribute_value(node.nodeid, dv)
+            self.good[tag.name] = (dv.Value, dv.SourceTimestamp)
             return
         await node.write_value(ua.DataValue(ua.Variant(raw, vt)))   # no timestamps: CODESYS rejects them
 
@@ -380,12 +394,18 @@ class Driver(BaseDriver):
         node = self.nodes.get(tag.name)
         if self.role != "server" or node is None or self.server is None:
             return
-        try:
-            old = await node.read_data_value()
-        except Exception:  # noqa: BLE001 - the variable is being removed: nothing to mark
-            return
-        dv = ua.DataValue(old.Value, StatusCode=ua.StatusCode(getattr(ua.StatusCodes, QUALITY_STATUS[quality])))
-        dv.SourceTimestamp = old.SourceTimestamp      # when the value was last good
+        good = self.good.get(tag.name)
+        if good is None:
+            # No value set yet (quality "none" right after the variable was made): mark the default it holds.
+            try:
+                # raise_on_bad_status=False: by default asyncua raises for a variable that is Bad already.
+                old = await node.read_data_value(raise_on_bad_status=False)
+            except Exception:  # noqa: BLE001 - the variable is being removed: nothing to mark
+                return
+            good = (old.Value, old.SourceTimestamp)
+        variant, source_ts = good
+        dv = ua.DataValue(variant, StatusCode=ua.StatusCode(getattr(ua.StatusCodes, QUALITY_STATUS[quality])))
+        dv.SourceTimestamp = source_ts                # when the value was last good
         dv.ServerTimestamp = datetime.now(UTC)
         await self.server.write_attribute_value(node.nodeid, dv)
 
