@@ -178,8 +178,9 @@ Fire feil som gjensto etter runden over. Alle de nye testene feiler med fa16913 
           back-off; oppstartslesingen av KNX gjentas aldri. `Driver.run` fanger nå også BaseException (bacpypes3).
           `Watchdog`: hjerteslag (husholdning, flush-løkke), forsinkelse i hendelsesløkken, `sd_notify`
           (READY/WATCHDOG/STOPPING). `deploy/*.service`: `Type=notify`, `WatchdogSec=60`, `TimeoutStartSec=300`.
-          Anleggenes enheter er fortsatt `Type=simple` (virker, men uten systemd-vakthund) til brukeren installerer
-          dem på nytt. Tester `test_watchdog.py`, dok 05/08 en+nb.
+          Anleggene: drop-in `/etc/systemd/system/knxscada-<anlegg>.service.d/watchdog.conf` (Type=notify,
+          WatchdogSec=60) lagt inn av brukeren 2026-11-08 – enhetene ellers urørt (`After=tailscaled.service`).
+          Kontrollert: pinger hvert 5. s, ingen omstarter. Tester `test_watchdog.py`, dok 05/08 en+nb.
    5. [x] Versjonerte releaser (brukeren valgte «bare versjoner og tagger»; tjenestene kjører fortsatt fra
           arbeidskatalogen): versjon 0.3.0, `CHANGELOG.md`, `./scada --version`, versjonen i hendelsesloggen ved
           start, `tools/release.py` (prepare/check/notes), `.github/workflows/release.yml` (alle tester på taggen,
